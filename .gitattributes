@@ -1,0 +1,27 @@
+# Auto detect text files and perform LF normalization on repository storage
+* text=auto eol=lf
+
+# Windows specific build and project files
+*.sln text eol=crlf
+*.slnx text eol=crlf
+*.vcxproj text eol=crlf
+*.props text eol=crlf
+*.targets text eol=crlf
+*.manifest text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.dll binary
+*.exe binary
+*.lib binary
+*.winmd binary
+*.pri binary
