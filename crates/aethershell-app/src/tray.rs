@@ -1,0 +1,299 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use windows::core::{w, PCWSTR};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::UI::Shell::{
+    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
+    DispatchMessageW, GetCursorPos, LoadIconW, PeekMessageW, PostMessageW, PostQuitMessage,
+    RegisterClassW, SetForegroundWindow, TrackPopupMenuEx, IDI_APPLICATION, MF_SEPARATOR,
+    MF_STRING, MSG, PM_REMOVE, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE,
+    WM_COMMAND, WM_DESTROY, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
+};
+
+pub const WM_TRAYICON: u32 = WM_APP + 1;
+
+pub const ID_TRAY_OPEN_SETTINGS: usize = 1001;
+pub const ID_TRAY_UNLOCK_LAYOUT: usize = 1002;
+pub const ID_TRAY_PAUSE_AUDIO: usize = 1003;
+pub const ID_TRAY_SAFE_MODE: usize = 1004;
+pub const ID_TRAY_DIAGNOSTICS: usize = 1005;
+pub const ID_TRAY_EXIT: usize = 1006;
+
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// System Tray controller for managing Windows shell notification icons.
+pub struct SystemTray {
+    hwnd: HWND,
+    nid: NOTIFYICONDATAW,
+    is_active: bool,
+}
+
+impl SystemTray {
+    pub fn new() -> Result<Self, String> {
+        unsafe {
+            let class_name = w!("AetherShellTrayWindowClass");
+
+            let wnd_class = WNDCLASSW {
+                lpfnWndProc: Some(tray_window_proc),
+                hInstance: windows::Win32::System::LibraryLoader::GetModuleHandleW(None)
+                    .unwrap_or_default()
+                    .into(),
+                lpszClassName: class_name,
+                ..Default::default()
+            };
+
+            let _ = RegisterClassW(&wnd_class);
+
+            let hwnd = CreateWindowExW(
+                Default::default(),
+                class_name,
+                w!("AetherShellTrayWindow"),
+                WS_OVERLAPPED,
+                0,
+                0,
+                0,
+                0,
+                HWND::default(),
+                None,
+                windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap_or_default(),
+                None,
+            )
+            .map_err(|e| format!("Failed to create hidden tray window: {}", e))?;
+
+            let mut nid = NOTIFYICONDATAW {
+                cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+                hWnd: hwnd,
+                uID: 1,
+                uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
+                uCallbackMessage: WM_TRAYICON,
+                hIcon: LoadIconW(None, IDI_APPLICATION).unwrap_or_default(),
+                ..Default::default()
+            };
+
+            // Set tooltip
+            let tip = "AetherShell Engine";
+            let mut tip_chars = [0u16; 128];
+            for (i, c) in tip.encode_utf16().enumerate().take(127) {
+                tip_chars[i] = c;
+            }
+            nid.szTip = tip_chars;
+
+            let is_active = Shell_NotifyIconW(NIM_ADD, &nid).as_bool();
+
+            Ok(Self {
+                hwnd,
+                nid,
+                is_active,
+            })
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_active(&self) -> bool {
+        self.is_active
+    }
+
+    pub fn hwnd(&self) -> HWND {
+        self.hwnd
+    }
+
+    pub fn is_exit_requested() -> bool {
+        SHUTDOWN_REQUESTED.load(Ordering::Relaxed)
+    }
+
+    /// Signals the tray message window to close and exit.
+    #[allow(dead_code)]
+    pub fn request_close(&self) {
+        unsafe {
+            let _ = PostMessageW(self.hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+        }
+    }
+
+    /// Spawns the system tray on a dedicated OS thread with an active Win32 message pump.
+    ///
+    /// Resolves Finding IVA-P1-001: Ensures Win32 messages are pumped and context menu actions are dispatched.
+    pub fn spawn_tray_thread(
+        shutdown_flag: Arc<AtomicBool>,
+    ) -> (std::thread::JoinHandle<()>, Arc<AtomicBool>) {
+        let tray_shutdown = Arc::new(AtomicBool::new(false));
+        let tray_shutdown_clone = Arc::clone(&tray_shutdown);
+
+        let handle = std::thread::spawn(move || {
+            let tray = match SystemTray::new() {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!("Could not create system tray: {}", e);
+                    return;
+                }
+            };
+
+            tracing::info!(
+                "System tray thread active with message pump (HWND: {:?})",
+                tray.hwnd().0
+            );
+
+            unsafe {
+                let mut msg = MSG::default();
+                while !shutdown_flag.load(Ordering::Relaxed)
+                    && !tray_shutdown_clone.load(Ordering::Relaxed)
+                {
+                    // Use PeekMessage with timeout or GetMessage
+                    let has_msg = PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE);
+                    if has_msg.as_bool() {
+                        if msg.message == windows::Win32::UI::WindowsAndMessaging::WM_QUIT {
+                            break;
+                        }
+                        DispatchMessageW(&msg);
+                    } else {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+
+                    if Self::is_exit_requested() {
+                        shutdown_flag.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                }
+            }
+
+            drop(tray);
+            tracing::info!("System tray thread cleanly terminated.");
+        });
+
+        (handle, tray_shutdown)
+    }
+}
+
+impl Drop for SystemTray {
+    fn drop(&mut self) {
+        unsafe {
+            if self.is_active {
+                let _ = Shell_NotifyIconW(NIM_DELETE, &self.nid);
+            }
+            if !self.hwnd.0.is_null() {
+                let _ = DestroyWindow(self.hwnd);
+            }
+        }
+    }
+}
+
+unsafe extern "system" fn tray_window_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match msg {
+        WM_TRAYICON => {
+            if lparam.0 as u32 == WM_RBUTTONUP {
+                show_tray_menu(hwnd);
+            }
+            LRESULT(0)
+        }
+        WM_COMMAND => {
+            let cmd_id = wparam.0;
+            match cmd_id {
+                ID_TRAY_EXIT => {
+                    tracing::info!("Tray: Exit clicked; requesting shutdown");
+                    SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+                    PostQuitMessage(0);
+                }
+                ID_TRAY_OPEN_SETTINGS => {
+                    tracing::info!("Tray: Open Settings clicked");
+                }
+                ID_TRAY_UNLOCK_LAYOUT => {
+                    tracing::info!("Tray: Unlock Layout clicked");
+                }
+                ID_TRAY_PAUSE_AUDIO => {
+                    tracing::info!("Tray: Pause Audio Visualization clicked");
+                }
+                ID_TRAY_SAFE_MODE => {
+                    tracing::info!("Tray: Safe Mode toggled");
+                }
+                ID_TRAY_DIAGNOSTICS => {
+                    tracing::info!("Tray: Diagnostics clicked");
+                }
+                _ => {}
+            }
+            LRESULT(0)
+        }
+        WM_CLOSE | WM_DESTROY => {
+            PostQuitMessage(0);
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+unsafe fn show_tray_menu(hwnd: HWND) {
+    let menu = match CreatePopupMenu() {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+
+    let _ = AppendMenuW(menu, MF_STRING, ID_TRAY_OPEN_SETTINGS, w!("Open Settings"));
+    let _ = AppendMenuW(menu, MF_STRING, ID_TRAY_UNLOCK_LAYOUT, w!("Unlock Layout"));
+    let _ = AppendMenuW(
+        menu,
+        MF_STRING,
+        ID_TRAY_PAUSE_AUDIO,
+        w!("Pause Audio Visualization"),
+    );
+    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+    let _ = AppendMenuW(
+        menu,
+        MF_STRING,
+        ID_TRAY_SAFE_MODE,
+        w!("Restart in Safe Mode"),
+    );
+    let _ = AppendMenuW(
+        menu,
+        MF_STRING,
+        ID_TRAY_DIAGNOSTICS,
+        w!("Export Diagnostics..."),
+    );
+    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+    let _ = AppendMenuW(menu, MF_STRING, ID_TRAY_EXIT, w!("Exit AetherShell"));
+
+    let mut pt = POINT::default();
+    let _ = GetCursorPos(&mut pt);
+
+    let _ = SetForegroundWindow(hwnd);
+    let _ = TrackPopupMenuEx(
+        menu,
+        (TPM_BOTTOMALIGN | TPM_LEFTALIGN | TPM_RIGHTBUTTON).0,
+        pt.x,
+        pt.y,
+        hwnd,
+        None,
+    );
+    let _ = DestroyMenu(menu);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tray_initialization_non_panicking() {
+        let tray = SystemTray::new();
+        if let Ok(t) = tray {
+            println!("Tray icon initialized: {}", t.is_active());
+        }
+    }
+
+    #[test]
+    fn test_tray_thread_lifecycle_iva_p1_001() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let (join_handle, tray_shutdown) = SystemTray::spawn_tray_thread(Arc::clone(&flag));
+
+        // Sleep briefly to allow thread message pump loop to run
+        std::thread::sleep(std::time::Duration::from_millis(60));
+
+        // Signal stop
+        tray_shutdown.store(true, Ordering::SeqCst);
+        let _ = join_handle.join();
+    }
+}

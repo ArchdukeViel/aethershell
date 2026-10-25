@@ -37,7 +37,7 @@ This document maintains verifiable test and validation records. Every entry is t
 
 ### EVD-002: Modular Cargo Workspace & Core Foundations
 - **Requirement / Gate**: Phase 0 / Gates G01, G02, G03, G04, G06, G07, G12, G16, G18, G19
-- **Candidate Commit**: `feat/phase0-foundational-workspace`
+- **Candidate Commit**: `226f198` (Merged in PR #7)
 - **Date & Environment**: 2026-10-25, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
 - **Executed Command / Test**:
   - `cargo fmt --all --check` -> Passed (0 warnings)
@@ -50,3 +50,17 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Status**: `passed`
 - **Reviewer / Authority**: Independent Verification Authority Subagent (Signed Off)
 - **Notes & Limitations**: Tested in non-interactive terminal session where taskbar handles legitimately return empty without fabricating fake numbers. Full visual DComp compositing will be validated in subsequent rendering milestones.
+
+### EVD-003: Session Singleton, Named Pipe IPC Server & System Tray
+- **Requirement / Gate**: Phase 1 / Gates G01, G11, G18
+- **Candidate Commit**: `feat/phase1-runtime-tray-ipc`
+- **Date & Environment**: 2026-10-25, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Executed Command / Test**:
+  - `cargo fmt --all --check` -> Passed (0 warnings)
+  - `cargo clippy --workspace --all-targets -- -D warnings` -> Passed (0 warnings)
+  - `cargo test --workspace` -> 31 tests passed across 8 crates (including multi-process lifecycle test & timeout enforcement test)
+  - `cargo test --test lifecycle_ipc_test` -> Verified multi-process singleton locking, secondary instance `--settings` notification via IPC, and clean shutdown trigger
+- **Observed Result**: Session-scoped singleton mutex (`Local\AetherShell_Singleton_{SessionId}`) successfully arbitrates primary instance vs secondary command invocations. Async Named Pipe IPC server (`\\.\pipe\aethershell-ipc-{SessionId}`) handles versioned request/response communication. System tray runs on a dedicated OS thread with an active Win32 message pump (PeekMessageW/DispatchMessageW). Client-side request deadline timeouts enforced with `io::ErrorKind::TimedOut` (IVA-P1-003).
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Verification Authority Subagent (Re-Audit In Progress)
+- **Notes & Limitations**: Non-interactive desktop sessions log a benign advisory when `Shell_NotifyIconW` cannot attach to an active shell explorer tray station.

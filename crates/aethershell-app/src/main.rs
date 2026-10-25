@@ -1,8 +1,13 @@
+mod engine;
+mod tray;
+
 use aethershell_core::LifecycleState;
 use aethershell_diagnostics::{redact_sensitive_info, SubsystemHealth, SystemDiagnosticReport};
+use aethershell_ipc::IpcClient;
 use aethershell_win::{
-    enumerate_monitors, probe_desktop_hierarchy, probe_taskbars, WindowsVersionInfo,
+    probe_desktop_hierarchy, probe_taskbars, SessionSingletonGuard, WindowsVersionInfo,
 };
+use engine::AppEngine;
 use std::env;
 use std::process::ExitCode;
 
@@ -22,6 +27,24 @@ async fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if args.iter().any(|a| a == "--settings") {
+        let singleton = SessionSingletonGuard::acquire();
+        let session_id = singleton.as_ref().map(|s| s.session_id()).unwrap_or(1);
+        let pipe_name = format!(r"\\.\pipe\aethershell-ipc-{}", session_id);
+
+        println!("Requesting active AetherShell instance to open Settings...");
+        match IpcClient::send_command(&pipe_name, "open_settings", serde_json::json!({})).await {
+            Ok(res) => {
+                println!("Settings activation requested: success={}", res.success);
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                eprintln!("No active AetherShell instance found or IPC failed: {}", e);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
     let is_safe_mode = args.iter().any(|a| a == "--safe-mode");
 
     println!("Starting AetherShell v{}...", env!("CARGO_PKG_VERSION"));
@@ -29,25 +52,13 @@ async fn main() -> ExitCode {
         println!("*** RUNNING IN SAFE MODE ***");
     }
 
-    let os_info = WindowsVersionInfo::detect();
-    println!("Operating System: {}", os_info.family);
-    println!("Build: {}", os_info.build_number);
+    let engine = AppEngine::new();
+    if let Err(e) = engine.run(is_safe_mode).await {
+        eprintln!("AetherShell engine error: {}", e);
+        return ExitCode::FAILURE;
+    }
 
-    let monitors = enumerate_monitors();
-    println!("Connected Monitors: {}", monitors.len());
-
-    let taskbars = probe_taskbars();
-    println!("Detected Taskbar Windows: {}", taskbars.len());
-
-    let desktop = probe_desktop_hierarchy();
-    println!(
-        "Desktop Stacking: Progman={:?}, ShellDllDefView={:?}, WorkerW={:?}",
-        desktop.progman_hwnd.is_some(),
-        desktop.shelldll_defview_hwnd.is_some(),
-        desktop.worker_w_hwnd.is_some(),
-    );
-
-    println!("AetherShell core initialized successfully.");
+    println!("AetherShell core terminated cleanly.");
     ExitCode::SUCCESS
 }
 
