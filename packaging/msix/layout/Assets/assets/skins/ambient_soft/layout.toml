@@ -1,0 +1,32 @@
+schema_version = "1.0.0"
+node_limit = 16
+
+[[nodes]]
+id = "pill_container"
+type = "container"
+x = 0.0
+y = 0.0
+width = 200.0
+height = 70.0
+background = "@surface.overlay"
+radius = "@radius.pill"
+
+[[nodes]]
+id = "weather_temp"
+type = "text"
+parent = "pill_container"
+x = 24.0
+y = 14.0
+value = "${weather.temp:0.0}°C"
+color = "@text.primary"
+font_size_dip = 20.0
+
+[[nodes]]
+id = "weather_desc"
+type = "text"
+parent = "pill_container"
+x = 24.0
+y = 42.0
+value = "${weather.condition}"
+color = "@text.secondary"
+font_size_dip = 11.0

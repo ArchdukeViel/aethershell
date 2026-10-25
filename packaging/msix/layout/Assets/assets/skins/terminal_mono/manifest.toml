@@ -1,0 +1,24 @@
+schema_version = "1.0.0"
+id = "org.aethershell.terminal_mono"
+name = "Terminal Mono"
+version = "1.0.0"
+author = "AetherShell"
+license = "Apache-2.0"
+engine_min = "1.0.0"
+supported_widget_types = ["system.resources"]
+layout_file = "layout.toml"
+bindings_file = "bindings.toml"
+
+[geometry]
+width_dip = 240.0
+height_dip = 84.0
+min_scale = 0.5
+max_scale = 2.0
+
+[rendering]
+preferred_mode = "surface"
+max_fps = 2
+needs_alpha = true
+
+[interactions]
+allowed = false

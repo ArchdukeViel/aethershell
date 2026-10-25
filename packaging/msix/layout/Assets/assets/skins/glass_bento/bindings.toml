@@ -1,0 +1,13 @@
+schema_version = "1.0.0"
+
+[metrics.cpu]
+source = "cpu.usage_percent"
+unit = "percent"
+fallback_text = "—"
+max_age_ms = 5000
+
+[metrics.ram]
+source = "memory.used_gib"
+unit = "gib"
+fallback_text = "—"
+max_age_ms = 5000

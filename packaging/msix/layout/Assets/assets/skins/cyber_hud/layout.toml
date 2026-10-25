@@ -1,0 +1,42 @@
+schema_version = "1.0.0"
+node_limit = 32
+
+[[nodes]]
+id = "hud_frame"
+type = "container"
+x = 0.0
+y = 0.0
+width = 280.0
+height = 110.0
+background = "@surface.bg"
+radius = "@radius.sm"
+
+[[nodes]]
+id = "hud_header"
+type = "text"
+parent = "hud_frame"
+x = 12.0
+y = 12.0
+value = "[SYS_MONITOR // ACTIVE]"
+color = "@accent.primary"
+font_size_dip = 11.0
+
+[[nodes]]
+id = "net_down"
+type = "text"
+parent = "hud_frame"
+x = 12.0
+y = 38.0
+value = "NET_DL: ${network.down:0.1} MB/s"
+color = "@text.primary"
+font_size_dip = 12.0
+
+[[nodes]]
+id = "net_up"
+type = "text"
+parent = "hud_frame"
+x = 12.0
+y = 66.0
+value = "NET_UL: ${network.up:0.1} MB/s"
+color = "@text.secondary"
+font_size_dip = 12.0

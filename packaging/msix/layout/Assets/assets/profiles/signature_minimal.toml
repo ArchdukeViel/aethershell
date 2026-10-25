@@ -1,0 +1,52 @@
+schema_version = "1.0.0"
+id = "signature_minimal"
+display_name = "Signature Minimal"
+theme = "obsidian"
+
+[[widgets]]
+instance_id = "clock_main"
+type = "clock.date"
+skin = "minimal_type"
+monitor = "primary"
+anchor = "top_center"
+offset_x_dip = 0.0
+offset_y_dip = 56.0
+scale = 1.0
+visible = true
+auto_hide_when_inactive = false
+
+[[widgets]]
+instance_id = "metrics_main"
+type = "system.metrics"
+skin = "glass_bento"
+monitor = "primary"
+anchor = "bottom_right"
+offset_x_dip = -24.0
+offset_y_dip = -68.0
+scale = 1.0
+visible = true
+auto_hide_when_inactive = false
+
+[[widgets]]
+instance_id = "player_main"
+type = "media.session"
+skin = "spectrum_dynamic"
+monitor = "primary"
+anchor = "bottom_left"
+offset_x_dip = 24.0
+offset_y_dip = -168.0
+scale = 1.0
+visible = true
+auto_hide_when_inactive = true
+
+[[widgets]]
+instance_id = "spectrum_main"
+type = "audio.spectrum"
+skin = "spectrum_dynamic"
+monitor = "primary"
+anchor = "bottom_left"
+offset_x_dip = 24.0
+offset_y_dip = -64.0
+scale = 1.0
+visible = true
+auto_hide_when_inactive = true

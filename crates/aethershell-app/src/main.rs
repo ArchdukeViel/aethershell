@@ -45,6 +45,24 @@ async fn main() -> ExitCode {
         }
     }
 
+    if let Some(pos) = args.iter().position(|a| a == "--benchmark") {
+        let duration: u32 = args.get(pos + 1).and_then(|s| s.parse().ok()).unwrap_or(60);
+        println!(
+            "Running AetherShell standardized performance benchmark ({} seconds)...",
+            duration
+        );
+        let report = aethershell_diagnostics::run_benchmark(duration);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
+        );
+        return if report.is_within_budget {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+
     let is_safe_mode = args.iter().any(|a| a == "--safe-mode");
 
     println!("Starting AetherShell v{}...", env!("CARGO_PKG_VERSION"));

@@ -1,0 +1,9 @@
+schema_version = "1.0.0"
+
+[metrics.clock]
+source = "time.clock"
+fallback_text = "12:00"
+
+[metrics.date]
+source = "time.date"
+fallback_text = "Monday, January 1"

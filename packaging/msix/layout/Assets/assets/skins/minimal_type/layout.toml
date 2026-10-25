@@ -1,0 +1,20 @@
+schema_version = "1.0.0"
+node_limit = 16
+
+[[nodes]]
+id = "clock_text"
+type = "text"
+x = 0.0
+y = 0.0
+value = "${time.clock:HH:mm}"
+color = "@text.primary"
+font_size_dip = 44.0
+
+[[nodes]]
+id = "date_text"
+type = "text"
+x = 0.0
+y = 52.0
+value = "${time.date:EEEE, MMMM d}"
+color = "@text.secondary"
+font_size_dip = 14.0

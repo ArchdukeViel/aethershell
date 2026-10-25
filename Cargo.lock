@@ -24,6 +24,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "windows",
 ]
 
@@ -87,6 +88,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "tracing-subscriber",
+ "windows",
 ]
 
 [[package]]
@@ -123,6 +125,24 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "windows",
+]
+
+[[package]]
+name = "aethershell-settings"
+version = "0.1.0"
+dependencies = [
+ "aethershell-config",
+ "aethershell-core",
+ "aethershell-diagnostics",
+ "aethershell-ipc",
+ "aethershell-win",
+ "chrono",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

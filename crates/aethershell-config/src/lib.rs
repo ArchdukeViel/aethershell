@@ -8,4 +8,6 @@ pub use path_safety::{safe_join_contained, validate_package_relative_path, PathS
 pub use schema::{
     AppConfig, AudioConfig, DesktopConfig, GeneralConfig, PowerConfig, TaskbarConfig,
 };
-pub use storage::{ConfigManager, ConfigStorageError};
+pub use storage::{
+    resolve_app_data_dir, resolve_app_data_dir_from_base, ConfigManager, ConfigStorageError,
+};
