@@ -34,3 +34,19 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Status**: `passed`
 - **Reviewer / Authority**: Lead Architect Preflight
 - **Notes & Limitations**: WinUI 3 desktop development requires MSBuild/Visual Studio 2022. Rust toolchain uses MSVC target (`x86_64-pc-windows-msvc`).
+
+### EVD-002: Modular Cargo Workspace & Core Foundations
+- **Requirement / Gate**: Phase 0 / Gates G01, G02, G03, G04, G06, G07, G12, G16, G18, G19
+- **Candidate Commit**: `feat/phase0-foundational-workspace`
+- **Date & Environment**: 2026-10-25, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Executed Command / Test**:
+  - `cargo fmt --all --check` -> Passed (0 warnings)
+  - `cargo clippy --workspace --all-targets -- -D warnings` -> Passed (0 warnings)
+  - `cargo test --workspace` -> 26 unit tests passed across 7 crates (0 failed, 0 ignored)
+  - `cargo run --bin aethershell -- --version` -> Clean exit code 0
+  - `cargo run --bin aethershell -- --diagnostics` -> Sanitized JSON diagnostics report generated
+  - `cargo run --bin aethershell -- --safe-mode` -> Safe mode core initialization verified
+- **Observed Result**: All foundational crates compile with strict warning rejection. State machines for taskbar (Q21:A conflict yield), desktop layering host (Progman/DefView/WorkerW discovery), and temporary interactive mode (Q31:A timer and timeout dismiss) operate deterministically. Remediated findings IVA-001 through IVA-006 (token masking loops, backup poisoning prevention, build 28000 gating, UBR registry lookup, IPC protocol version validation, and DOS device name protection).
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Verification Authority Subagent (Signed Off)
+- **Notes & Limitations**: Tested in non-interactive terminal session where taskbar handles legitimately return empty without fabricating fake numbers. Full visual DComp compositing will be validated in subsequent rendering milestones.

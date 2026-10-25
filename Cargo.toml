@@ -1,0 +1,65 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/aethershell-core",
+    "crates/aethershell-win",
+    "crates/aethershell-config",
+    "crates/aethershell-ipc",
+    "crates/aethershell-diagnostics",
+    "crates/aethershell-taskbar",
+    "crates/aethershell-desktop",
+    "crates/aethershell-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["AetherShell Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/ArchdukeViel/aethershell"
+homepage = "https://github.com/ArchdukeViel/aethershell"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tokio = { version = "1.40", features = ["full"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Windows API
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dxgi",
+    "Win32_System_Threading",
+    "Win32_System_Pipes",
+    "Win32_System_SystemInformation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Power",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_UI_Shell",
+] }
+
+# Internal workspace crates
+aethershell-core = { path = "crates/aethershell-core" }
+aethershell-win = { path = "crates/aethershell-win" }
+aethershell-config = { path = "crates/aethershell-config" }
+aethershell-ipc = { path = "crates/aethershell-ipc" }
+aethershell-diagnostics = { path = "crates/aethershell-diagnostics" }
+aethershell-taskbar = { path = "crates/aethershell-taskbar" }
+aethershell-desktop = { path = "crates/aethershell-desktop" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
