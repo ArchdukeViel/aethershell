@@ -9,6 +9,9 @@ members = [
     "crates/aethershell-taskbar",
     "crates/aethershell-desktop",
     "crates/aethershell-renderer",
+    "crates/aethershell-telemetry",
+    "crates/aethershell-audio",
+    "crates/aethershell-script-host",
     "crates/aethershell-app",
 ]
 
@@ -49,6 +52,11 @@ windows = { version = "0.58", features = [
     "Win32_Storage_FileSystem",
     "Win32_UI_Shell",
     "Win32_UI_Accessibility",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
 ] }
 
 # Internal workspace crates
@@ -60,6 +68,9 @@ aethershell-diagnostics = { path = "crates/aethershell-diagnostics" }
 aethershell-taskbar = { path = "crates/aethershell-taskbar" }
 aethershell-desktop = { path = "crates/aethershell-desktop" }
 aethershell-renderer = { path = "crates/aethershell-renderer" }
+aethershell-telemetry = { path = "crates/aethershell-telemetry" }
+aethershell-audio = { path = "crates/aethershell-audio" }
+aethershell-script-host = { path = "crates/aethershell-script-host" }
 
 [profile.release]
 opt-level = 3

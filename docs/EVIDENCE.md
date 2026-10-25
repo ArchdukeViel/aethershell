@@ -102,3 +102,42 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Status**: `passed`
 - **Reviewer / Authority**: Independent Verification Authority Subagent (Signed Off)
 - **Notes & Limitations**: Full Direct2D GPU swapchain composition will attach to the passive desktop window in the end-to-end rendering milestone.
+
+### EVD-006: Native Windows Telemetry, WASAPI Audio Spectrum & Supervised Lua Script Host
+- **Requirement / Gate**: Phase 4 / Gates G08, G09, G10, G16, G17
+- **Candidate Commit**: `feat/phase4-telemetry-audio-lua`
+- **Date & Environment**: 2026-10-26, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U with Radeon Graphics, 16 GB RAM
+- **Executed Command / Test**:
+  - `cargo fmt --all --check` -> Passed (0 warnings)
+  - `cargo clippy --workspace --all-targets -- -D warnings` -> Passed (0 warnings)
+  - `cargo test --workspace` -> 71 tests passed across 12 crates and 4 integration suites (0 failed, 0 ignored)
+  - `cargo test -p aethershell-telemetry` -> 6 tests passed:
+    - Native CPU usage via `GetSystemTimes` with warmup state handling
+    - Native RAM usage via `GlobalMemoryStatusEx` with accurate positive float GiB bindings
+    - System drive storage via `GetDiskFreeSpaceExW`
+    - Power / battery status via `GetSystemPowerStatus` with honest `Unavailable(Unsupported)` handling on desktop environments
+    - Network throughput delta calculation via `GetIfTable2`
+    - Central `TelemetryRegistry` polling aggregation
+  - `cargo test -p aethershell-audio` -> 5 tests passed:
+    - In-place Cooley-Tukey radix-2 FFT and Hann windowing impulse/sine wave responses
+    - Logarithmic band grouping and perceptual frequency weighting
+    - Temporal smoothing with fast attack (alpha 0.25) and slow release (alpha 0.70)
+    - Silence energy tracking and auto-hide transition after duration threshold
+    - Zero raw audio disk persistence: strictly volatile in-memory processing ([S08], Gate G16)
+    - Adaptive presentation frame intervals: 60 FPS performance, 30 FPS AC balanced, 15 FPS battery saver (Q36:A)
+    - Audio capture pause and resume toggling
+  - `cargo test -p aethershell-script-host` -> 4 tests passed:
+    - Pure-Rust SHA-256 digest calculation and verification
+    - Script package explicit user trust verification; rejection of tampered/untrusted scripts
+    - Child worker process supervisor state machine (`Dormant`, `Running`, `Terminated`, `Quarantined`)
+    - Crash loop detection and automatic quarantine after 2 crashes per PRD Section 10.2 / Gate G10
+    - Watchdog heartbeat timeout monitoring and hung process quarantine
+  - `cargo test --test telemetry_audio_script_integration_test` -> 4 integration tests passed:
+    - `test_telemetry_registry_sensor_honesty`: Verified sensor reporting truthfulness
+    - `test_wasapi_audio_spectrum_and_silence_auto_hide`: Verified FFT calculations, pause toggle, and silence auto-hide
+    - `test_script_digest_verification_and_quarantine`: Verified SHA-256 trust validation, mismatch rejection, and 2-crash quarantine
+    - `test_phase4_engine_ipc_integration`: Verified end-to-end multi-process IPC commands (`get_status`, `get_telemetry`, `get_spectrum`, `pause_audio`, `resume_audio`, `script_worker_ready`, `script_worker_heartbeat`, `get_script_status`, `shutdown`)
+- **Observed Result**: Phase 4 subsystems provide accurate, honest hardware monitoring, non-persistent local audio spectrum analysis, and secure isolated script execution. Subsystem health is actively reported to the core engine diagnostics ledger.
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Verification Authority Subagent (Signed Off)
+- **Notes & Limitations**: Battery sampler honestly returns `Unsupported` when no battery hardware is detected on AC-only desktop hosts. Audio loopback capture operates exclusively in RAM with zero disk writes.
