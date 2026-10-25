@@ -4,4 +4,4 @@ pub mod host;
 pub mod interaction;
 
 pub use host::{DesktopHost, DesktopHostError};
-pub use interaction::InteractionController;
+pub use interaction::{DismissalReason, InteractionController};

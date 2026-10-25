@@ -1,16 +1,19 @@
 use crate::tray::SystemTray;
 use aethershell_core::{LifecycleState, VerificationStatus};
-use aethershell_desktop::InteractionController;
+use aethershell_desktop::{DesktopHost, InteractionController};
 use aethershell_diagnostics::{SubsystemHealth, SystemDiagnosticReport};
 use aethershell_ipc::{IpcClient, IpcRequest, IpcResponse, IpcServer};
 use aethershell_taskbar::TaskbarCoordinator;
 use aethershell_win::{
-    probe_desktop_hierarchy, probe_taskbars, SessionSingletonGuard, WindowsVersionInfo,
+    enumerate_monitors, probe_desktop_hierarchy, probe_taskbars, SessionSingletonGuard, ShellEvent,
+    ShellEventMonitor, WindowStateEvaluator, WindowsVersionInfo,
 };
+use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{watch, Mutex};
 use tracing::{info, warn};
+use windows::Win32::Foundation::HWND;
 
 /// Core application engine orchestrating services, IPC, and Windows lifecycle.
 pub struct AppEngine {
@@ -59,11 +62,75 @@ impl AppEngine {
             session_id
         );
 
-        // 2. Initialize System Tray on dedicated OS thread with active message pump (IVA-P1-001)
+        // 2. Configure Safe Mode & Conflict Detection (PRD Section 3.4 & Q21:A)
+        {
+            let mut tb = self.taskbar.lock().await;
+            tb.set_safe_mode(is_safe_mode);
+
+            if let Some(conflict) = tb.probe_and_update_conflicts() {
+                warn!(
+                    "Competing customizer detected ({}): {}. Yielding taskbar customization per PRD Q21:A.",
+                    conflict.name, conflict.description
+                );
+            }
+        }
+
+        // 3. Discover Desktop Host Hierarchy (PRD Section 5.1 & 5.2)
+        let desktop_host = DesktopHost::discover();
+        info!(
+            "Desktop Host Layering Viable: {} (Progman: {:?}, SHELLDLL_DefView: {:?})",
+            desktop_host.is_layering_available,
+            desktop_host.probe.progman_hwnd,
+            desktop_host.probe.shelldll_defview_hwnd
+        );
+
+        // 4. Initialize System Tray on dedicated OS thread with active message pump (IVA-P1-001)
         let (tray_handle, tray_shutdown) =
             SystemTray::spawn_tray_thread(Arc::clone(&self.shutdown_flag));
 
-        // 3. Setup IPC Server and Command Router
+        // 5. Start Out-of-Context Shell WinEvent Monitor (PRD Section 4.3)
+        let (mut shell_monitor, shell_rx) = ShellEventMonitor::start()
+            .map_err(|e| format!("Failed to start WinEvent monitor: {}", e))?;
+
+        let taskbar_for_events = Arc::clone(&self.taskbar);
+        let interaction_for_events = Arc::clone(&self.interaction);
+        let shutdown_flag_for_events = Arc::clone(&self.shutdown_flag);
+        let worker_w_raw = desktop_host.probe.worker_w_hwnd;
+        let progman_raw = desktop_host.probe.progman_hwnd;
+
+        let shell_event_task = std::thread::spawn(move || {
+            let worker_w = worker_w_raw.map(|h| HWND(h as *mut c_void));
+            let progman = progman_raw.map(|h| HWND(h as *mut c_void));
+
+            while !shutdown_flag_for_events.load(Ordering::Relaxed) {
+                if let Ok(
+                    ShellEvent::ForegroundChanged { hwnd }
+                    | ShellEvent::WindowMovedResized { hwnd },
+                ) = shell_rx.recv_timeout(std::time::Duration::from_millis(100))
+                {
+                    let raw_hwnd = HWND(hwnd as *mut c_void);
+                    let monitors = enumerate_monitors();
+
+                    // Update interaction controller focus loss if appropriate
+                    if let Ok(mut ctrl) = interaction_for_events.try_lock() {
+                        if ctrl.current_mode() != aethershell_core::InteractionMode::LockedPassive {
+                            ctrl.handle_focus_loss();
+                        }
+                    }
+
+                    if let Ok(mut tb) = taskbar_for_events.try_lock() {
+                        for mon in &monitors {
+                            let state = WindowStateEvaluator::evaluate_state(
+                                raw_hwnd, mon, worker_w, progman,
+                            );
+                            let _res = tb.evaluate_and_apply(&mon.hmonitor.to_string(), state);
+                        }
+                    }
+                }
+            }
+        });
+
+        // 6. Setup IPC Server and Command Router
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let interaction_clone = Arc::clone(&self.interaction);
         let taskbar_clone = Arc::clone(&self.taskbar);
@@ -73,7 +140,7 @@ impl AppEngine {
 
         let request_handler = Arc::new(move |req: IpcRequest| {
             let interaction = Arc::clone(&interaction_clone);
-            let _taskbar = Arc::clone(&taskbar_clone);
+            let taskbar = Arc::clone(&taskbar_clone);
             let shutdown_flag = Arc::clone(&shutdown_flag_clone);
             let shutdown_tx = shutdown_tx_clone.clone();
 
@@ -89,6 +156,17 @@ impl AppEngine {
                             last_heartbeat: chrono::Utc::now(),
                             message: Some("Core running normally".into()),
                         });
+
+                        let tb = taskbar.lock().await;
+                        let conflict = tb.conflict_info().map(|c| c.name.clone());
+                        report.record_subsystem(SubsystemHealth {
+                            name: "taskbar_coordinator".into(),
+                            status: VerificationStatus::Verified,
+                            healthy: true,
+                            last_heartbeat: chrono::Utc::now(),
+                            message: conflict.map(|c| format!("Conflict detected with {}", c)),
+                        });
+
                         IpcResponse::ok(
                             req.message_id,
                             serde_json::to_value(report).unwrap_or_default(),
@@ -150,9 +228,18 @@ impl AppEngine {
 
         info!("AetherShell IPC server running on {}", pipe_name);
 
-        // Keep engine active until shutdown
+        // 7. Engine event loop with periodic interaction timeout tick (Q31:A)
         while !self.shutdown_flag.load(Ordering::Relaxed) {
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+            // Tick interaction mode timeout
+            {
+                let mut ctrl = self.interaction.lock().await;
+                if ctrl.tick(chrono::Utc::now()) {
+                    info!("Temporary Interactive Mode automatically dismissed via timeout.");
+                }
+            }
+
             if *shutdown_tx.borrow() {
                 break;
             }
@@ -160,6 +247,8 @@ impl AppEngine {
 
         info!("Shutting down AetherShell Engine...");
         let _ = shutdown_tx.send(true);
+        shell_monitor.stop();
+        let _ = shell_event_task.join();
         tray_shutdown.store(true, Ordering::SeqCst);
         let _ = tray_handle.join();
         let _ = ipc_handle.await;
