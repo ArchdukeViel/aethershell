@@ -1,0 +1,9 @@
+schema_version = "1.0.0"
+
+[metrics.media_title]
+source = "media.title"
+fallback_text = "No media playing"
+
+[metrics.media_artist]
+source = "media.artist"
+fallback_text = "AetherShell"

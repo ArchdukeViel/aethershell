@@ -1,0 +1,24 @@
+schema_version = "1.0.0"
+id = "org.aethershell.spectrum_dynamic"
+name = "Spectrum Dynamic"
+version = "1.0.0"
+author = "AetherShell"
+license = "Apache-2.0"
+engine_min = "1.0.0"
+supported_widget_types = ["audio.spectrum", "media.session"]
+layout_file = "layout.toml"
+bindings_file = "bindings.toml"
+
+[geometry]
+width_dip = 300.0
+height_dip = 64.0
+min_scale = 0.5
+max_scale = 2.0
+
+[rendering]
+preferred_mode = "surface"
+max_fps = 60
+needs_alpha = true
+
+[interactions]
+allowed = true

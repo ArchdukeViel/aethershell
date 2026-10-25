@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AetherShell Widget Skin Manifest Schema",
+  "type": "object",
+  "required": ["schema_version", "id", "name", "version", "author", "engine_min", "supported_widget_types", "layout_file", "bindings_file", "geometry", "rendering"],
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "id": { "type": "string" },
+    "name": { "type": "string" },
+    "version": { "type": "string" },
+    "author": { "type": "string" },
+    "license": { "type": "string" },
+    "engine_min": { "type": "string" },
+    "supported_widget_types": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "layout_file": { "type": "string" },
+    "bindings_file": { "type": "string" },
+    "geometry": {
+      "type": "object",
+      "required": ["width_dip", "height_dip", "min_scale", "max_scale"],
+      "properties": {
+        "width_dip": { "type": "number", "minimum": 1.0 },
+        "height_dip": { "type": "number", "minimum": 1.0 },
+        "min_scale": { "type": "number", "minimum": 0.1 },
+        "max_scale": { "type": "number", "maximum": 5.0 }
+      }
+    },
+    "rendering": {
+      "type": "object",
+      "required": ["preferred_mode", "max_fps", "needs_alpha"],
+      "properties": {
+        "preferred_mode": { "type": "string", "enum": ["surface", "direct_composition"] },
+        "max_fps": { "type": "integer", "minimum": 1, "maximum": 120 },
+        "needs_alpha": { "type": "boolean" }
+      }
+    }
+  }
+}

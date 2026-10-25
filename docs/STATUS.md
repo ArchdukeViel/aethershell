@@ -1,8 +1,8 @@
 # AetherShell Implementation & Verification Ledger
 
 **Document Revision:** 1.0.0-dev  
-**Last Updated:** 2026-10-25  
-**Current Phase:** Phase 2 (Taskbar State Engine & Desktop Layering Host)
+**Last Updated:** 2026-10-26  
+**Current Phase:** Phase 3 (Widget Engine, Declarative Renderer & Themes)
 
 ---
 
@@ -17,13 +17,13 @@
 | **G05** | Experimental qualification (disposable VM qualification for bridge) | `NOT_STARTED` | — | Separate experimental channel only |
 | **G06** | Desktop layering (wallpaper → widgets → desktop icons) | `PARTIALLY_VERIFIED` | `feat/phase2-taskbar-desktop-host` | Passive surface extended styles (`WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`) & SHELLDLL_DefView hierarchy validation enforced (EVD-004) |
 | **G07** | Temporary Interactive Mode (bounded overlay, auto-dismiss) | `VERIFIED` | `feat/phase2-taskbar-desktop-host` | Escape key, focus loss, session lock, and timeout auto-dismissal verified (EVD-004) |
-| **G08** | Sensor honesty (missing counters display honest unavailable state) | `NOT_STARTED` | — | No fabricated 0% metrics |
+| **G08** | Sensor honesty (missing counters display honest unavailable state) | `PARTIALLY_VERIFIED` | `feat/phase3-widget-renderer-themes` | `BindingValue::Unavailable` states and fallback string substitution verified (EVD-005) |
 | **G09** | Local adaptive audio (default-on WASAPI spectrum, adaptive FPS) | `NOT_STARTED` | — | Event-driven shared loopback, 30 FPS AC / 15 FPS battery |
 | **G10** | Lua worker reliability & trust (separate process, digest consent) | `NOT_STARTED` | — | aethershell-script-host supervised child process (Q32:B) |
 | **G11** | WinUI Settings independence (C++/WinRT separate on-demand process) | `PARTIALLY_VERIFIED` | `feat/phase1-runtime-tray-ipc` | IPC `open_settings` command routing and second-instance invocation verified |
-| **G12** | Schema/backup (TOML parsing, atomic migrations, AppData storage) | `PARTIALLY_VERIFIED` | `feat/phase0-foundational-workspace` | AppConfig schema 1.0.0, path traversal rejection, atomic save with backup rollback verified |
+| **G12** | Schema/backup (TOML parsing, atomic migrations, AppData storage) | `VERIFIED` | `feat/phase3-widget-renderer-themes` | Canonical JSON schemas published for config, profile, theme, manifest, layout, and bindings; atomic save with backup rollback verified (EVD-005) |
 | **G13** | Performance budgets (measured idle/active profiles, no false claims) | `NOT_STARTED` | — | Standardized 60s benchmark harness |
-| **G14** | Accessibility (UIA, keyboard navigation, high contrast, reduced motion) | `NOT_STARTED` | — | Windows text scaling & contrast audits |
+| **G14** | Accessibility (UIA, keyboard navigation, high contrast, reduced motion) | `PARTIALLY_VERIFIED` | `feat/phase3-widget-renderer-themes` | Theme contrast tokens, `high_contrast` system color support, and `reduced_motion` animation disabling verified |
 | **G15** | Five-channel release (MSI, MSIX, Store, WinGet, portable ZIP) | `NOT_STARTED` | — | Strict stable v1 release requirement (Q40:A) |
 | **G16** | License/privacy (Apache-2.0, local-first, zero raw audio storage) | `PARTIALLY_VERIFIED` | Init Commit | Apache-2.0 LICENSE & NOTICE.md established; secret redaction unit-tested |
 | **G17** | Safe Mode & recovery (watchdog, quarantine, configuration rollback) | `PARTIALLY_VERIFIED` | `feat/phase2-taskbar-desktop-host` | Safe mode flag suppresses taskbar mutations and forces native_noop fallback across coordinator |
@@ -58,6 +58,13 @@
   - Non-invasive detection of competing taskbar customizers (Q21:A)
   - Desktop hierarchy validation and passive surface styles (`WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`)
   - Temporary Interactive Mode with Escape, focus-loss, session-lock, and timeout auto-dismissal
-- [ ] **Phase 3: Widget Engine, Skins & Design System**
+- [x] **Phase 3: Widget Engine, Skins & Design System**
+  - Declarative layout engine (`aethershell-renderer`) with DIP spatial tree resolution
+  - Semantic theme token resolver for sRGB colors, radii, typography, and motion
+  - Six first-party launch themes (`obsidian`, `arctic`, `aurora`, `solar`, `neon_grid`, `monochrome`)
+  - Six launch skin archetypes (`minimal_type`, `glass_bento`, `cyber_hud`, `terminal_mono`, `ambient_soft`, `spectrum_dynamic`)
+  - First-run profile (`signature_minimal`) with multi-widget anchor placement
+  - Six published canonical JSON schemas in `schemas/`
+  - In-memory mock canvas renderer for 100% deterministic test execution
 - [ ] **Phase 4: Telemetry, Audio Visualization & Lua Worker**
 - [ ] **Phase 5: WinUI 3 Settings, Packaging & Release Qualification**

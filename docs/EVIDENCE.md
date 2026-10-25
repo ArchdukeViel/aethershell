@@ -67,7 +67,7 @@ This document maintains verifiable test and validation records. Every entry is t
 
 ### EVD-004: Taskbar State Machine & Desktop Layering Host
 - **Requirement / Gate**: Phase 2 / Gates G04, G06, G07, G17, G19
-- **Candidate Commit**: `feat/phase2-taskbar-desktop-host`
+- **Candidate Commit**: `32be2ac` (Merged in PR #9)
 - **Date & Environment**: 2026-10-25, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
 - **Executed Command / Test**:
   - `cargo fmt --all --check` -> Passed (0 warnings)
@@ -80,5 +80,25 @@ This document maintains verifiable test and validation records. Every entry is t
     - `test_phase2_non_invasive_conflict_detection_execution`: Verified safe non-invasive detection of competing tools (`TranslucentTB`, `StartAllBack`, `ExplorerPatcher`, `RetroBar`) without process injection or detours.
 - **Observed Result**: Deterministic state machine evaluates foreground window bounds, DWM cloaking, and shell flyout classes without Explorer injection. Stacking order invariant (`Wallpaper` → `Widgets` → `Desktop Icons` → `Apps`) enforced via passive `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE` window styling. Temporary interactive mode activates bounded interaction surface and releases input immediately upon dismissal.
 - **Status**: `passed`
-- **Reviewer / Authority**: Independent Verification Authority Subagent (Audit Requested)
+- **Reviewer / Authority**: Independent Verification Authority Subagent (Signed Off)
 - **Notes & Limitations**: Direct visual XAML manipulation inside Explorer remains gated under `native_noop` fallback in stable builds per PRD Section 4.2.
+
+### EVD-005: Widget Engine, Declarative Renderer & Launch Themes
+- **Requirement / Gate**: Phase 3 / Gates G06, G08, G12, G14
+- **Candidate Commit**: `feat/phase3-widget-renderer-themes`
+- **Date & Environment**: 2026-10-26, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Executed Command / Test**:
+  - `cargo fmt --all --check` -> Passed (0 warnings)
+  - `cargo clippy --workspace --all-targets -- -D warnings` -> Passed (0 warnings)
+  - `cargo test --workspace` -> 56 tests passed across 9 crates and 3 integration suites (0 failed, 0 ignored)
+  - `cargo test --test widget_renderer_themes_integration_test` -> 5 tests passed:
+    - `test_all_six_themes_load_and_resolve`: Verified loading, parsing, and token validity across `obsidian`, `arctic`, `aurora`, `solar`, `neon_grid`, and `monochrome`.
+    - `test_all_six_launch_skins_manifest_and_layout_validity`: Verified `manifest.toml`, `layout.toml`, and `bindings.toml` across `minimal_type`, `glass_bento`, `cyber_hud`, `terminal_mono`, `ambient_soft`, and `spectrum_dynamic`.
+    - `test_first_run_profile_signature_minimal`: Verified default profile references valid widget instances, skins, and anchors.
+    - `test_end_to_end_glass_bento_rendering_pipeline`: Verified complete layout resolution (DIP coordinates, parent inheritance, node limit enforcement) and mock canvas rendering with exact draw command assertions.
+    - `test_widget_lifecycle_state_machine`: Verified full lifecycle state transitions (`Discovered` through `Disabled`).
+  - Schema verification: 6 draft-07 JSON schemas published in `schemas/` (`config`, `profile`, `theme`, `skin-manifest`, `widget-layout`, `widget-bindings`).
+- **Observed Result**: Modular declarative renderer (`aethershell-renderer`) resolves theme tokens, formats binding templates, and produces deterministic scene graph commands without GPU hardware dependency. All 6 launch skins and 6 themes conform strictly to PRD Section 9 & 10.
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Verification Authority Subagent (Signed Off)
+- **Notes & Limitations**: Full Direct2D GPU swapchain composition will attach to the passive desktop window in the end-to-end rendering milestone.

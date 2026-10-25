@@ -8,6 +8,7 @@ members = [
     "crates/aethershell-diagnostics",
     "crates/aethershell-taskbar",
     "crates/aethershell-desktop",
+    "crates/aethershell-renderer",
     "crates/aethershell-app",
 ]
 
@@ -58,6 +59,7 @@ aethershell-ipc = { path = "crates/aethershell-ipc" }
 aethershell-diagnostics = { path = "crates/aethershell-diagnostics" }
 aethershell-taskbar = { path = "crates/aethershell-taskbar" }
 aethershell-desktop = { path = "crates/aethershell-desktop" }
+aethershell-renderer = { path = "crates/aethershell-renderer" }
 
 [profile.release]
 opt-level = 3
