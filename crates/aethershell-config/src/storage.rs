@@ -109,6 +109,37 @@ impl ConfigManager {
     }
 }
 
+/// Resolves the application data directory following packaging identity rules (PRD Section 16 & Gate G20 / Q38:B).
+///
+/// If `aethershell.portable` marker exists in the executable's directory, returns `<exe_dir>/data`.
+/// Otherwise, returns `%LOCALAPPDATA%/AetherShell` on Windows, or fallback to `./data`.
+pub fn resolve_app_data_dir() -> PathBuf {
+    resolve_app_data_dir_from_base(
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf())),
+        std::env::var("LOCALAPPDATA").ok().map(PathBuf::from),
+    )
+}
+
+/// Internal helper for deterministic testing of portable vs installed AppData semantics.
+pub fn resolve_app_data_dir_from_base(
+    exe_dir: Option<PathBuf>,
+    local_appdata: Option<PathBuf>,
+) -> PathBuf {
+    if let Some(dir) = exe_dir {
+        if dir.join("aethershell.portable").exists() {
+            return dir.join("data");
+        }
+    }
+
+    if let Some(appdata) = local_appdata {
+        appdata.join("AetherShell")
+    } else {
+        PathBuf::from("data")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,6 +192,32 @@ mod tests {
         // 4. Verify config.toml is healed
         let healed_content = fs::read_to_string(&manager.config_path).expect("read healed config");
         assert!(toml::from_str::<AppConfig>(&healed_content).is_ok());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_portable_mode_app_data_resolution_g20() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("aethershell_portable_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let fake_local_appdata = PathBuf::from(r"C:\Users\Test\AppData\Local");
+
+        // 1. Without marker -> resolves to %LOCALAPPDATA%\AetherShell
+        let normal = resolve_app_data_dir_from_base(
+            Some(temp_dir.clone()),
+            Some(fake_local_appdata.clone()),
+        );
+        assert_eq!(normal, fake_local_appdata.join("AetherShell"));
+
+        // 2. With aethershell.portable marker -> resolves to <exe_dir>\data (Gate G20 / Q38:B)
+        let marker = temp_dir.join("aethershell.portable");
+        fs::write(&marker, "").unwrap();
+
+        let portable =
+            resolve_app_data_dir_from_base(Some(temp_dir.clone()), Some(fake_local_appdata));
+        assert_eq!(portable, temp_dir.join("data"));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

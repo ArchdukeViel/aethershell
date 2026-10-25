@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+
+PackageIdentifier: ArchdukeViel.AetherShell
+PackageVersion: 1.0.0
+PackageLocale: en-US
+Publisher: ArchdukeViel
+PublisherUrl: https://github.com/ArchdukeViel/aethershell
+PublisherSupportUrl: https://github.com/ArchdukeViel/aethershell/issues
+Author: AetherShell Contributors
+PackageName: AetherShell
+PackageUrl: https://github.com/ArchdukeViel/aethershell
+License: Apache-2.0
+LicenseUrl: https://github.com/ArchdukeViel/aethershell/blob/main/LICENSE
+Copyright: Copyright (c) 2026 AetherShell Contributors
+ShortDescription: Modular, offline-first Windows desktop customization engine.
+Description: >
+  AetherShell is a high-performance, standalone Windows desktop customization engine
+  featuring non-invasive taskbar states, passive-first desktop layering underneath desktop icons,
+  real-time native hardware telemetry, default-on volatile WASAPI audio spectrum visualization,
+  and supervised scriptable widgets.
+Moniker: aethershell
+Tags:
+  - desktop
+  - customization
+  - taskbar
+  - telemetry
+  - audio-visualizer
+  - widgets
+  - winui
+ReleaseNotesUrl: https://github.com/ArchdukeViel/aethershell/releases/tag/v1.0.0
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

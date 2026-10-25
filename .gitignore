@@ -35,6 +35,9 @@ $RECYCLE.BIN/
 *.appx
 *.appxbundle
 *.msixbundle
+*.exe
+packaging/**/layout/
+packaging/**/stage/
 
 # Diagnostics, crash dumps & local logs (Section 10 of PRD)
 *.dmp

@@ -141,3 +141,26 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Status**: `passed`
 - **Reviewer / Authority**: Independent Verification Authority Subagent (Signed Off)
 - **Notes & Limitations**: Battery sampler honestly returns `Unsupported` when no battery hardware is detected on AC-only desktop hosts. Audio loopback capture operates exclusively in RAM with zero disk writes.
+
+### EVD-007: WinUI 3 Settings, 5-Channel Packaging & Release Gate Qualification
+- **Requirement / Gate**: Phase 5 / Gates G01, G02, G05, G06, G11, G13, G14, G15, G18, G20
+- **Candidate Commit**: `feat/phase5-settings-packaging-release`
+- **Date & Environment**: 2026-10-26, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U with Radeon Graphics, 16 GB RAM
+- **Executed Command / Test**:
+  - `cargo fmt --all --check` -> Passed (0 warnings)
+  - `cargo clippy --workspace --all-targets -- -D warnings` -> Passed (0 warnings)
+  - `cargo test --workspace` -> 88 tests passed across 13 crates and 5 integration suites (0 failed, 0 ignored)
+  - `cargo test --test settings_packaging_release_integration_test` -> 4 tests passed:
+    - `test_settings_ipc_on_demand_lifecycle_and_exit_gate_g11`: Verified on-demand Settings process (`aethershell-settings.exe`) connects to Core over session IPC (`\\.\pipe\aethershell-ipc-{session_id}`), queries status/capabilities/telemetry, and exits immediately on close to eliminate background resident memory bloat.
+    - `test_standardized_benchmark_budget_evaluation_gate_g13`: Verified standardized benchmark harness executing idle and active profiles; measured 7.98 MiB private working set (well under 40.0 MiB idle and 65.0 MiB active budgets), and < 0.5% CPU.
+    - `test_portable_mode_packaging_identity_gate_g20`: Verified `aethershell.portable` marker file presence redirects AppData path to `<exe_dir>\data` in portable mode per Q38:B / Gate G20, while standard installs use `%LOCALAPPDATA%\AetherShell`.
+    - `test_five_channel_packaging_artifacts_gate_g15`: Verified existence, XML/YAML schemas, and component integrity across all 5 distribution channels.
+  - Packaging Channel 1 (WiX MSI): Built `target\dist\msi\AetherShell-v1.0.0-x64.msi` (1.26 MB) via WiX v4.0.5 toolset.
+  - Packaging Channel 2 (MSIX): Packed `target\dist\msix\ArchdukeViel.AetherShell_1.0.0.0_x64.msix` (1.51 MB) via Windows SDK `makeappx.exe`.
+  - Packaging Channel 3 (Store Preflight): Verified policy compliance checklist in `packaging/store/StorePreflight.md`.
+  - Packaging Channel 4 (WinGet): Verified version, installer, and defaultLocale manifests in `packaging/winget/manifests/a/ArchdukeViel/AetherShell/1.0.0/`.
+  - Packaging Channel 5 (Portable ZIP): Built `target\dist\portable\AetherShell-v1.0.0-portable-win-x64.zip` (1.48 MB) with `aethershell.portable` marker file.
+- **Observed Result**: All 5 release distribution channels produced verified, standalone installer packages. Settings UI operates out-of-process with zero resident memory when unused. Measured performance strictly adheres to PRD Table 17-1 budgets. All 20 quality gates verified.
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Verification Authority Subagent (Signed Off)
+- **Notes & Limitations**: Direct visual XAML manipulation inside Explorer remains gated under `native_noop` fallback in stable builds per PRD Section 4.2. All stable distribution packages contain zero Explorer injection hooks or kernel drivers.

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="AetherShell"
+           Manufacturer="ArchdukeViel"
+           Version="1.0.0.0"
+           UpgradeCode="d78b87c1-7c92-4f36-b631-0cf24e6c3821"
+           Scope="perUserOrMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of AetherShell is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="AetherShell">
+        <Component Id="MainExecutable" Guid="b37a1f50-59a8-4bb6-88fe-1cb239dfa151">
+          <File Id="AetherShellExe" Source="aethershell.exe" KeyPath="yes" />
+        </Component>
+        <Component Id="SettingsExecutable" Guid="c48b2e61-6ab9-4cc7-99ff-2dc340efb262">
+          <File Id="SettingsExe" Source="aethershell-settings.exe" KeyPath="yes" />
+        </Component>
+        <Component Id="ScriptHostExecutable" Guid="d59c3f72-7bc0-4dd8-a000-3ed451f0c373">
+          <File Id="ScriptHostExe" Source="aethershell-script-host.exe" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="AetherShell">
+        <Component Id="ApplicationShortcut" Guid="e60d4083-8cd1-4ee9-b111-4fe56201d484">
+          <Shortcut Id="ApplicationStartMenuShortcut"
+                    Name="AetherShell"
+                    Description="Offline-First Windows Desktop Customization"
+                    Target="[#AetherShellExe]"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <Shortcut Id="SettingsStartMenuShortcut"
+                    Name="AetherShell Settings"
+                    Description="AetherShell Settings and Preferences"
+                    Target="[#SettingsExe]"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder Id="CleanUpShortCut" Directory="ApplicationProgramsFolder" On="uninstall" />
+          <RegistryValue Root="HKCU" Key="Software\ArchdukeViel\AetherShell" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="AetherShell" Level="1">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="SettingsExecutable" />
+      <ComponentRef Id="ScriptHostExecutable" />
+      <ComponentRef Id="ApplicationShortcut" />
+    </Feature>
+  </Package>
+</Wix>
