@@ -53,14 +53,32 @@ This document maintains verifiable test and validation records. Every entry is t
 
 ### EVD-003: Session Singleton, Named Pipe IPC Server & System Tray
 - **Requirement / Gate**: Phase 1 / Gates G01, G11, G18
-- **Candidate Commit**: `feat/phase1-runtime-tray-ipc`
+- **Candidate Commit**: `2acc9b8` (Merged in PR #8)
 - **Date & Environment**: 2026-10-25, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
 - **Executed Command / Test**:
   - `cargo fmt --all --check` -> Passed (0 warnings)
   - `cargo clippy --workspace --all-targets -- -D warnings` -> Passed (0 warnings)
-  - `cargo test --workspace` -> 31 tests passed across 8 crates (including multi-process lifecycle test & timeout enforcement test)
+  - `cargo test --workspace` -> 32 tests passed across 8 crates (including multi-process lifecycle test & timeout enforcement test)
   - `cargo test --test lifecycle_ipc_test` -> Verified multi-process singleton locking, secondary instance `--settings` notification via IPC, and clean shutdown trigger
 - **Observed Result**: Session-scoped singleton mutex (`Local\AetherShell_Singleton_{SessionId}`) successfully arbitrates primary instance vs secondary command invocations. Async Named Pipe IPC server (`\\.\pipe\aethershell-ipc-{SessionId}`) handles versioned request/response communication. System tray runs on a dedicated OS thread with an active Win32 message pump (PeekMessageW/DispatchMessageW). Client-side request deadline timeouts enforced with `io::ErrorKind::TimedOut` (IVA-P1-003).
 - **Status**: `passed`
-- **Reviewer / Authority**: Independent Verification Authority Subagent (Re-Audit In Progress)
+- **Reviewer / Authority**: Independent Verification Authority Subagent (Signed Off)
 - **Notes & Limitations**: Non-interactive desktop sessions log a benign advisory when `Shell_NotifyIconW` cannot attach to an active shell explorer tray station.
+
+### EVD-004: Taskbar State Machine & Desktop Layering Host
+- **Requirement / Gate**: Phase 2 / Gates G04, G06, G07, G17, G19
+- **Candidate Commit**: `feat/phase2-taskbar-desktop-host`
+- **Date & Environment**: 2026-10-25, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Executed Command / Test**:
+  - `cargo fmt --all --check` -> Passed (0 warnings)
+  - `cargo clippy --workspace --all-targets -- -D warnings` -> Passed (0 warnings)
+  - `cargo test --workspace` -> 45 tests passed across 8 crates and 2 integration suites (0 failed, 0 ignored)
+  - `cargo test --test taskbar_desktop_integration_test` -> 4 integration tests passed:
+    - `test_phase2_taskbar_state_machine_and_conflict_precedence`: Verified precedence hierarchy (`safe_mode` > conflict yield > rule evaluation) and `ExternalAppearanceBackend` honest fallback to `native_noop` on unverified Windows 11 26H2.
+    - `test_phase2_interaction_mode_dismissal_triggers`: Verified all 4 auto-dismissal triggers (Escape key 0x1B, focus loss, session lock, timeout expiration) return mode to `LockedPassive` with truthful dismissal reason.
+    - `test_phase2_desktop_stacking_validation_contract`: Verified host hierarchy probing and rejection of unsupported layering with `DesktopHostError::LayeringDisabled` to preserve desktop icons per PRD Section 5.1.
+    - `test_phase2_non_invasive_conflict_detection_execution`: Verified safe non-invasive detection of competing tools (`TranslucentTB`, `StartAllBack`, `ExplorerPatcher`, `RetroBar`) without process injection or detours.
+- **Observed Result**: Deterministic state machine evaluates foreground window bounds, DWM cloaking, and shell flyout classes without Explorer injection. Stacking order invariant (`Wallpaper` → `Widgets` → `Desktop Icons` → `Apps`) enforced via passive `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE` window styling. Temporary interactive mode activates bounded interaction surface and releases input immediately upon dismissal.
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Verification Authority Subagent (Audit Requested)
+- **Notes & Limitations**: Direct visual XAML manipulation inside Explorer remains gated under `native_noop` fallback in stable builds per PRD Section 4.2.

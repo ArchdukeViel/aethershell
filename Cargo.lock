@@ -57,6 +57,7 @@ dependencies = [
  "serde",
  "thiserror",
  "tracing",
+ "windows",
 ]
 
 [[package]]

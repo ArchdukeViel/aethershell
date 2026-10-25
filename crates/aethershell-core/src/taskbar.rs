@@ -52,6 +52,48 @@ pub struct TaskbarRule {
 }
 
 impl TaskbarRule {
+    /// Returns the default baseline rule table per PRD Section 4.3.
+    pub fn default_rules() -> Vec<Self> {
+        vec![
+            TaskbarRule {
+                id: "rule_desktop".into(),
+                priority: 10,
+                target_state: Some(MonitorTaskbarState::Desktop),
+                executable_filter: None,
+                effect: TaskbarEffect::Clear,
+                color_hex: None,
+                opacity: 0.0,
+            },
+            TaskbarRule {
+                id: "rule_maximized".into(),
+                priority: 20,
+                target_state: Some(MonitorTaskbarState::WindowMaximized),
+                executable_filter: None,
+                effect: TaskbarEffect::Tint,
+                color_hex: Some("#141925".into()),
+                opacity: 0.85,
+            },
+            TaskbarRule {
+                id: "rule_fullscreen".into(),
+                priority: 30,
+                target_state: Some(MonitorTaskbarState::Fullscreen),
+                executable_filter: None,
+                effect: TaskbarEffect::NativeNoop,
+                color_hex: None,
+                opacity: 1.0,
+            },
+            TaskbarRule {
+                id: "rule_flyout".into(),
+                priority: 40,
+                target_state: Some(MonitorTaskbarState::FlyoutVisible),
+                executable_filter: None,
+                effect: TaskbarEffect::NativeNoop,
+                color_hex: None,
+                opacity: 1.0,
+            },
+        ]
+    }
+
     /// Determines whether this rule matches the current context.
     pub fn matches(&self, current_state: MonitorTaskbarState, active_exe: Option<&str>) -> bool {
         if let Some(target) = self.target_state {
