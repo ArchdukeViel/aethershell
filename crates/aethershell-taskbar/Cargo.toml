@@ -1,0 +1,13 @@
+[package]
+name = "aethershell-taskbar"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+aethershell-core.workspace = true
+aethershell-win.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
