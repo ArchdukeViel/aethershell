@@ -6,13 +6,16 @@ version = 4
 name = "aethershell-app"
 version = "0.1.0"
 dependencies = [
+ "aethershell-audio",
  "aethershell-config",
  "aethershell-core",
  "aethershell-desktop",
  "aethershell-diagnostics",
  "aethershell-ipc",
  "aethershell-renderer",
+ "aethershell-script-host",
  "aethershell-taskbar",
+ "aethershell-telemetry",
  "aethershell-win",
  "chrono",
  "serde",
@@ -21,6 +24,17 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "windows",
+]
+
+[[package]]
+name = "aethershell-audio"
+version = "0.1.0"
+dependencies = [
+ "aethershell-core",
+ "serde",
+ "thiserror",
+ "tracing",
  "windows",
 ]
 
@@ -101,6 +115,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "aethershell-script-host"
+version = "0.1.0"
+dependencies = [
+ "aethershell-core",
+ "aethershell-ipc",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "windows",
+]
+
+[[package]]
 name = "aethershell-taskbar"
 version = "0.1.0"
 dependencies = [
@@ -109,6 +138,17 @@ dependencies = [
  "serde",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "aethershell-telemetry"
+version = "0.1.0"
+dependencies = [
+ "aethershell-core",
+ "serde",
+ "thiserror",
+ "tracing",
+ "windows",
 ]
 
 [[package]]

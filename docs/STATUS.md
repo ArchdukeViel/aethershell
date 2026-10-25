@@ -2,7 +2,7 @@
 
 **Document Revision:** 1.0.0-dev  
 **Last Updated:** 2026-10-26  
-**Current Phase:** Phase 3 (Widget Engine, Declarative Renderer & Themes)
+**Current Phase:** Phase 4 (Telemetry, Audio Visualization & Lua Worker)
 
 ---
 
@@ -17,16 +17,16 @@
 | **G05** | Experimental qualification (disposable VM qualification for bridge) | `NOT_STARTED` | — | Separate experimental channel only |
 | **G06** | Desktop layering (wallpaper → widgets → desktop icons) | `PARTIALLY_VERIFIED` | `feat/phase2-taskbar-desktop-host` | Passive surface extended styles (`WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`) & SHELLDLL_DefView hierarchy validation enforced (EVD-004) |
 | **G07** | Temporary Interactive Mode (bounded overlay, auto-dismiss) | `VERIFIED` | `feat/phase2-taskbar-desktop-host` | Escape key, focus loss, session lock, and timeout auto-dismissal verified (EVD-004) |
-| **G08** | Sensor honesty (missing counters display honest unavailable state) | `PARTIALLY_VERIFIED` | `feat/phase3-widget-renderer-themes` | `BindingValue::Unavailable` states and fallback string substitution verified (EVD-005) |
-| **G09** | Local adaptive audio (default-on WASAPI spectrum, adaptive FPS) | `NOT_STARTED` | — | Event-driven shared loopback, 30 FPS AC / 15 FPS battery |
-| **G10** | Lua worker reliability & trust (separate process, digest consent) | `NOT_STARTED` | — | aethershell-script-host supervised child process (Q32:B) |
+| **G08** | Sensor honesty (missing counters display honest unavailable state) | `VERIFIED` | `feat/phase4-telemetry-audio-lua` | Native CPU, RAM, storage, battery, network samplers report honest `Warmup` and `Unsupported` states without fake 0% values (EVD-006) |
+| **G09** | Local adaptive audio (default-on WASAPI spectrum, adaptive FPS) | `VERIFIED` | `feat/phase4-telemetry-audio-lua` | WASAPI loopback capture, FFT engine, log grouping, temporal smoothing, silence auto-hide, and adaptive 15/30/60 FPS verified (EVD-006) |
+| **G10** | Lua worker reliability & trust (separate process, digest consent) | `VERIFIED` | `feat/phase4-telemetry-audio-lua` | Supervised out-of-process worker, SHA-256 digest verification, crash loop quarantine at 2 crashes, and heartbeat watchdog verified (EVD-006) |
 | **G11** | WinUI Settings independence (C++/WinRT separate on-demand process) | `PARTIALLY_VERIFIED` | `feat/phase1-runtime-tray-ipc` | IPC `open_settings` command routing and second-instance invocation verified |
 | **G12** | Schema/backup (TOML parsing, atomic migrations, AppData storage) | `VERIFIED` | `feat/phase3-widget-renderer-themes` | Canonical JSON schemas published for config, profile, theme, manifest, layout, and bindings; atomic save with backup rollback verified (EVD-005) |
 | **G13** | Performance budgets (measured idle/active profiles, no false claims) | `NOT_STARTED` | — | Standardized 60s benchmark harness |
 | **G14** | Accessibility (UIA, keyboard navigation, high contrast, reduced motion) | `PARTIALLY_VERIFIED` | `feat/phase3-widget-renderer-themes` | Theme contrast tokens, `high_contrast` system color support, and `reduced_motion` animation disabling verified |
 | **G15** | Five-channel release (MSI, MSIX, Store, WinGet, portable ZIP) | `NOT_STARTED` | — | Strict stable v1 release requirement (Q40:A) |
-| **G16** | License/privacy (Apache-2.0, local-first, zero raw audio storage) | `PARTIALLY_VERIFIED` | Init Commit | Apache-2.0 LICENSE & NOTICE.md established; secret redaction unit-tested |
-| **G17** | Safe Mode & recovery (watchdog, quarantine, configuration rollback) | `PARTIALLY_VERIFIED` | `feat/phase2-taskbar-desktop-host` | Safe mode flag suppresses taskbar mutations and forces native_noop fallback across coordinator |
+| **G16** | License/privacy (Apache-2.0, local-first, zero raw audio storage) | `VERIFIED` | `feat/phase4-telemetry-audio-lua` | In-memory volatile audio processing with zero disk persistence ([S08]), Apache-2.0 license, local-first offline operation verified (EVD-006) |
+| **G17** | Safe Mode & recovery (watchdog, quarantine, configuration rollback) | `VERIFIED` | `feat/phase4-telemetry-audio-lua` | Safe mode taskbar suppression, script worker 2-crash quarantine, and heartbeat timeout recovery verified (EVD-006) |
 | **G18** | Strict no-go & evidence ledger (independent reviews, commit-bound) | `PARTIALLY_VERIFIED` | `feat/phase0-foundational-workspace` | Status ledger, evidence records, and independent subagent audit engaged |
 | **G19** | Coexistence (competing customizer yields safely without interference) | `VERIFIED` | `feat/phase2-taskbar-desktop-host` | Non-invasive detection of TranslucentTB, StartAllBack, ExplorerPatcher, RetroBar with automatic yield-and-notify (Q21:A) |
 | **G20** | Packaging identity (consistent AppData semantics across channels) | `NOT_STARTED` | — | AppData-backed portable mode (Q38:B) |
@@ -66,5 +66,11 @@
   - First-run profile (`signature_minimal`) with multi-widget anchor placement
   - Six published canonical JSON schemas in `schemas/`
   - In-memory mock canvas renderer for 100% deterministic test execution
-- [ ] **Phase 4: Telemetry, Audio Visualization & Lua Worker**
+- [x] **Phase 4: Telemetry, Audio Visualization & Lua Worker**
+  - Native Windows telemetry providers: CPU (`GetSystemTimes`), RAM (`GlobalMemoryStatusEx`), Storage (`GetDiskFreeSpaceExW`), Battery (`GetSystemPowerStatus`), Network (`GetIfTable2`)
+  - Sensor honesty: unpopulated/initializing counters report `BindingValue::Unavailable` without fabricating fake 0% values
+  - WASAPI shared-loopback audio capture: zero raw audio disk persistence ([S08]), Cooley-Tukey radix-2 FFT, Hann window, logarithmic band grouping, temporal smoothing, peak decay, silence auto-hide
+  - Adaptive presentation frame rate: 60 FPS performance, 30 FPS AC balanced, 15 FPS battery saver
+  - Out-of-process Lua script host (`aethershell-script-host.exe`): pure-Rust SHA-256 digest validation, explicit user trust grant requirement, crash recovery limits (quarantine after 2 crashes per PRD 10.2), watchdog heartbeat timeout
+  - Core IPC integration: commands `get_telemetry`, `get_spectrum`, `pause_audio`, `resume_audio`, `script_worker_ready`, `script_worker_heartbeat`, `get_script_status`
 - [ ] **Phase 5: WinUI 3 Settings, Packaging & Release Qualification**

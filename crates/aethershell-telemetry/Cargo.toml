@@ -1,0 +1,13 @@
+[package]
+name = "aethershell-telemetry"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+aethershell-core.workspace = true
+windows.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

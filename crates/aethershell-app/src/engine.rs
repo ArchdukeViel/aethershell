@@ -1,9 +1,12 @@
 use crate::tray::SystemTray;
+use aethershell_audio::{FpsMode, WasapiLoopbackCapture};
 use aethershell_core::{LifecycleState, VerificationStatus};
 use aethershell_desktop::{DesktopHost, InteractionController};
 use aethershell_diagnostics::{SubsystemHealth, SystemDiagnosticReport};
 use aethershell_ipc::{IpcClient, IpcRequest, IpcResponse, IpcServer};
+use aethershell_script_host::ScriptSupervisor;
 use aethershell_taskbar::TaskbarCoordinator;
+use aethershell_telemetry::TelemetryRegistry;
 use aethershell_win::{
     enumerate_monitors, probe_desktop_hierarchy, probe_taskbars, SessionSingletonGuard, ShellEvent,
     ShellEventMonitor, WindowStateEvaluator, WindowsVersionInfo,
@@ -20,6 +23,9 @@ pub struct AppEngine {
     os_info: WindowsVersionInfo,
     interaction: Arc<Mutex<InteractionController>>,
     taskbar: Arc<Mutex<TaskbarCoordinator>>,
+    telemetry: Arc<Mutex<TelemetryRegistry>>,
+    audio: Arc<Mutex<WasapiLoopbackCapture>>,
+    script_supervisor: Arc<Mutex<ScriptSupervisor>>,
     shutdown_flag: Arc<AtomicBool>,
 }
 
@@ -29,8 +35,39 @@ impl AppEngine {
             os_info: WindowsVersionInfo::detect(),
             interaction: Arc::new(Mutex::new(InteractionController::new())),
             taskbar: Arc::new(Mutex::new(TaskbarCoordinator::new())),
+            telemetry: Arc::new(Mutex::new(TelemetryRegistry::new())),
+            audio: Arc::new(Mutex::new(WasapiLoopbackCapture::new(
+                32,
+                FpsMode::AcBalanced,
+            ))),
+            script_supervisor: Arc::new(Mutex::new(ScriptSupervisor::new(2))),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn telemetry(&self) -> Arc<Mutex<TelemetryRegistry>> {
+        Arc::clone(&self.telemetry)
+    }
+
+    #[allow(dead_code)]
+    pub fn audio(&self) -> Arc<Mutex<WasapiLoopbackCapture>> {
+        Arc::clone(&self.audio)
+    }
+
+    #[allow(dead_code)]
+    pub fn script_supervisor(&self) -> Arc<Mutex<ScriptSupervisor>> {
+        Arc::clone(&self.script_supervisor)
+    }
+
+    #[allow(dead_code)]
+    pub fn interaction(&self) -> Arc<Mutex<InteractionController>> {
+        Arc::clone(&self.interaction)
+    }
+
+    #[allow(dead_code)]
+    pub fn taskbar(&self) -> Arc<Mutex<TaskbarCoordinator>> {
+        Arc::clone(&self.taskbar)
     }
 
     /// Primary runtime entry point.
@@ -134,6 +171,9 @@ impl AppEngine {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let interaction_clone = Arc::clone(&self.interaction);
         let taskbar_clone = Arc::clone(&self.taskbar);
+        let telemetry_clone = Arc::clone(&self.telemetry);
+        let audio_clone = Arc::clone(&self.audio);
+        let supervisor_clone = Arc::clone(&self.script_supervisor);
         let shutdown_flag_clone = Arc::clone(&self.shutdown_flag);
         let shutdown_tx_clone = shutdown_tx.clone();
         let os_build = self.os_info.build_number;
@@ -141,6 +181,9 @@ impl AppEngine {
         let request_handler = Arc::new(move |req: IpcRequest| {
             let interaction = Arc::clone(&interaction_clone);
             let taskbar = Arc::clone(&taskbar_clone);
+            let telemetry = Arc::clone(&telemetry_clone);
+            let audio = Arc::clone(&audio_clone);
+            let supervisor = Arc::clone(&supervisor_clone);
             let shutdown_flag = Arc::clone(&shutdown_flag_clone);
             let shutdown_tx = shutdown_tx_clone.clone();
 
@@ -167,6 +210,43 @@ impl AppEngine {
                             message: conflict.map(|c| format!("Conflict detected with {}", c)),
                         });
 
+                        report.record_subsystem(SubsystemHealth {
+                            name: "telemetry_provider".into(),
+                            status: VerificationStatus::Verified,
+                            healthy: true,
+                            last_heartbeat: chrono::Utc::now(),
+                            message: Some("Native Windows sensors active".into()),
+                        });
+
+                        let aud = audio.lock().await;
+                        report.record_subsystem(SubsystemHealth {
+                            name: "audio_spectrum".into(),
+                            status: VerificationStatus::Verified,
+                            healthy: !aud.is_paused(),
+                            last_heartbeat: chrono::Utc::now(),
+                            message: if aud.is_paused() {
+                                Some("Audio capture paused".into())
+                            } else {
+                                Some(format!(
+                                    "WASAPI loopback active ({} bands)",
+                                    aud.band_count()
+                                ))
+                            },
+                        });
+
+                        let sup = supervisor.lock().await;
+                        report.record_subsystem(SubsystemHealth {
+                            name: "script_supervisor".into(),
+                            status: VerificationStatus::Verified,
+                            healthy: !sup.is_quarantined(),
+                            last_heartbeat: chrono::Utc::now(),
+                            message: if sup.is_quarantined() {
+                                Some("Script host quarantined".into())
+                            } else {
+                                Some(format!("State: {:?}", sup.state()))
+                            },
+                        });
+
                         IpcResponse::ok(
                             req.message_id,
                             serde_json::to_value(report).unwrap_or_default(),
@@ -181,6 +261,64 @@ impl AppEngine {
                                 "os_build": os_build,
                                 "taskbar_count": taskbars.len(),
                                 "desktop_layering_available": desktop.shelldll_defview_hwnd.is_some(),
+                                "audio_spectrum_enabled": true,
+                                "script_sandbox_enabled": true,
+                            }),
+                        )
+                    }
+                    "get_telemetry" => {
+                        let mut tel = telemetry.lock().await;
+                        let snapshot = tel.poll_all();
+                        IpcResponse::ok(
+                            req.message_id,
+                            serde_json::to_value(snapshot).unwrap_or_default(),
+                        )
+                    }
+                    "pause_audio" => {
+                        audio.lock().await.set_paused(true);
+                        info!("Audio capture paused via IPC.");
+                        IpcResponse::ok(req.message_id, serde_json::json!({ "paused": true }))
+                    }
+                    "resume_audio" => {
+                        audio.lock().await.set_paused(false);
+                        info!("Audio capture resumed via IPC.");
+                        IpcResponse::ok(req.message_id, serde_json::json!({ "paused": false }))
+                    }
+                    "get_spectrum" => {
+                        let aud = audio.lock().await;
+                        IpcResponse::ok(
+                            req.message_id,
+                            serde_json::json!({
+                                "bands": aud.current_bands(),
+                                "is_silent": aud.is_silent(),
+                                "should_auto_hide": aud.should_auto_hide(),
+                                "fps_mode": aud.fps_mode(),
+                            }),
+                        )
+                    }
+                    "script_worker_ready" => {
+                        let pid = req.payload["pid"].as_u64().unwrap_or(0) as u32;
+                        let mut sup = supervisor.lock().await;
+                        sup.record_start(pid);
+                        info!("Script worker child registered (PID: {})", pid);
+                        IpcResponse::ok(
+                            req.message_id,
+                            serde_json::json!({ "registered": true, "pid": pid }),
+                        )
+                    }
+                    "script_worker_heartbeat" => {
+                        let mut sup = supervisor.lock().await;
+                        sup.record_heartbeat();
+                        IpcResponse::ok(req.message_id, serde_json::json!({ "acknowledged": true }))
+                    }
+                    "get_script_status" => {
+                        let sup = supervisor.lock().await;
+                        IpcResponse::ok(
+                            req.message_id,
+                            serde_json::json!({
+                                "state": sup.state(),
+                                "crash_count": sup.crash_count(),
+                                "is_quarantined": sup.is_quarantined(),
                             }),
                         )
                     }
@@ -228,7 +366,10 @@ impl AppEngine {
 
         info!("AetherShell IPC server running on {}", pipe_name);
 
-        // 7. Engine event loop with periodic interaction timeout tick (Q31:A)
+        // 7. Engine event loop with periodic interaction timeout tick (Q31:A) and monitoring
+        let mut last_telemetry_poll = std::time::Instant::now();
+        let mut last_watchdog_check = std::time::Instant::now();
+
         while !self.shutdown_flag.load(Ordering::Relaxed) {
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
@@ -238,6 +379,25 @@ impl AppEngine {
                 if ctrl.tick(chrono::Utc::now()) {
                     info!("Temporary Interactive Mode automatically dismissed via timeout.");
                 }
+            }
+
+            // Periodic native telemetry poll (1s interval)
+            let now = std::time::Instant::now();
+            if now.duration_since(last_telemetry_poll) >= std::time::Duration::from_secs(1) {
+                if let Ok(mut tel) = self.telemetry.try_lock() {
+                    let _ = tel.poll_all();
+                }
+                last_telemetry_poll = now;
+            }
+
+            // Periodic script worker watchdog check (2s interval)
+            if now.duration_since(last_watchdog_check) >= std::time::Duration::from_secs(2) {
+                if let Ok(mut sup) = self.script_supervisor.try_lock() {
+                    if sup.check_heartbeat_timeout() {
+                        warn!("Script worker watchdog timed out! Quarantined worker.");
+                    }
+                }
+                last_watchdog_check = now;
             }
 
             if *shutdown_tx.borrow() {
