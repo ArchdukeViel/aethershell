@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AetherShell Profile Schema",
+  "type": "object",
+  "required": ["schema_version", "id", "display_name", "theme", "widgets"],
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "id": { "type": "string" },
+    "display_name": { "type": "string" },
+    "theme": { "type": "string" },
+    "widgets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["instance_id", "type", "skin", "monitor", "anchor", "offset_x_dip", "offset_y_dip"],
+        "properties": {
+          "instance_id": { "type": "string" },
+          "type": { "type": "string" },
+          "skin": { "type": "string" },
+          "monitor": { "type": "string" },
+          "anchor": { "type": "string", "enum": ["top_left", "top_center", "top_right", "center", "bottom_left", "bottom_center", "bottom_right"] },
+          "offset_x_dip": { "type": "number" },
+          "offset_y_dip": { "type": "number" },
+          "scale": { "type": "number", "minimum": 0.5, "maximum": 3.0 },
+          "visible": { "type": "boolean" },
+          "auto_hide_when_inactive": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

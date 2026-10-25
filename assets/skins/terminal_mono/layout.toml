@@ -1,0 +1,32 @@
+schema_version = "1.0.0"
+node_limit = 16
+
+[[nodes]]
+id = "terminal_box"
+type = "container"
+x = 0.0
+y = 0.0
+width = 240.0
+height = 84.0
+background = "@surface.bg"
+radius = "0.0"
+
+[[nodes]]
+id = "storage_info"
+type = "text"
+parent = "terminal_box"
+x = 10.0
+y = 12.0
+value = "> DISK C: ${storage.free:0.0} GB FREE"
+color = "@accent.primary"
+font_size_dip = 12.0
+
+[[nodes]]
+id = "uptime_info"
+type = "text"
+parent = "terminal_box"
+x = 10.0
+y = 44.0
+value = "> UPTIME: ${system.uptime:0.0} HRS"
+color = "@text.primary"
+font_size_dip = 12.0

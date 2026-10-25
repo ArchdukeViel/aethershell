@@ -1,0 +1,24 @@
+schema_version = "1.0.0"
+id = "org.aethershell.cyber_hud"
+name = "Cyber HUD"
+version = "1.0.0"
+author = "AetherShell"
+license = "Apache-2.0"
+engine_min = "1.0.0"
+supported_widget_types = ["network.throughput", "system.metrics"]
+layout_file = "layout.toml"
+bindings_file = "bindings.toml"
+
+[geometry]
+width_dip = 280.0
+height_dip = 110.0
+min_scale = 0.5
+max_scale = 2.0
+
+[rendering]
+preferred_mode = "surface"
+max_fps = 10
+needs_alpha = true
+
+[interactions]
+allowed = false

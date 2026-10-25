@@ -1,0 +1,48 @@
+schema_version = "1.0.0"
+id = "arctic"
+label = "Arctic"
+color_space = "srgb"
+
+[colors.surface]
+bg = "#182233"
+raised = "#2B3D53"
+overlay = "#384E69"
+border = "#4E647B"
+
+[colors.text]
+primary = "#F1F5F9"
+secondary = "#B4C7D8"
+disabled = "#7E95AC"
+
+[colors.accent]
+primary = "#38BDF8"
+secondary = "#88D0E5"
+
+[colors.status]
+success = "#88D0E5"
+warning = "#F5BE68"
+danger = "#F58F9D"
+
+[typography]
+family = "Segoe UI Variable"
+mono_family = "Cascadia Mono"
+scale = 1.0
+
+[shape]
+corner_radius_dip = 12.0
+border_width_dip = 1.0
+
+[motion]
+fast_ms = 120
+normal_ms = 220
+slow_ms = 350
+
+[effects]
+surface_opacity = 0.85
+glow_intensity = 0.0
+
+[high_contrast]
+use_system_colors = true
+
+[reduced_motion]
+disable_nonessential_animation = true

@@ -1,0 +1,9 @@
+schema_version = "1.0.0"
+
+[metrics.net_down]
+source = "network.down"
+fallback_text = "0.0"
+
+[metrics.net_up]
+source = "network.up"
+fallback_text = "0.0"
