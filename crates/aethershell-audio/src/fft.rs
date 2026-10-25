@@ -6,12 +6,15 @@ pub struct FftEngine;
 impl FftEngine {
     /// Computes power-of-two FFT on real input samples and returns magnitude spectrum.
     pub fn compute_magnitudes(samples: &[f32]) -> Vec<f32> {
-        if samples.is_empty() {
+        if samples.len() < 2 {
             return Vec::new();
         }
 
         // Pad to next power of two
         let n = samples.len().next_power_of_two();
+        if n < 2 {
+            return Vec::new();
+        }
         let mut re = vec![0.0f32; n];
         let mut im = vec![0.0f32; n];
 
