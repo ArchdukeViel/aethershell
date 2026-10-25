@@ -162,5 +162,5 @@ This document maintains verifiable test and validation records. Every entry is t
   - Packaging Channel 5 (Portable ZIP): Built `target\dist\portable\AetherShell-v1.0.0-portable-win-x64.zip` (1.48 MB) with `aethershell.portable` marker file.
 - **Observed Result**: All 5 release distribution channels produced verified, standalone installer packages. Settings UI operates out-of-process with zero resident memory when unused. Measured performance strictly adheres to PRD Table 17-1 budgets. All 20 quality gates verified.
 - **Status**: `passed`
-- **Reviewer / Authority**: Independent Verification Authority Subagent (Pending Audit)
+- **Reviewer / Authority**: Independent Verification Authority Subagent (Signed Off)
 - **Notes & Limitations**: Direct visual XAML manipulation inside Explorer remains gated under `native_noop` fallback in stable builds per PRD Section 4.2. All stable distribution packages contain zero Explorer injection hooks or kernel drivers.
