@@ -1,9 +1,0 @@
-schema_version = "1.0.0"
-
-[metrics.weather_temp]
-source = "weather.temp"
-fallback_text = "22"
-
-[metrics.weather_condition]
-source = "weather.condition"
-fallback_text = "Clear"
