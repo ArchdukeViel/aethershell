@@ -366,4 +366,91 @@ mod tests {
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
+
+    #[test]
+    fn test_recovery_after_restart_and_interrupted_write() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "aethershell_restart_recovery_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let manager = ConfigManager::new(&temp_dir);
+
+        // 1. Initial valid saves to establish state and backup
+        let mut initial = AppConfig::default();
+        initial.general.language = "de-DE".into();
+        manager.save_atomic(&initial).expect("save initial");
+        manager
+            .save_atomic(&initial)
+            .expect("save second to populate backup");
+        assert!(manager.config_path.exists());
+        assert!(manager.backup_path.exists());
+
+        // 2. Simulate interrupted write: leave an orphaned .tmp file
+        let orphan_tmp = temp_dir.join("config.toml.tmp.orphan");
+        fs::write(&orphan_tmp, "INCOMPLETE TOML PAYLOAD").unwrap();
+
+        // 3. Simulate sudden restart / power loss corrupting live config.toml
+        fs::write(&manager.config_path, "CORRUPT [TOML").unwrap();
+
+        // 4. Recovery after restart: load_or_default heals live config from valid backup
+        let new_manager_instance = ConfigManager::new(&temp_dir);
+        let recovered = new_manager_instance
+            .load_or_default()
+            .expect("load_or_default must recover from backup after restart");
+        assert_eq!(recovered.general.language, "de-DE");
+
+        // 5. Verify live config.toml is healed and parseable
+        let healed_content = fs::read_to_string(&manager.config_path).expect("read healed config");
+        let parsed: Result<AppConfig, _> = toml::from_str(&healed_content);
+        assert!(parsed.is_ok(), "Healed config must be valid TOML");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_replacement_failure_preserves_live_config_untouched() {
+        use std::fs::OpenOptions;
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("aethershell_replace_fail_{}", uuid::Uuid::new_v4()));
+        let manager = ConfigManager::new(&temp_dir);
+
+        let initial = AppConfig::default();
+        manager.save_atomic(&initial).expect("initial save");
+        let original_content = fs::read_to_string(&manager.config_path).unwrap();
+
+        // Lock destination with exclusive access (share_mode 0 = deny read, write, and delete sharing)
+        let lock_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&manager.config_path);
+
+        if let Ok(_locked) = lock_file {
+            let mut updated = initial.clone();
+            updated.general.language = "fr-FR".into();
+
+            // Attempt save: ReplaceFileW will fail due to sharing violation
+            let res = manager.save_atomic(&updated);
+
+            // Must fail safely with AtomicRename error
+            assert!(res.is_err(), "Save to locked destination must fail");
+            match res.err().unwrap() {
+                ConfigStorageError::AtomicRename(msg) => {
+                    assert!(msg.contains("Live configuration preserved untouched"));
+                }
+                other => panic!("Expected AtomicRename error, got {:?}", other),
+            }
+
+            // Drop lock
+            drop(_locked);
+
+            // Verify live file was preserved untouched
+            let after_content = fs::read_to_string(&manager.config_path).unwrap();
+            assert_eq!(original_content, after_content);
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
 }
