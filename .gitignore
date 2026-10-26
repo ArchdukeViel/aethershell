@@ -18,7 +18,8 @@ ARM64/
 *.VC.db
 *.VC.opendb
 
-# Windows App SDK / WinUI
+# Windows App SDK / WinUI / NuGet
+packages/
 AppPackages/
 BundleArtifacts/
 Package.StoreAssociation.xml

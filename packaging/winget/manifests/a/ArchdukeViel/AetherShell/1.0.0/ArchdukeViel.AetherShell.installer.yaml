@@ -11,8 +11,8 @@ Installers:
   - Architecture: x64
     InstallerType: wix
     InstallerUrl: https://github.com/ArchdukeViel/aethershell/releases/download/v1.0.0/AetherShell-v1.0.0-x64.msi
-    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
-    Scope: user
+    InstallerSha256: 25242E1DFD01F8C4A7A4B6411E0EBE6CBF59E1553F7CB84E51DC4242499B60C1
+    Scope: machine
     InstallerLocale: en-US
     UpgradeBehavior: install
 ManifestType: installer
