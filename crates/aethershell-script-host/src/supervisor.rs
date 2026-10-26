@@ -1,14 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::os::windows::io::AsRawHandle;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
 use std::time::Instant;
-use tracing::{info, warn};
+use tracing::info;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
     SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+};
+use windows::Win32::System::Threading::{
+    CreateProcessW, GetExitCodeProcess, ResumeThread, TerminateProcess, WaitForSingleObject,
+    CREATE_SUSPENDED, PROCESS_INFORMATION, STARTUPINFOW,
 };
 
 /// Status and health of the supervised script host child process (PRD Section 13.2 / Gate G10).
@@ -20,6 +24,74 @@ pub enum SupervisorState {
     Quarantined { reason: String },
     Terminated,
 }
+
+/// RAII wrapper managing a Win32 child process handle.
+#[derive(Debug)]
+pub struct SupervisedChild {
+    process_handle: HANDLE,
+    pid: u32,
+}
+
+impl SupervisedChild {
+    pub fn new(process_handle: HANDLE, pid: u32) -> Self {
+        Self {
+            process_handle,
+            pid,
+        }
+    }
+
+    pub fn id(&self) -> u32 {
+        self.pid
+    }
+
+    pub fn handle(&self) -> HANDLE {
+        self.process_handle
+    }
+
+    pub fn is_alive(&self) -> bool {
+        unsafe {
+            let mut exit_code = 0u32;
+            if GetExitCodeProcess(self.process_handle, &mut exit_code).is_ok() {
+                exit_code == 259 // STILL_ACTIVE (0x103)
+            } else {
+                false
+            }
+        }
+    }
+
+    pub fn kill(&mut self) {
+        unsafe {
+            if !self.process_handle.0.is_null() {
+                let _ = TerminateProcess(self.process_handle, 1);
+            }
+        }
+    }
+
+    pub fn wait(&mut self) -> Result<u32, String> {
+        unsafe {
+            let _ = WaitForSingleObject(self.process_handle, 5000);
+            let mut exit_code = 0u32;
+            if GetExitCodeProcess(self.process_handle, &mut exit_code).is_ok() {
+                Ok(exit_code)
+            } else {
+                Err("GetExitCodeProcess failed".into())
+            }
+        }
+    }
+}
+
+impl Drop for SupervisedChild {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.process_handle.0.is_null() {
+                let _ = CloseHandle(self.process_handle);
+            }
+        }
+    }
+}
+
+unsafe impl Send for SupervisedChild {}
+unsafe impl Sync for SupervisedChild {}
 
 /// Windows Job Object guard ensuring all child worker processes terminate when the job or parent closes.
 #[derive(Debug)]
@@ -51,12 +123,15 @@ impl JobObjectGuard {
         }
     }
 
-    pub fn assign_process(&self, child: &Child) -> Result<(), String> {
+    pub fn assign_handle(&self, child_handle: HANDLE) -> Result<(), String> {
         unsafe {
-            let child_handle = HANDLE(child.as_raw_handle());
             AssignProcessToJobObject(self.0, child_handle)
                 .map_err(|e| format!("AssignProcessToJobObject failed: {}", e))
         }
+    }
+
+    pub fn assign_process(&self, child: &Child) -> Result<(), String> {
+        self.assign_handle(HANDLE(child.as_raw_handle()))
     }
 
     pub fn handle(&self) -> HANDLE {
@@ -86,7 +161,7 @@ pub struct ScriptSupervisor {
     last_heartbeat: Option<Instant>,
     heartbeat_timeout_secs: u32,
     job: Option<JobObjectGuard>,
-    child: Option<Child>,
+    child: Option<SupervisedChild>,
 }
 
 impl ScriptSupervisor {
@@ -118,8 +193,27 @@ impl ScriptSupervisor {
         self.child.is_some()
     }
 
+    pub fn is_child_alive(&self) -> bool {
+        self.child.as_ref().map(|c| c.is_alive()).unwrap_or(false)
+    }
+
     pub fn active_child_pid(&self) -> Option<u32> {
         self.child.as_ref().map(|c| c.id())
+    }
+
+    pub fn assign_supervised_child(&mut self, child: SupervisedChild) {
+        let pid = child.id();
+        self.child = Some(child);
+        self.state = SupervisorState::Running { pid };
+        self.last_heartbeat = Some(Instant::now());
+    }
+
+    pub fn invalidate_worker(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            child.kill();
+        }
+        self.state = SupervisorState::Terminated;
+        self.last_heartbeat = None;
     }
 
     pub fn record_start(&mut self, pid: u32) {
@@ -153,41 +247,93 @@ impl ScriptSupervisor {
         // 2. Terminate existing worker if any
         self.terminate_worker();
 
-        // 3. Ensure Job Object is available
+        // 3. Ensure Job Object is available with strict fail-closed policy (PRD G10)
         if self.job.is_none() {
-            self.job = JobObjectGuard::new().ok();
+            self.job = Some(JobObjectGuard::new().map_err(|e| {
+                format!(
+                    "CRITICAL: Job Object initialization failed: {}. Worker spawn aborted (fail-closed).",
+                    e
+                )
+            })?);
         }
+        let job = self.job.as_ref().ok_or("Job Object unavailable")?;
 
-        // 4. Spawn child process
-        let mut cmd = Command::new(exe_path);
-        cmd.arg("--script")
-            .arg(script_path)
-            .arg("--digest")
-            .arg(approved_digest);
-        if !pipe_name.is_empty() {
-            cmd.arg("--pipe").arg(pipe_name);
-        }
-        cmd.stdin(Stdio::null());
+        // 4. Create child process in SUSPENDED state to guarantee zero uncontained execution
+        let si = STARTUPINFOW {
+            cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+            ..Default::default()
+        };
+        let mut pi = PROCESS_INFORMATION::default();
 
-        let child = cmd
-            .spawn()
-            .map_err(|e| format!("Failed to spawn child worker process: {}", e))?;
-        let pid = child.id();
-
-        // 5. Assign to Windows Job Object
-        if let Some(ref job) = self.job {
-            if let Err(e) = job.assign_process(&child) {
-                warn!("Job Object assignment failed for PID {}: {}", pid, e);
+        let cmd_line = format!(
+            "\"{}\" --script \"{}\" --digest \"{}\"{}",
+            exe_path.display(),
+            script_path.display(),
+            approved_digest,
+            if pipe_name.is_empty() {
+                String::new()
             } else {
-                info!(
-                    "Assigned worker PID {} to Windows Job Object (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)",
-                    pid
-                );
+                format!(" --pipe \"{}\"", pipe_name)
             }
+        );
+        let mut cmd_line_u16: Vec<u16> =
+            cmd_line.encode_utf16().chain(std::iter::once(0)).collect();
+
+        let create_res = unsafe {
+            CreateProcessW(
+                None,
+                windows::core::PWSTR(cmd_line_u16.as_mut_ptr()),
+                None,
+                None,
+                false,
+                CREATE_SUSPENDED,
+                None,
+                None,
+                &si,
+                &mut pi,
+            )
+        };
+
+        if create_res.is_err() {
+            return Err(format!("CreateProcessW failed: {:?}", create_res.err()));
         }
 
-        self.record_start(pid);
-        self.child = Some(child);
+        // 5. Assign to Job Object while primary thread is suspended (guarantee containment)
+        if let Err(e) = job.assign_handle(pi.hProcess) {
+            unsafe {
+                let _ = TerminateProcess(pi.hProcess, 1);
+                let _ = CloseHandle(pi.hThread);
+                let _ = CloseHandle(pi.hProcess);
+            }
+            return Err(format!(
+                "CRITICAL: Job Object assignment failed: {}. Child worker terminated before execution (fail-closed).",
+                e
+            ));
+        }
+
+        // 6. Assignment succeeded under containment: resume primary thread and close thread handle
+        let resume_res = unsafe { ResumeThread(pi.hThread) };
+        unsafe {
+            let _ = CloseHandle(pi.hThread);
+        }
+
+        if resume_res == u32::MAX {
+            unsafe {
+                let _ = TerminateProcess(pi.hProcess, 1);
+                let _ = CloseHandle(pi.hProcess);
+            }
+            return Err("Failed to resume suspended child worker thread".into());
+        }
+
+        let pid = pi.dwProcessId;
+        info!(
+            "Spawned and contained worker PID {} in Windows Job Object (128 MiB memory quota, kill-on-close)",
+            pid
+        );
+
+        self.child = Some(SupervisedChild::new(pi.hProcess, pid));
+        self.state = SupervisorState::Spawning;
+        self.last_heartbeat = Some(Instant::now());
 
         Ok(pid)
     }
@@ -206,23 +352,14 @@ impl ScriptSupervisor {
     /// Polls child process exit status and enforces crash recovery / quarantine circuit breaker (PRD 10.2).
     pub fn poll_worker_status(&mut self) -> Option<i32> {
         if let Some(ref mut child) = self.child {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    let exit_code = status.code().unwrap_or(-1);
-                    self.child = None;
-                    self.record_exit(exit_code);
-                    Some(exit_code)
-                }
-                Ok(None) => {
-                    self.check_heartbeat_timeout();
-                    None
-                }
-                Err(e) => {
-                    warn!("Error waiting on worker child: {}", e);
-                    self.child = None;
-                    self.record_exit(-1);
-                    Some(-1)
-                }
+            if child.is_alive() {
+                self.check_heartbeat_timeout();
+                None
+            } else {
+                let exit_code = child.wait().unwrap_or(1) as i32;
+                self.child = None;
+                self.record_exit(exit_code);
+                Some(exit_code)
             }
         } else {
             self.check_heartbeat_timeout();
@@ -249,7 +386,13 @@ impl ScriptSupervisor {
 
     /// Checks if worker has missed heartbeat responses beyond grace period and terminates it.
     pub fn check_heartbeat_timeout(&mut self) -> bool {
-        if let SupervisorState::Running { pid } = self.state {
+        let active_pid = match self.state {
+            SupervisorState::Running { pid } => Some(pid),
+            SupervisorState::Spawning => self.child.as_ref().map(|c| c.id()),
+            _ => None,
+        };
+
+        if let Some(pid) = active_pid {
             if let Some(last) = self.last_heartbeat {
                 if last.elapsed().as_secs() >= self.heartbeat_timeout_secs as u64 {
                     self.state = SupervisorState::Quarantined {
@@ -259,7 +402,7 @@ impl ScriptSupervisor {
                         ),
                     };
                     if let Some(mut c) = self.child.take() {
-                        let _ = c.kill();
+                        c.kill();
                         let _ = c.wait();
                     }
                     return true; // Timed out
@@ -272,7 +415,7 @@ impl ScriptSupervisor {
     /// Terminates worker process if running and resets state.
     pub fn terminate_worker(&mut self) {
         if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
+            child.kill();
             let _ = child.wait();
         }
         self.stop();
@@ -300,6 +443,7 @@ impl Drop for ScriptSupervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn test_supervisor_crash_limit_and_quarantine() {
@@ -336,11 +480,9 @@ mod tests {
         let job = job.unwrap();
         assert!(!job.handle().0.is_null());
 
-        // Test assigning a real child process (e.g. powershell or cmd)
-        let child = Command::new("powershell.exe")
-            .arg("-NoProfile")
-            .arg("-Command")
-            .arg("Start-Sleep -Milliseconds 200")
+        // Test assigning a real child process (e.g. cmd.exe)
+        let child = Command::new("cmd.exe")
+            .args(["/c", "ping", "-n", "1", "127.0.0.1"])
             .spawn();
 
         if let Ok(mut c) = child {

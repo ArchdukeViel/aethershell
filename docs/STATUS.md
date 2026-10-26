@@ -123,3 +123,11 @@ An adversarial audit conducted on 2026-10-26 originally revealed 17 specific def
   - Compiler path remapping configured in `.cargo/config.toml`
   - Formal evidence ledger EVD-009 logged and verified
   - Final campaign audit reconciliation and clean master merge
+- [x] **Phase A: Security, IPC Hardening & Data Integrity** (PR #20)
+  - Named pipe atomic security descriptor construction at creation (`create_with_security_attributes_raw`)
+  - Elimination of worker registration and heartbeat bypasses in `engine.rs`
+  - Privileged management command authorization with session capability tokens (`session.token`)
+  - Supervised worker process role containment (prohibiting management command execution)
+  - Win32 `ReplaceFileW` and `MoveFileExW` genuinely atomic configuration saving with backup poisoning prevention
+  - Pre-execution worker Job Object containment via `CREATE_SUSPENDED` and zero-uncontained-execution guarantee
+  - Formal evidence ledger EVD-010 logged and verified across 110 workspace tests

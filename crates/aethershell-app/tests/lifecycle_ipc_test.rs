@@ -36,8 +36,27 @@ fn test_singleton_and_ipc_second_launch() {
                 IpcClient::send_command(&pipe, "get_status", serde_json::json!({})).await
             {
                 assert!(res.success);
-                // Send shutdown to cleanly stop child
-                let _ = IpcClient::send_command(&pipe, "shutdown", serde_json::json!({})).await;
+
+                // Negative test: unauthenticated shutdown must fail closed
+                let unauth_res = IpcClient::send_command(&pipe, "shutdown", serde_json::json!({}))
+                    .await
+                    .expect("IPC call");
+                assert!(
+                    !unauth_res.success,
+                    "Unauthenticated shutdown must be rejected"
+                );
+
+                // Authenticated shutdown using genuine session token capability
+                let token = aethershell_ipc::SessionToken::load()
+                    .expect("Session token must be present on disk for active engine");
+                let auth_res = IpcClient::send_command(
+                    &pipe,
+                    "shutdown",
+                    serde_json::json!({ "session_token": token }),
+                )
+                .await
+                .expect("IPC call");
+                assert!(auth_res.success, "Authenticated shutdown must succeed");
                 break;
             }
         }

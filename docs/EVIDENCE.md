@@ -213,3 +213,46 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Status**: `passed`
 - **Reviewer / Authority**: Full Acceptance Qualification Suite / Session Merge Authorization
 - **Notes & Limitations**: Production release tag `v1.0.0` reserved for formal tagging following owner sign-off per Q46:B; development baseline fully qualified under `0.1.0-dev`.
+
+---
+
+### EVD-010: Phase A Remediation — IPC Creation Security, Worker Authentication, Privileged Authorization, Atomic Config & Pre-Execution Job Object Containment
+- **Requirement / Gate**: Owner Review Directives for PR #20, Gate G10 (Worker Containment & Authentication), Gate G12 (Atomic Storage), Gate G16 (Privacy & Path Sanitization)
+- **Candidate Commit**: Branch `fix/phase-a-security-ipc-and-privacy` (PR #20)
+- **Date & Environment**: 2026-10-26, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Executed Actions & Verification Suite**:
+  - **1. Named Pipe Security at Creation (Zero TOCTOU)**:
+    - Replaced post-creation DACL modification with upfront `CurrentUserSecurityAttributes` RAII descriptor passed directly into `create_with_security_attributes_raw`.
+    - Enforced `reject_remote_clients(true)` and restricted SDDL `D:P(A;;GA;;;{UserSID})`.
+    - Verified fail-closed behavior on invalid SDDL syntax (`test_sddl_security_descriptor_fail_closed_on_invalid_sddl`).
+  - **2. Elimination of Worker Registration Bypass**:
+    - Completely removed arbitrary PID acceptance in `engine.rs` (`script_worker_ready` and `script_worker_heartbeat`).
+    - Enforced 6-point verification: supervisor quarantine check, active supervised child check, claimed PID == client PID check, client PID == supervisor child PID check, and child liveness check (`!sup.is_child_alive()` terminates and invalidates worker).
+  - **3. Privileged Command Caller Role & Capability Authorization**:
+    - Supervised worker child is strictly restricted from invoking management commands (`shutdown`, `enter_interactive_mode`, `exit_interactive_mode`, `reload_profile`, `update_layout`, `pause_audio`, `resume_audio`).
+    - Session capability token (`SessionTokenGuard` creating `%LOCALAPPDATA%\AetherShell\session.token`) required for all privileged management commands from out-of-process callers.
+    - Verified cross-session caller rejection (`client_identity.session_id == valid_session_id`).
+  - **4. Genuinely Atomic Configuration Saving**:
+    - Replaced direct-copy fallback with Win32 `ReplaceFileW` (for existing destination) and `MoveFileExW` (for initial creation) with `REPLACEFILE_WRITE_THROUGH` and retry loop for transient locks.
+    - Protected backup file from being overwritten if current destination is corrupted (backup poisoning prevention).
+    - Verified concurrent writers (`test_concurrent_atomic_writers`) and rollback preservation (`test_save_atomic_preserves_original_on_invalid_data`).
+  - **5. Pre-Execution Worker Containment**:
+    - Worker process created in `CREATE_SUSPENDED` state via Win32 `CreateProcessW`.
+    - Assigned to Windows Job Object (`128 MiB` memory limit + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) before any instruction executes.
+    - Terminated immediately via `TerminateProcess` if assignment fails (zero uncontained execution window).
+    - Primary thread resumed only after containment confirmed.
+  - **Automated Verification**:
+    - `cargo test -p aethershell-ipc` -> 11 passed (0 failed).
+    - `cargo test -p aethershell-config` -> 9 passed (0 failed).
+    - `cargo test -p aethershell-script-host` -> 7 passed (0 failed).
+    - `cargo test -p aethershell-app --test ipc_security_authorization_test` -> 5 passed (0 failed).
+    - `cargo test --workspace` -> 110 tests across all crates and 7 integration suites passed (0 failed).
+- **Observed Result**:
+  - Zero TOCTOU window on Named Pipe creation.
+  - Worker registration bypass completely eliminated.
+  - Management commands strictly authorized via session capability tokens.
+  - Config saving is genuinely atomic with zero direct-copy fallback.
+  - Worker process is strictly contained in Windows Job Object prior to executing any code.
+- **Status**: `passed`
+- **Reviewer / Authority**: Phase A Remediation Review / Independent Verification Audit
+- **Notes & Limitations**: PR #20 kept open on branch `fix/phase-a-security-ipc-and-privacy` awaiting explicit owner merge decision per Q44:A.

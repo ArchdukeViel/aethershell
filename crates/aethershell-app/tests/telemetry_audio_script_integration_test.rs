@@ -172,6 +172,10 @@ fn test_phase4_engine_ipc_integration() {
 
         let pipe = connected_pipe.expect("Must connect to running engine IPC");
 
+        // Load session capability token from canonical AppData location
+        let session_token = aethershell_ipc::SessionToken::load()
+            .expect("Active engine must expose session.token capability");
+
         // 1. Query status: verify telemetry_provider, audio_spectrum, and script_supervisor
         let status_res = IpcClient::send_command(&pipe, "get_status", serde_json::json!({}))
             .await
@@ -205,20 +209,28 @@ fn test_phase4_engine_ipc_integration() {
         assert!(spectrum_res.success);
         assert!(spectrum_res.payload.get("bands").is_some());
 
-        // 4. Test audio pause / resume
-        let pause_res = IpcClient::send_command(&pipe, "pause_audio", serde_json::json!({}))
-            .await
-            .expect("pause_audio call");
+        // 4. Test audio pause / resume with session capability token
+        let pause_res = IpcClient::send_command(
+            &pipe,
+            "pause_audio",
+            serde_json::json!({ "session_token": session_token }),
+        )
+        .await
+        .expect("pause_audio call");
         assert!(pause_res.success);
         assert_eq!(pause_res.payload["paused"], true);
 
-        let resume_res = IpcClient::send_command(&pipe, "resume_audio", serde_json::json!({}))
-            .await
-            .expect("resume_audio call");
+        let resume_res = IpcClient::send_command(
+            &pipe,
+            "resume_audio",
+            serde_json::json!({ "session_token": session_token }),
+        )
+        .await
+        .expect("resume_audio call");
         assert!(resume_res.success);
         assert_eq!(resume_res.payload["paused"], false);
 
-        // 5. Test script worker identity verification (Gate G10 security)
+        // 5. Test script worker identity verification (Gate G10 security & Owner Review Directives)
         // 5a. Verify spoofed PID rejection
         let spoofed_res = IpcClient::send_command(
             &pipe,
@@ -229,7 +241,8 @@ fn test_phase4_engine_ipc_integration() {
         .expect("script_worker_ready call");
         assert!(!spoofed_res.success, "Spoofed PID must be rejected");
 
-        // 5b. Verify legitimate PID registration
+        // 5b. Verify worker registration bypass elimination:
+        // Even when claimed_pid matches client_pid, calling script_worker_ready when no child was spawned must fail closed:
         let my_pid = std::process::id();
         let ready_res = IpcClient::send_command(
             &pipe,
@@ -238,15 +251,20 @@ fn test_phase4_engine_ipc_integration() {
         )
         .await
         .expect("script_worker_ready call");
-        assert!(ready_res.success, "Verified caller PID must succeed");
-        assert_eq!(ready_res.payload["registered"], true);
+        assert!(
+            !ready_res.success,
+            "Worker registration without supervised child must fail closed"
+        );
 
+        // 5c. Verify worker heartbeat without supervised child fails closed:
         let heartbeat_res =
             IpcClient::send_command(&pipe, "script_worker_heartbeat", serde_json::json!({}))
                 .await
                 .expect("script_worker_heartbeat call");
-        assert!(heartbeat_res.success);
-        assert_eq!(heartbeat_res.payload["acknowledged"], true);
+        assert!(
+            !heartbeat_res.success,
+            "Heartbeat without active child must fail closed"
+        );
 
         let script_status =
             IpcClient::send_command(&pipe, "get_script_status", serde_json::json!({}))
@@ -255,11 +273,41 @@ fn test_phase4_engine_ipc_integration() {
         assert!(script_status.success);
         assert_eq!(script_status.payload["is_quarantined"], false);
 
-        // 6. Clean shutdown
-        let shutdown_res = IpcClient::send_command(&pipe, "shutdown", serde_json::json!({}))
+        // 6. Test privileged command caller authorization (Owner Review Directive 3)
+        // 6a. Negative test: unauthenticated shutdown is rejected
+        let unauth_shutdown = IpcClient::send_command(&pipe, "shutdown", serde_json::json!({}))
             .await
-            .expect("shutdown call");
-        assert!(shutdown_res.success);
+            .expect("unauthorized shutdown call");
+        assert!(
+            !unauth_shutdown.success,
+            "Unauthenticated shutdown must be rejected"
+        );
+
+        // 6b. Negative test: shutdown with invalid session token is rejected
+        let invalid_token_shutdown = IpcClient::send_command(
+            &pipe,
+            "shutdown",
+            serde_json::json!({ "session_token": "invalid_fake_token_123" }),
+        )
+        .await
+        .expect("invalid token shutdown call");
+        assert!(
+            !invalid_token_shutdown.success,
+            "Shutdown with invalid token must be rejected"
+        );
+
+        // 6c. Authenticated shutdown using valid session capability token succeeds
+        let shutdown_res = IpcClient::send_command(
+            &pipe,
+            "shutdown",
+            serde_json::json!({ "session_token": session_token }),
+        )
+        .await
+        .expect("shutdown call");
+        assert!(
+            shutdown_res.success,
+            "Authenticated shutdown with valid session token must succeed"
+        );
     });
 
     let exit_status = child.wait().expect("child exit");

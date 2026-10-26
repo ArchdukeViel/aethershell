@@ -3,7 +3,7 @@
 //! Operates out-of-process on demand over session-scoped Named Pipe IPC.
 //! Exits immediately on close, releasing memory working set.
 
-use aethershell_ipc::IpcClient;
+use aethershell_ipc::{IpcClient, SessionToken};
 use aethershell_win::SessionSingletonGuard;
 use std::env;
 use std::process::ExitCode;
@@ -125,7 +125,12 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn query_command(pipe_name: &str, command: &str, payload: serde_json::Value) -> ExitCode {
+async fn query_command(pipe_name: &str, command: &str, mut payload: serde_json::Value) -> ExitCode {
+    if let Some(token) = SessionToken::load() {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("session_token".into(), serde_json::json!(token));
+        }
+    }
     match IpcClient::send_command(pipe_name, command, payload).await {
         Ok(resp) => {
             if resp.success {

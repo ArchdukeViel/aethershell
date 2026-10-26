@@ -17,13 +17,137 @@ use windows::Win32::Security::Authorization::{
 };
 use windows::Win32::Security::{
     GetSecurityDescriptorDacl, GetTokenInformation, TokenUser, DACL_SECURITY_INFORMATION,
-    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, TOKEN_QUERY, TOKEN_USER,
+    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY,
+    TOKEN_USER,
 };
-use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
+use windows::Win32::System::Pipes::{GetNamedPipeClientProcessId, GetNamedPipeClientSessionId};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
-pub type RequestHandler =
-    Arc<dyn Fn(IpcRequest, u32) -> Pin<Box<dyn Future<Output = IpcResponse> + Send>> + Send + Sync>;
+/// Verified Windows kernel identity of a connected IPC client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IpcClientIdentity {
+    pub process_id: u32,
+    pub session_id: u32,
+}
+
+pub type RequestHandler = Arc<
+    dyn Fn(IpcRequest, IpcClientIdentity) -> Pin<Box<dyn Future<Output = IpcResponse> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// RAII wrapper managing a Win32 SECURITY_ATTRIBUTES structure restricting access
+/// exclusively to the Current User Token SID via a protected Discretionary Access Control List (DACL).
+pub struct CurrentUserSecurityAttributes {
+    p_sd: PSECURITY_DESCRIPTOR,
+    sa: SECURITY_ATTRIBUTES,
+}
+
+impl CurrentUserSecurityAttributes {
+    pub fn new() -> Result<Self, io::Error> {
+        unsafe {
+            let mut token_handle = HANDLE::default();
+            OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token_handle).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("OpenProcessToken failed: {}", e),
+                )
+            })?;
+
+            let mut return_length = 0u32;
+            let _ = GetTokenInformation(token_handle, TokenUser, None, 0, &mut return_length);
+            if return_length == 0 {
+                let _ = CloseHandle(token_handle);
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "Failed to query token user buffer length",
+                ));
+            }
+
+            let mut buffer = vec![0u8; return_length as usize];
+            let info_res = GetTokenInformation(
+                token_handle,
+                TokenUser,
+                Some(buffer.as_mut_ptr() as *mut _),
+                return_length,
+                &mut return_length,
+            );
+            let _ = CloseHandle(token_handle);
+            info_res.map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("GetTokenInformation failed: {}", e),
+                )
+            })?;
+
+            let token_user = &*(buffer.as_ptr() as *const TOKEN_USER);
+            let mut string_sid_ptr = windows::core::PWSTR::null();
+            ConvertSidToStringSidW(token_user.User.Sid, &mut string_sid_ptr).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("ConvertSidToStringSidW failed: {}", e),
+                )
+            })?;
+
+            let sid_str = match string_sid_ptr.to_string() {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = LocalFree(HLOCAL(string_sid_ptr.0 as *mut _));
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        format!("SID to_string failed: {}", e),
+                    ));
+                }
+            };
+            let _ = LocalFree(HLOCAL(string_sid_ptr.0 as *mut _));
+
+            // SDDL: Protected DACL with Generic All granted exclusively to Current User SID
+            let sddl = format!("D:P(A;;GA;;;{})", sid_str);
+            let sddl_u16: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
+
+            let mut p_sd = PSECURITY_DESCRIPTOR::default();
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                PCWSTR(sddl_u16.as_ptr()),
+                SDDL_REVISION_1,
+                &mut p_sd,
+                None,
+            )
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "ConvertStringSecurityDescriptorToSecurityDescriptorW failed: {}",
+                        e
+                    ),
+                )
+            })?;
+
+            let sa = SECURITY_ATTRIBUTES {
+                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: p_sd.0,
+                bInheritHandle: windows::Win32::Foundation::BOOL(0),
+            };
+
+            Ok(Self { p_sd, sa })
+        }
+    }
+
+    pub fn as_ptr(&mut self) -> *mut std::ffi::c_void {
+        &mut self.sa as *mut _ as *mut std::ffi::c_void
+    }
+}
+
+impl Drop for CurrentUserSecurityAttributes {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.p_sd.0.is_null() {
+                let _ = LocalFree(HLOCAL(self.p_sd.0));
+            }
+        }
+    }
+}
+
+unsafe impl Send for CurrentUserSecurityAttributes {}
 
 /// Asynchronous Named Pipe IPC Server scoped to the user session.
 pub struct IpcServer {
@@ -57,21 +181,17 @@ impl IpcServer {
                 break;
             }
 
-            let server = ServerOptions::new()
-                .write_dac(true)
-                .first_pipe_instance(first)
-                .create(&self.pipe_name)?;
+            // 1. Construct current-user security attributes and atomically create named pipe instance
+            let server = {
+                let mut sec_attrs = CurrentUserSecurityAttributes::new()?;
+                unsafe {
+                    ServerOptions::new()
+                        .first_pipe_instance(first)
+                        .reject_remote_clients(true)
+                        .create_with_security_attributes_raw(&self.pipe_name, sec_attrs.as_ptr())?
+                }
+            };
             first = false;
-
-            // Apply Named Pipe DACL restricting access to the Current User Token SID
-            let raw_handle = server.as_raw_handle();
-            if let Err(e) = apply_current_user_dacl_to_handle(HANDLE(raw_handle as *mut _)) {
-                error!(
-                    "CRITICAL SECURITY: Failed to restrict DACL on named pipe '{}': {}. Aborting IPC server loop to prevent unauthorized access (fail-closed).",
-                    self.pipe_name, e
-                );
-                return Err(io::Error::new(io::ErrorKind::PermissionDenied, e));
-            }
 
             tokio::select! {
                 res = server.connect() => {
@@ -82,17 +202,29 @@ impl IpcServer {
                             let valid_pid = unsafe {
                                 GetNamedPipeClientProcessId(HANDLE(pipe_raw_handle as *mut _), &mut client_pid).is_ok()
                             };
+                            let mut client_session_id = 0u32;
+                            let valid_session = unsafe {
+                                GetNamedPipeClientSessionId(HANDLE(pipe_raw_handle as *mut _), &mut client_session_id).is_ok()
+                            };
 
-                            if !valid_pid || client_pid == 0 {
-                                warn!("IPC connection rejected: could not validate client PID.");
+                            if !valid_pid || client_pid == 0 || !valid_session {
+                                warn!("IPC connection rejected: could not validate client PID/session ID.");
                                 continue;
                             }
 
-                            info!("IPC client connected (verified PID: {})", client_pid);
+                            let identity = IpcClientIdentity {
+                                process_id: client_pid,
+                                session_id: client_session_id,
+                            };
+
+                            info!(
+                                "IPC client connected (verified PID: {}, Session: {})",
+                                client_pid, client_session_id
+                            );
                             let handler = Arc::clone(&self.handler);
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection(server, handler, client_pid).await {
-                                    warn!("IPC client (PID {}) connection ended with error: {}", client_pid, e);
+                                if let Err(e) = handle_connection(server, handler, identity).await {
+                                    warn!("IPC client (PID {}) connection ended with error: {}", identity.process_id, e);
                                 }
                             });
                         }
@@ -202,7 +334,7 @@ pub fn apply_current_user_dacl_to_handle(pipe_handle: HANDLE) -> Result<(), Stri
 async fn handle_connection(
     mut server: NamedPipeServer,
     handler: RequestHandler,
-    client_pid: u32,
+    client_identity: IpcClientIdentity,
 ) -> io::Result<()> {
     let mut buffer = vec![0u8; 4096];
     let mut accumulated = Vec::new();
@@ -220,8 +352,8 @@ async fn handle_connection(
             Ok((request, consumed)) => {
                 accumulated.drain(..consumed);
 
-                // Dispatch to handler with verified client PID context
-                let response = handler(request, client_pid).await;
+                // Dispatch to handler with verified kernel client identity
+                let response = handler(request, client_identity).await;
 
                 // Encode response
                 match encode_response(&response) {
@@ -281,7 +413,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ipc_server_passes_verified_client_pid() {
+    async fn test_current_user_security_attributes_creation() {
+        let attrs = CurrentUserSecurityAttributes::new();
+        assert!(
+            attrs.is_ok(),
+            "Must successfully construct CurrentUserSecurityAttributes for current user: {:?}",
+            attrs.err()
+        );
+    }
+
+    #[test]
+    fn test_sddl_security_descriptor_fail_closed_on_invalid_sddl() {
+        let invalid_sddl = "INVALID;SDDL;SYNTAX;;;MALFORMED";
+        let u16_sddl: Vec<u16> = invalid_sddl
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut p_sd = PSECURITY_DESCRIPTOR::default();
+        let res = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                PCWSTR(u16_sddl.as_ptr()),
+                SDDL_REVISION_1,
+                &mut p_sd,
+                None,
+            )
+        };
+        assert!(
+            res.is_err(),
+            "Invalid SDDL descriptor must strictly fail closed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ipc_server_atomic_security_and_verified_identity() {
         use crate::client::IpcClient;
         use std::time::Duration;
 
@@ -289,14 +453,18 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let my_pid = std::process::id();
 
-        let handler: RequestHandler = Arc::new(move |req: IpcRequest, client_pid: u32| {
-            Box::pin(async move {
-                IpcResponse::ok(
-                    req.message_id,
-                    serde_json::json!({ "received_pid": client_pid }),
-                )
-            })
-        });
+        let handler: RequestHandler =
+            Arc::new(move |req: IpcRequest, identity: IpcClientIdentity| {
+                Box::pin(async move {
+                    IpcResponse::ok(
+                        req.message_id,
+                        serde_json::json!({
+                            "received_pid": identity.process_id,
+                            "received_session": identity.session_id,
+                        }),
+                    )
+                })
+            });
 
         let server = IpcServer::new(&pipe_name, handler, shutdown_rx);
         let server_handle = tokio::spawn(async move {
@@ -305,7 +473,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(60)).await;
 
-        let res = IpcClient::send_command(&pipe_name, "test_pid", serde_json::json!({}))
+        let res = IpcClient::send_command(&pipe_name, "test_identity", serde_json::json!({}))
             .await
             .expect("send command");
 

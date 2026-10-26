@@ -5,5 +5,5 @@
 pub mod supervisor;
 pub mod trust;
 
-pub use supervisor::{ScriptSupervisor, SupervisorState};
+pub use supervisor::{JobObjectGuard, ScriptSupervisor, SupervisedChild, SupervisorState};
 pub use trust::{sha256_hex, verify_script_digest, verify_script_file_digest, TrustError};
