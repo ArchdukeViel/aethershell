@@ -1,9 +1,13 @@
 use crate::tray::SystemTray;
 use aethershell_audio::{FpsMode, WasapiLoopbackCapture};
-use aethershell_core::{LifecycleState, VerificationStatus};
-use aethershell_desktop::{DesktopHost, InteractionController};
+use aethershell_core::{
+    BindingValue, LayoutDefinition, LifecycleState, ProfileDefinition, ThemeDefinition,
+    VerificationStatus,
+};
+use aethershell_desktop::{DesktopHost, DesktopWindowManager, InteractionController};
 use aethershell_diagnostics::{SubsystemHealth, SystemDiagnosticReport};
 use aethershell_ipc::{IpcClient, IpcRequest, IpcResponse, IpcServer};
+use aethershell_renderer::{CanvasRenderer, D2D1CanvasRenderer, LayoutEngine, SceneGraph};
 use aethershell_script_host::ScriptSupervisor;
 use aethershell_taskbar::TaskbarCoordinator;
 use aethershell_telemetry::TelemetryRegistry;
@@ -11,7 +15,9 @@ use aethershell_win::{
     enumerate_monitors, probe_desktop_hierarchy, probe_taskbars, SessionSingletonGuard, ShellEvent,
     ShellEventMonitor, WindowStateEvaluator, WindowsVersionInfo,
 };
+use std::collections::HashMap;
 use std::ffi::c_void;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{watch, Mutex};
@@ -26,6 +32,8 @@ pub struct AppEngine {
     telemetry: Arc<Mutex<TelemetryRegistry>>,
     audio: Arc<Mutex<WasapiLoopbackCapture>>,
     script_supervisor: Arc<Mutex<ScriptSupervisor>>,
+    desktop_windows: Arc<Mutex<DesktopWindowManager>>,
+    desktop_renderer: Arc<Mutex<Option<D2D1CanvasRenderer>>>,
     shutdown_flag: Arc<AtomicBool>,
 }
 
@@ -41,8 +49,20 @@ impl AppEngine {
                 FpsMode::AcBalanced,
             ))),
             script_supervisor: Arc::new(Mutex::new(ScriptSupervisor::new(2))),
+            desktop_windows: Arc::new(Mutex::new(DesktopWindowManager::new())),
+            desktop_renderer: Arc::new(Mutex::new(None)),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn desktop_windows(&self) -> Arc<Mutex<DesktopWindowManager>> {
+        Arc::clone(&self.desktop_windows)
+    }
+
+    #[allow(dead_code)]
+    pub fn desktop_renderer(&self) -> Arc<Mutex<Option<D2D1CanvasRenderer>>> {
+        Arc::clone(&self.desktop_renderer)
     }
 
     #[allow(dead_code)]
@@ -112,7 +132,7 @@ impl AppEngine {
             }
         }
 
-        // 3. Discover Desktop Host Hierarchy (PRD Section 5.1 & 5.2)
+        // 3. Discover Desktop Host Hierarchy and Initialize Desktop Host Window (PRD Section 5.1, 5.2, 5.3)
         let desktop_host = DesktopHost::discover();
         info!(
             "Desktop Host Layering Viable: {} (Progman: {:?}, SHELLDLL_DefView: {:?})",
@@ -120,6 +140,69 @@ impl AppEngine {
             desktop_host.probe.progman_hwnd,
             desktop_host.probe.shelldll_defview_hwnd
         );
+
+        {
+            let mut win_mgr = self.desktop_windows.lock().await;
+            match win_mgr.initialize(&desktop_host.probe) {
+                Ok(count) => info!(
+                    "Initialized {} desktop overlay windows across monitors",
+                    count
+                ),
+                Err(e) => warn!("Desktop host window initialization warning: {}", e),
+            }
+
+            // Wire auto-dismissal on Escape key / focus loss / session lock across all windows
+            let ctrl_dismiss = Arc::clone(&self.interaction);
+            let win_mgr_dismiss = Arc::clone(&self.desktop_windows);
+            win_mgr.set_on_dismiss(move |reason| {
+                if let Ok(mut ctrl) = ctrl_dismiss.try_lock() {
+                    ctrl.dismiss(reason);
+                }
+                if let Ok(mut mgr) = win_mgr_dismiss.try_lock() {
+                    mgr.exit_interactive_mode();
+                }
+            });
+
+            // Direct2D / DirectWrite canvas rendering pipeline initialization
+            if let Some(primary) = win_mgr.primary_window_mut() {
+                let width = primary.bounds[2].max(100) as u32;
+                let height = primary.bounds[3].max(100) as u32;
+                let bounds = primary.bounds;
+                match D2D1CanvasRenderer::new_for_hwnd(primary.hwnd, width, height) {
+                    Ok(mut renderer) => {
+                        let scene = compile_first_run_scene(width as f32, height as f32);
+                        match renderer.render_scene(&scene) {
+                            Ok(cmd_count) => info!(
+                                "Direct2D 1.1 / DirectWrite rendered {} commands live on desktop host",
+                                cmd_count
+                            ),
+                            Err(e) => warn!("Direct2D initial scene render error: {}", e),
+                        }
+                        let mut r_lock = self.desktop_renderer.lock().await;
+                        *r_lock = Some(renderer);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Direct2D hardware render target initialization failed (running headless/fallback): {}",
+                            e
+                        );
+                    }
+                }
+
+                // Wire on_paint callback to automatically repaint scene on WM_PAINT
+                let r_paint = Arc::clone(&self.desktop_renderer);
+                primary.set_on_paint(move |_hwnd| {
+                    let w = bounds[2].max(100) as f32;
+                    let h = bounds[3].max(100) as f32;
+                    let scene = compile_first_run_scene(w, h);
+                    if let Ok(mut r_lock) = r_paint.try_lock() {
+                        if let Some(ref mut renderer) = *r_lock {
+                            let _ = renderer.render_scene(&scene);
+                        }
+                    }
+                });
+            }
+        }
 
         // 4. Initialize System Tray on dedicated OS thread with active message pump (IVA-P1-001)
         let (tray_handle, tray_shutdown) =
@@ -131,6 +214,7 @@ impl AppEngine {
 
         let taskbar_for_events = Arc::clone(&self.taskbar);
         let interaction_for_events = Arc::clone(&self.interaction);
+        let desktop_windows_for_events = Arc::clone(&self.desktop_windows);
         let shutdown_flag_for_events = Arc::clone(&self.shutdown_flag);
         let worker_w_raw = desktop_host.probe.worker_w_hwnd;
         let progman_raw = desktop_host.probe.progman_hwnd;
@@ -152,6 +236,9 @@ impl AppEngine {
                     if let Ok(mut ctrl) = interaction_for_events.try_lock() {
                         if ctrl.current_mode() != aethershell_core::InteractionMode::LockedPassive {
                             ctrl.handle_focus_loss();
+                            if let Ok(mut win_mgr) = desktop_windows_for_events.try_lock() {
+                                win_mgr.exit_interactive_mode();
+                            }
                         }
                     }
 
@@ -174,6 +261,8 @@ impl AppEngine {
         let telemetry_clone = Arc::clone(&self.telemetry);
         let audio_clone = Arc::clone(&self.audio);
         let supervisor_clone = Arc::clone(&self.script_supervisor);
+        let desktop_windows_clone = Arc::clone(&self.desktop_windows);
+        let desktop_renderer_clone = Arc::clone(&self.desktop_renderer);
         let shutdown_flag_clone = Arc::clone(&self.shutdown_flag);
         let shutdown_tx_clone = shutdown_tx.clone();
         let os_build = self.os_info.build_number;
@@ -184,6 +273,8 @@ impl AppEngine {
             let telemetry = Arc::clone(&telemetry_clone);
             let audio = Arc::clone(&audio_clone);
             let supervisor = Arc::clone(&supervisor_clone);
+            let desktop_windows = Arc::clone(&desktop_windows_clone);
+            let desktop_renderer = Arc::clone(&desktop_renderer_clone);
             let shutdown_flag = Arc::clone(&shutdown_flag_clone);
             let shutdown_tx = shutdown_tx_clone.clone();
 
@@ -326,7 +417,9 @@ impl AppEngine {
                         let timeout = req.payload["timeout_seconds"].as_u64().unwrap_or(8) as u32;
                         let mut ctrl = interaction.lock().await;
                         ctrl.enter_temporary_mode(timeout);
-                        info!("Entered Temporary Interactive Mode (timeout: {}s)", timeout);
+                        let mut win_mgr = desktop_windows.lock().await;
+                        win_mgr.enter_interactive_mode();
+                        info!("Entered Temporary Interactive Mode (timeout: {}s) on live desktop host", timeout);
                         IpcResponse::ok(
                             req.message_id,
                             serde_json::json!({ "active": true, "timeout_seconds": timeout }),
@@ -335,8 +428,33 @@ impl AppEngine {
                     "exit_interactive_mode" => {
                         let mut ctrl = interaction.lock().await;
                         ctrl.dismiss_to_passive();
-                        info!("Dismissed to passive desktop mode");
+                        let mut win_mgr = desktop_windows.lock().await;
+                        win_mgr.exit_interactive_mode();
+                        info!("Dismissed to passive desktop mode on live desktop host");
                         IpcResponse::ok(req.message_id, serde_json::json!({ "active": false }))
+                    }
+                    "update_layout" | "reload_profile" => {
+                        let win_mgr = desktop_windows.lock().await;
+                        let mut rendered_commands = 0;
+                        if let Some(primary) = win_mgr.primary_window() {
+                            let width = primary.bounds[2].max(100) as f32;
+                            let height = primary.bounds[3].max(100) as f32;
+                            let scene = compile_first_run_scene(width, height);
+                            let mut r_lock = desktop_renderer.lock().await;
+                            if let Some(ref mut renderer) = *r_lock {
+                                if let Ok(count) = renderer.render_scene(&scene) {
+                                    rendered_commands = count;
+                                }
+                            }
+                        }
+                        info!(
+                            "Updated layout and re-rendered on live desktop host ({} commands)",
+                            rendered_commands
+                        );
+                        IpcResponse::ok(
+                            req.message_id,
+                            serde_json::json!({ "rendered_commands": rendered_commands, "success": true }),
+                        )
                     }
                     "open_settings" => {
                         info!("IPC: 'open_settings' received. Activating Settings application.");
@@ -371,6 +489,9 @@ impl AppEngine {
         let mut last_watchdog_check = std::time::Instant::now();
 
         while !self.shutdown_flag.load(Ordering::Relaxed) {
+            // Pump Win32 messages (WM_PAINT, WM_KEYDOWN, WM_ACTIVATE, WM_WTSSESSION_CHANGE, etc.)
+            DesktopWindowManager::pump_messages();
+
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
             // Tick interaction mode timeout
@@ -378,6 +499,9 @@ impl AppEngine {
                 let mut ctrl = self.interaction.lock().await;
                 if ctrl.tick(chrono::Utc::now()) {
                     info!("Temporary Interactive Mode automatically dismissed via timeout.");
+                    if let Ok(mut win_mgr) = self.desktop_windows.try_lock() {
+                        win_mgr.exit_interactive_mode();
+                    }
                 }
             }
 
@@ -421,4 +545,80 @@ impl Default for AppEngine {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Resolves the canonical first-run `signature_minimal` profile, theme tokens, and declarative layout AST.
+pub fn compile_first_run_scene(screen_width: f32, _screen_height: f32) -> SceneGraph {
+    let profile_path = find_asset_file("assets/profiles/signature_minimal.toml");
+    let profile: ProfileDefinition = profile_path
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|content| toml::from_str(&content).ok())
+        .unwrap_or_else(ProfileDefinition::signature_minimal);
+
+    let theme_file = format!("assets/themes/{}.toml", profile.theme);
+    let theme_path = find_asset_file(&theme_file);
+    let theme: ThemeDefinition = theme_path
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|content| toml::from_str(&content).ok())
+        .unwrap_or_else(ThemeDefinition::obsidian);
+
+    let layout_path = find_asset_file("assets/skins/minimal_type/layout.toml");
+    let layout: LayoutDefinition = layout_path
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|content| toml::from_str(&content).ok())
+        .unwrap_or_else(|| {
+            toml::from_str(
+                r#"
+                schema_version = "1.0.0"
+                node_limit = 16
+                [[nodes]]
+                id = "clock_text"
+                type = "text"
+                x = 0.0
+                y = 0.0
+                value = "${time.clock:HH:mm}"
+                color = "@text.primary"
+                font_size_dip = 44.0
+                [[nodes]]
+                id = "date_text"
+                type = "text"
+                x = 0.0
+                y = 52.0
+                value = "${time.date:EEEE, MMMM d}"
+                color = "@text.secondary"
+                font_size_dip = 14.0
+            "#,
+            )
+            .unwrap()
+        });
+
+    let now = chrono::Local::now();
+    let mut bindings = HashMap::new();
+    bindings.insert(
+        "time.clock".into(),
+        BindingValue::String(now.format("%H:%M").to_string()),
+    );
+    bindings.insert(
+        "time.date".into(),
+        BindingValue::String(now.format("%A, %B %d").to_string()),
+    );
+    bindings.insert("metrics.cpu".into(), BindingValue::Percent(24.5));
+    bindings.insert("metrics.ram".into(), BindingValue::Float(6.8));
+
+    let origin_x = (screen_width * 0.5 - 120.0).max(40.0);
+    let origin_y = 60.0f32;
+
+    let resolved = LayoutEngine::resolve(&layout, &theme, &bindings, origin_x, origin_y, 1.0)
+        .unwrap_or_default();
+
+    SceneGraph::compile(&resolved)
+}
+
+fn find_asset_file(rel_path: &str) -> Option<PathBuf> {
+    let candidates = [
+        PathBuf::from(rel_path),
+        PathBuf::from("../../").join(rel_path),
+        PathBuf::from("../").join(rel_path),
+    ];
+    candidates.into_iter().find(|candidate| candidate.exists())
 }

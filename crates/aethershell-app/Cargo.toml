@@ -5,6 +5,10 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[lib]
+name = "aethershell_app"
+path = "src/lib.rs"
+
 [[bin]]
 name = "aethershell"
 path = "src/main.rs"

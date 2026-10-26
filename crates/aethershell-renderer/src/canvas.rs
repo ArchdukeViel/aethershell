@@ -39,6 +39,14 @@ pub enum RenderCommand {
         bands: Vec<f32>,
         color: ColorRgba,
     },
+    DrawLine {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        color: ColorRgba,
+        stroke_width: f32,
+    },
 }
 
 /// Compiled render scene containing ordered draw operations.
@@ -55,7 +63,8 @@ impl SceneGraph {
         for node in nodes {
             match node.node_type {
                 NodeType::Container => {
-                    if let Some(color) = node.background {
+                    if node.background.is_some() || node.border_color.is_some() {
+                        let color = node.background.unwrap_or(ColorRgba::new(0, 0, 0, 0));
                         commands.push(RenderCommand::DrawRect {
                             x: node.x,
                             y: node.y,
