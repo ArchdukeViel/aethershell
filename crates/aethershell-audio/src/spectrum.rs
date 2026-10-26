@@ -44,7 +44,13 @@ impl AudioSpectrumProcessor {
     ///
     /// Resolves PRD Section 7.3 and Gate G09 / G16.
     pub fn process_samples(&mut self, samples: &[f32]) -> Vec<f32> {
+        let now = Instant::now();
         if samples.is_empty() {
+            if now.duration_since(self.last_audio_activity).as_secs_f32()
+                >= self.silence_duration_secs
+            {
+                self.is_silent = true;
+            }
             self.decay_bands();
             return self.prev_bands.clone();
         }
@@ -52,8 +58,6 @@ impl AudioSpectrumProcessor {
         // 1. Calculate RMS energy for silence detection
         let sum_squares: f32 = samples.iter().map(|&s| s * s).sum();
         let rms = (sum_squares / samples.len() as f32).sqrt();
-
-        let now = Instant::now();
 
         if rms > self.silence_threshold {
             self.last_audio_activity = now;
@@ -124,5 +128,15 @@ mod tests {
         assert!(!processor.is_silent());
         assert!(!processor.should_auto_hide());
         assert!(bands_active.iter().any(|&b| b > 0.01));
+
+        // When loopback produces 0 packets (audio ended), empty samples decay bands
+        let decayed = processor.process_samples(&[]);
+        assert!(decayed.iter().sum::<f32>() < bands_active.iter().sum::<f32>());
+
+        // Manually trigger silence duration expiration
+        processor.last_audio_activity = Instant::now() - std::time::Duration::from_secs(6);
+        let _ = processor.process_samples(&[]);
+        assert!(processor.is_silent());
+        assert!(processor.should_auto_hide());
     }
 }

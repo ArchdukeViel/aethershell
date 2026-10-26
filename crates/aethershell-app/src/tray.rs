@@ -223,6 +223,11 @@ fn handle_open_settings() {
             let settings_exe = parent.join("aethershell-settings.exe");
             if settings_exe.exists() {
                 let _ = std::process::Command::new(settings_exe).spawn();
+            } else if let Some(grandparent) = parent.parent() {
+                let settings_exe2 = grandparent.join("aethershell-settings.exe");
+                if settings_exe2.exists() {
+                    let _ = std::process::Command::new(settings_exe2).spawn();
+                }
             }
         }
     }
@@ -265,6 +270,14 @@ fn handle_export_diagnostics() {
                     if let Ok(json_str) = serde_json::to_string_pretty(&r.payload) {
                         let _ = std::fs::write(&out_path, json_str);
                         tracing::info!("Exported diagnostics report to: {:?}", out_path);
+                    }
+                } else {
+                    let report = serde_json::json!({
+                        "exported_at": chrono::Utc::now().to_rfc3339(),
+                        "status": "ipc_query_failed",
+                    });
+                    if let Ok(json_str) = serde_json::to_string_pretty(&report) {
+                        let _ = std::fs::write(&out_path, json_str);
                     }
                 }
             }

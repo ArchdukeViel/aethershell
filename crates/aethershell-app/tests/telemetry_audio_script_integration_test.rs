@@ -349,3 +349,82 @@ fn test_phase5_job_object_containment() {
 
     let _ = std::fs::remove_file(script_path);
 }
+
+#[test]
+fn test_phase5_supervised_infinite_loop_watchdog_quarantine() {
+    let host_bin = find_script_host_binary();
+    if !host_bin.exists() {
+        return;
+    }
+
+    let temp_dir = std::env::temp_dir();
+    let script_path = temp_dir.join("aether_hang_test.lua");
+    // Script that hangs in top-level execution
+    let script_code = b"while true do end\n";
+    std::fs::write(&script_path, script_code).expect("write script");
+
+    let digest = sha256_hex(script_code);
+
+    let mut supervisor = ScriptSupervisor::new(2);
+    supervisor.set_heartbeat_timeout_secs(1); // 1-second timeout for fast test
+
+    let spawn_res = supervisor.spawn_worker(&host_bin, &script_path, &digest, "");
+    assert!(spawn_res.is_ok());
+    assert!(supervisor.has_active_child());
+
+    // Sleep long enough for heartbeat timeout (1.5s > 1s)
+    std::thread::sleep(Duration::from_millis(1500));
+
+    // Poll worker status: should detect hung worker, kill child process, and transition to Quarantined
+    let exit = supervisor.poll_worker_status();
+    assert_eq!(exit, None);
+    assert!(supervisor.is_quarantined());
+    assert!(!supervisor.has_active_child());
+
+    let _ = std::fs::remove_file(script_path);
+}
+
+#[test]
+fn test_phase5_supervised_crash_circuit_breaker() {
+    let host_bin = find_script_host_binary();
+    if !host_bin.exists() {
+        return;
+    }
+
+    let temp_dir = std::env::temp_dir();
+    let script_path = temp_dir.join("aether_crash_test.lua");
+    // Script that exits with error
+    let script_code = b"error('intentional crash test')\n";
+    std::fs::write(&script_path, script_code).expect("write script");
+
+    let digest = sha256_hex(script_code);
+
+    let mut supervisor = ScriptSupervisor::new(2);
+
+    // Crash 1: First spawn crashes
+    let spawn1 = supervisor.spawn_worker(&host_bin, &script_path, &digest, "");
+    assert!(spawn1.is_ok());
+
+    // Wait for process to exit
+    std::thread::sleep(Duration::from_millis(400));
+    let exit1 = supervisor.poll_worker_status();
+    assert!(exit1.is_some());
+    assert_eq!(supervisor.crash_count(), 1);
+    assert!(!supervisor.is_quarantined());
+
+    // Crash 2: Second spawn crashes -> triggers circuit breaker
+    let spawn2 = supervisor.spawn_worker(&host_bin, &script_path, &digest, "");
+    assert!(spawn2.is_ok());
+
+    std::thread::sleep(Duration::from_millis(400));
+    let exit2 = supervisor.poll_worker_status();
+    assert!(exit2.is_some());
+    assert_eq!(supervisor.crash_count(), 2);
+    assert!(supervisor.is_quarantined());
+
+    // Third spawn attempt must be rejected because supervisor is quarantined
+    let spawn3 = supervisor.spawn_worker(&host_bin, &script_path, &digest, "");
+    assert!(spawn3.is_err());
+
+    let _ = std::fs::remove_file(script_path);
+}

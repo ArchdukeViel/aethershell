@@ -198,8 +198,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // 5. Load and execute script if supplied
-    if let Some(bytes) = script_bytes {
-        let chunk = lua.load(&bytes).set_name(&script_path);
+    if let Some(ref bytes) = script_bytes {
+        let chunk = lua.load(bytes.as_slice()).set_name(&script_path);
         if let Err(e) = chunk.exec() {
             error!("Lua runtime script error during execution: {}", e);
             std::process::exit(1);
@@ -207,10 +207,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Invoke initial lifecycle hook if defined
         if let Ok(init_func) = lua.globals().get::<_, mlua::Function>("init") {
-            let _ = init_func.call::<_, ()>(());
+            if let Err(e) = init_func.call::<_, ()>(()) {
+                error!("Lua init() error: {}", e);
+            }
         }
         if let Ok(on_init_func) = lua.globals().get::<_, mlua::Function>("on_init") {
-            let _ = on_init_func.call::<_, ()>(());
+            if let Err(e) = on_init_func.call::<_, ()>(()) {
+                error!("Lua on_init() error: {}", e);
+            }
         }
     }
 
@@ -223,11 +227,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pipe_for_bg = pipe_name.clone();
     let telem_bg = Arc::clone(&cached_telemetry);
     let spec_bg = Arc::clone(&cached_spectrum);
+    let tick_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let tick_counter_bg = Arc::clone(&tick_counter);
+    let has_script = script_bytes.is_some();
 
     if !pipe_for_bg.is_empty() {
         tokio::spawn(async move {
+            let mut last_tick = 0u64;
+            let mut no_progress_count = 0u32;
+
             loop {
                 tokio::time::sleep(Duration::from_millis(1000)).await;
+
+                let current_tick = tick_counter_bg.load(std::sync::atomic::Ordering::Relaxed);
+                if has_script && current_tick == last_tick {
+                    no_progress_count += 1;
+                    if no_progress_count >= 2 {
+                        warn!("Lua execution tick stalled; suppressing heartbeat to allow supervisor watchdog enforcement.");
+                        continue;
+                    }
+                } else {
+                    last_tick = current_tick;
+                    no_progress_count = 0;
+                }
 
                 // Send watchdog heartbeat to supervisor
                 let _ = IpcClient::send_command(
@@ -274,7 +296,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = update_func.call::<_, ()>(()) {
                 warn!("Lua update() error: {}", e);
             }
+        } else if let Ok(on_update_func) = lua.globals().get::<_, mlua::Function>("on_update") {
+            if let Err(e) = on_update_func.call::<_, ()>(()) {
+                warn!("Lua on_update() error: {}", e);
+            }
         }
+
+        tick_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

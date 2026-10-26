@@ -188,11 +188,200 @@ unsafe fn convert_raw_audio_samples(
             let mono = (sum / channels as f32).clamp(-1.0, 1.0);
             out.push(mono);
         }
+    } else if !is_float && bits_per_sample == 24 {
+        for frame_idx in 0..num_frames {
+            let mut sum = 0.0f32;
+            for ch in 0..channels {
+                let offset = (frame_idx * channels + ch) * 3;
+                let b0 = *p_data.add(offset) as i32;
+                let b1 = *p_data.add(offset + 1) as i32;
+                let b2 = *p_data.add(offset + 2) as i8 as i32;
+                let sample_i24 = (b2 << 16) | (b1 << 8) | b0;
+                sum += sample_i24 as f32 / 8388608.0;
+            }
+            let mono = (sum / channels as f32).clamp(-1.0, 1.0);
+            out.push(mono);
+        }
+    } else if !is_float && bits_per_sample == 32 {
+        let i32_ptr = p_data as *const i32;
+        for frame_idx in 0..num_frames {
+            let mut sum = 0.0f32;
+            for ch in 0..channels {
+                sum += *i32_ptr.add(frame_idx * channels + ch) as f32 / 2147483648.0;
+            }
+            let mono = (sum / channels as f32).clamp(-1.0, 1.0);
+            out.push(mono);
+        }
     } else {
         out.resize(num_frames, 0.0);
     }
 
     out
+}
+
+struct WasapiStream {
+    audio_client: IAudioClient,
+    capture_client: IAudioCaptureClient,
+    pwfx_ptr: *mut windows::Win32::Media::Audio::WAVEFORMATEX,
+    channels: u16,
+    bits_per_sample: u16,
+    is_float: bool,
+}
+
+unsafe fn init_wasapi_stream() -> Result<WasapiStream, String> {
+    let enumerator: IMMDeviceEnumerator =
+        CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+            .map_err(|e| format!("CoCreateInstance(MMDeviceEnumerator) failed: {}", e))?;
+
+    let device = enumerator
+        .GetDefaultAudioEndpoint(eRender, eConsole)
+        .map_err(|e| format!("No default audio render endpoint available: {}", e))?;
+
+    let audio_client: IAudioClient = device
+        .Activate(CLSCTX_ALL, None)
+        .map_err(|e| format!("Failed to activate IAudioClient: {}", e))?;
+
+    let pwfx_ptr = audio_client
+        .GetMixFormat()
+        .map_err(|e| format!("GetMixFormat failed: {}", e))?;
+
+    let pwfx = *pwfx_ptr;
+    let channels = pwfx.nChannels;
+    let bits_per_sample = pwfx.wBitsPerSample;
+    let mut is_float = pwfx.wFormatTag == WAVE_FORMAT_IEEE_FLOAT;
+    if pwfx.wFormatTag == WAVE_FORMAT_EXTENSIBLE {
+        let ext = &*(pwfx_ptr as *const WAVEFORMATEXTENSIBLE);
+        let sub_format = std::ptr::addr_of!(ext.SubFormat).read_unaligned();
+        if sub_format == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT {
+            is_float = true;
+        }
+    }
+
+    let buffer_duration_hns = 2_000_000; // 200ms
+    if let Err(e) = audio_client.Initialize(
+        AUDCLNT_SHAREMODE_SHARED,
+        AUDCLNT_STREAMFLAGS_LOOPBACK,
+        buffer_duration_hns,
+        0,
+        pwfx_ptr,
+        None,
+    ) {
+        CoTaskMemFree(Some(pwfx_ptr as *const _ as *const _));
+        return Err(format!("AudioClient.Initialize loopback failed: {}", e));
+    }
+
+    let capture_client: IAudioCaptureClient = match audio_client.GetService() {
+        Ok(cc) => cc,
+        Err(e) => {
+            CoTaskMemFree(Some(pwfx_ptr as *const _ as *const _));
+            return Err(format!("GetService::<IAudioCaptureClient> failed: {}", e));
+        }
+    };
+
+    if let Err(e) = audio_client.Start() {
+        CoTaskMemFree(Some(pwfx_ptr as *const _ as *const _));
+        return Err(format!("AudioClient.Start failed: {}", e));
+    }
+
+    Ok(WasapiStream {
+        audio_client,
+        capture_client,
+        pwfx_ptr,
+        channels,
+        bits_per_sample,
+        is_float,
+    })
+}
+
+unsafe fn run_active_stream(
+    is_running: &Arc<AtomicBool>,
+    is_paused: &Arc<AtomicBool>,
+    processor: &Arc<Mutex<AudioSpectrumProcessor>>,
+    stream: &WasapiStream,
+) -> Result<(), String> {
+    let sleep_interval = Duration::from_millis(15);
+
+    while is_running.load(Ordering::Relaxed) {
+        std::thread::sleep(sleep_interval);
+
+        if is_paused.load(Ordering::Relaxed) {
+            while let Ok(packet_size) = stream.capture_client.GetNextPacketSize() {
+                if packet_size == 0 {
+                    break;
+                }
+                let mut p_data = std::ptr::null_mut();
+                let mut num_frames = 0u32;
+                let mut flags = 0u32;
+                if stream
+                    .capture_client
+                    .GetBuffer(&mut p_data, &mut num_frames, &mut flags, None, None)
+                    .is_ok()
+                {
+                    let _ = stream.capture_client.ReleaseBuffer(num_frames);
+                }
+            }
+            if let Ok(mut proc) = processor.lock() {
+                proc.process_samples(&[]);
+            }
+            continue;
+        }
+
+        let mut got_packets = false;
+        loop {
+            let packet_size = match stream.capture_client.GetNextPacketSize() {
+                Ok(size) => size,
+                Err(e) => return Err(format!("GetNextPacketSize failed: {}", e)),
+            };
+
+            if packet_size == 0 {
+                break;
+            }
+            got_packets = true;
+
+            let mut p_data = std::ptr::null_mut();
+            let mut num_frames = 0u32;
+            let mut flags = 0u32;
+
+            if stream
+                .capture_client
+                .GetBuffer(&mut p_data, &mut num_frames, &mut flags, None, None)
+                .is_ok()
+            {
+                if num_frames > 0 && !p_data.is_null() {
+                    let is_silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) != 0;
+                    let samples = if is_silent {
+                        vec![0.0f32; num_frames as usize]
+                    } else {
+                        convert_raw_audio_samples(
+                            p_data,
+                            num_frames as usize,
+                            stream.channels as usize,
+                            stream.is_float,
+                            stream.bits_per_sample,
+                        )
+                    };
+
+                    // Zero raw audio persistence (PRD [S08]): in volatile memory only, dropped immediately.
+                    if let Ok(mut proc) = processor.lock() {
+                        proc.process_samples(&samples);
+                    }
+                }
+                let _ = stream.capture_client.ReleaseBuffer(num_frames);
+            } else {
+                break;
+            }
+        }
+
+        // When no audio is playing on Windows, loopback produces 0 packets.
+        // Feed empty samples to tick band decay and silence auto-hide.
+        if !got_packets {
+            if let Ok(mut proc) = processor.lock() {
+                proc.process_samples(&[]);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn run_wasapi_capture_loop(
@@ -204,200 +393,50 @@ fn run_wasapi_capture_loop(
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
-        let enumerator: Result<IMMDeviceEnumerator, _> =
-            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL);
-        let enumerator = match enumerator {
-            Ok(e) => e,
-            Err(e) => {
-                warn!(
-                    "WASAPI: CoCreateInstance(MMDeviceEnumerator) failed: {}. Operating in fallback mode.",
-                    e
-                );
-                run_fallback_loop(&is_running);
-                CoUninitialize();
-                return;
-            }
-        };
-
-        let device = match enumerator.GetDefaultAudioEndpoint(eRender, eConsole) {
-            Ok(d) => d,
-            Err(e) => {
-                info!(
-                    "WASAPI: No default audio render endpoint available ({}). Operating in fallback mode.",
-                    e
-                );
-                run_fallback_loop(&is_running);
-                CoUninitialize();
-                return;
-            }
-        };
-
-        let audio_client: IAudioClient = match device.Activate(CLSCTX_ALL, None) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(
-                    "WASAPI: Failed to activate IAudioClient: {}. Operating in fallback mode.",
-                    e
-                );
-                run_fallback_loop(&is_running);
-                CoUninitialize();
-                return;
-            }
-        };
-
-        let pwfx_ptr = match audio_client.GetMixFormat() {
-            Ok(ptr) => ptr,
-            Err(e) => {
-                warn!(
-                    "WASAPI: GetMixFormat failed: {}. Operating in fallback mode.",
-                    e
-                );
-                run_fallback_loop(&is_running);
-                CoUninitialize();
-                return;
-            }
-        };
-
-        let pwfx = *pwfx_ptr;
-        let channels = pwfx.nChannels;
-        let bits_per_sample = pwfx.wBitsPerSample;
-        let mut is_float = pwfx.wFormatTag == WAVE_FORMAT_IEEE_FLOAT;
-        if pwfx.wFormatTag == WAVE_FORMAT_EXTENSIBLE {
-            let ext = &*(pwfx_ptr as *const WAVEFORMATEXTENSIBLE);
-            let sub_format = std::ptr::addr_of!(ext.SubFormat).read_unaligned();
-            if sub_format == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT {
-                is_float = true;
-            }
-        }
-
-        let buffer_duration_hns = 2_000_000; // 200ms
-        let init_res = audio_client.Initialize(
-            AUDCLNT_SHAREMODE_SHARED,
-            AUDCLNT_STREAMFLAGS_LOOPBACK,
-            buffer_duration_hns,
-            0,
-            pwfx_ptr,
-            None,
-        );
-
-        if let Err(e) = init_res {
-            warn!(
-                "WASAPI: AudioClient.Initialize loopback failed: {}. Operating in fallback mode.",
-                e
-            );
-            CoTaskMemFree(Some(pwfx_ptr as *const _ as *const _));
-            run_fallback_loop(&is_running);
-            CoUninitialize();
-            return;
-        }
-
-        let capture_client: IAudioCaptureClient = match audio_client.GetService() {
-            Ok(cc) => cc,
-            Err(e) => {
-                warn!(
-                    "WASAPI: GetService::<IAudioCaptureClient> failed: {}. Operating in fallback mode.",
-                    e
-                );
-                CoTaskMemFree(Some(pwfx_ptr as *const _ as *const _));
-                run_fallback_loop(&is_running);
-                CoUninitialize();
-                return;
-            }
-        };
-
-        if let Err(e) = audio_client.Start() {
-            warn!(
-                "WASAPI: AudioClient.Start failed: {}. Operating in fallback mode.",
-                e
-            );
-            CoTaskMemFree(Some(pwfx_ptr as *const _ as *const _));
-            run_fallback_loop(&is_running);
-            CoUninitialize();
-            return;
-        }
-
-        info!(
-            "WASAPI shared-loopback audio capture thread started (channels: {}, bits: {}, float: {}, target FPS: {})",
-            channels,
-            bits_per_sample,
-            is_float,
-            fps_mode.target_fps()
-        );
-
-        let sleep_interval = Duration::from_millis(15);
-
         while is_running.load(Ordering::Relaxed) {
-            std::thread::sleep(sleep_interval);
+            match init_wasapi_stream() {
+                Ok(stream) => {
+                    info!(
+                        "WASAPI shared-loopback audio capture thread started (channels: {}, bits: {}, float: {}, target FPS: {})",
+                        stream.channels,
+                        stream.bits_per_sample,
+                        stream.is_float,
+                        fps_mode.target_fps()
+                    );
 
-            if is_paused.load(Ordering::Relaxed) {
-                while let Ok(packet_size) = capture_client.GetNextPacketSize() {
-                    if packet_size == 0 {
-                        break;
+                    let res = run_active_stream(&is_running, &is_paused, &processor, &stream);
+
+                    let _ = stream.audio_client.Stop();
+                    CoTaskMemFree(Some(stream.pwfx_ptr as *const _ as *const _));
+
+                    if let Err(e) = res {
+                        warn!(
+                            "WASAPI stream disconnected or invalidated: {}. Re-enumerating default endpoint...",
+                            e
+                        );
+                        std::thread::sleep(Duration::from_millis(300));
                     }
-                    let mut p_data = std::ptr::null_mut();
-                    let mut num_frames = 0u32;
-                    let mut flags = 0u32;
-                    if capture_client
-                        .GetBuffer(&mut p_data, &mut num_frames, &mut flags, None, None)
-                        .is_ok()
-                    {
-                        let _ = capture_client.ReleaseBuffer(num_frames);
-                    }
                 }
-                if let Ok(mut proc) = processor.lock() {
-                    proc.process_samples(&[]);
-                }
-                continue;
-            }
-
-            while let Ok(packet_size) = capture_client.GetNextPacketSize() {
-                if packet_size == 0 {
-                    break;
-                }
-                let mut p_data = std::ptr::null_mut();
-                let mut num_frames = 0u32;
-                let mut flags = 0u32;
-
-                if capture_client
-                    .GetBuffer(&mut p_data, &mut num_frames, &mut flags, None, None)
-                    .is_ok()
-                {
-                    if num_frames > 0 && !p_data.is_null() {
-                        let is_silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) != 0;
-                        let samples = if is_silent {
-                            vec![0.0f32; num_frames as usize]
-                        } else {
-                            convert_raw_audio_samples(
-                                p_data,
-                                num_frames as usize,
-                                channels as usize,
-                                is_float,
-                                bits_per_sample,
-                            )
-                        };
-
-                        // Zero raw audio persistence (PRD [S08]): in volatile memory only, dropped immediately.
+                Err(e) => {
+                    info!(
+                        "WASAPI: Default audio endpoint not active ({}). Operating in fallback mode.",
+                        e
+                    );
+                    for _ in 0..10 {
+                        if !is_running.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
                         if let Ok(mut proc) = processor.lock() {
-                            proc.process_samples(&samples);
+                            proc.process_samples(&[]);
                         }
                     }
-                    let _ = capture_client.ReleaseBuffer(num_frames);
-                } else {
-                    break;
                 }
             }
         }
 
-        let _ = audio_client.Stop();
-        CoTaskMemFree(Some(pwfx_ptr as *const _ as *const _));
         CoUninitialize();
         info!("WASAPI shared-loopback audio capture cleanly shut down.");
-    }
-}
-
-fn run_fallback_loop(is_running: &Arc<AtomicBool>) {
-    while is_running.load(Ordering::Relaxed) {
-        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -447,5 +486,37 @@ mod tests {
         // Stop capture thread
         capture.stop();
         assert!(!capture.is_running());
+    }
+
+    #[test]
+    fn test_raw_audio_sample_conversion_multi_formats() {
+        // 1. 32-bit float stereo: 2 frames = 4 floats
+        let float_data: [f32; 4] = [0.5, 0.5, -0.5, -0.5];
+        let converted =
+            unsafe { convert_raw_audio_samples(float_data.as_ptr() as *const u8, 2, 2, true, 32) };
+        assert_eq!(converted.len(), 2);
+        assert!((converted[0] - 0.5).abs() < 1e-4);
+        assert!((converted[1] - (-0.5)).abs() < 1e-4);
+
+        // 2. 16-bit PCM stereo: 2 frames = 4 i16
+        let i16_data: [i16; 4] = [16384, 16384, -16384, -16384];
+        let converted_16 =
+            unsafe { convert_raw_audio_samples(i16_data.as_ptr() as *const u8, 2, 2, false, 16) };
+        assert_eq!(converted_16.len(), 2);
+        assert!((converted_16[0] - 0.5).abs() < 1e-3);
+        assert!((converted_16[1] - (-0.5)).abs() < 1e-3);
+
+        // 3. 24-bit PCM mono: 1 frame = 3 bytes representing half scale (0x400000 = 4194304)
+        let i24_data: [u8; 3] = [0x00, 0x00, 0x40];
+        let converted_24 = unsafe { convert_raw_audio_samples(i24_data.as_ptr(), 1, 1, false, 24) };
+        assert_eq!(converted_24.len(), 1);
+        assert!((converted_24[0] - 0.5).abs() < 1e-3);
+
+        // 4. 32-bit PCM integer mono: 1 frame = 4 bytes representing half scale (0x40000000 = 1073741824)
+        let i32_data: [i32; 1] = [1073741824];
+        let converted_32 =
+            unsafe { convert_raw_audio_samples(i32_data.as_ptr() as *const u8, 1, 1, false, 32) };
+        assert_eq!(converted_32.len(), 1);
+        assert!((converted_32[0] - 0.5).abs() < 1e-3);
     }
 }

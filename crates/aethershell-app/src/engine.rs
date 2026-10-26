@@ -522,11 +522,21 @@ impl AppEngine {
                 last_telemetry_poll = now;
             }
 
-            // Periodic script worker watchdog check (2s interval)
+            // Periodic script worker watchdog check and crash monitor (2s interval)
             if now.duration_since(last_watchdog_check) >= std::time::Duration::from_secs(2) {
                 if let Ok(mut sup) = self.script_supervisor.try_lock() {
-                    if sup.check_heartbeat_timeout() {
-                        warn!("Script worker watchdog timed out! Quarantined worker.");
+                    let exit_code = sup.poll_worker_status();
+                    if let Some(code) = exit_code {
+                        if code != 0 {
+                            warn!(
+                                "Script worker exited unexpectedly with code {}; crash count: {}",
+                                code,
+                                sup.crash_count()
+                            );
+                        }
+                    }
+                    if sup.is_quarantined() {
+                        warn!("Script worker is quarantined: {:?}", sup.state());
                     }
                 }
                 last_watchdog_check = now;

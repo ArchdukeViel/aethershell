@@ -186,6 +186,17 @@ impl ScriptSupervisor {
         Ok(pid)
     }
 
+    pub fn child_pid(&self) -> Option<u32> {
+        match self.state {
+            SupervisorState::Running { pid } => Some(pid),
+            _ => None,
+        }
+    }
+
+    pub fn set_heartbeat_timeout_secs(&mut self, secs: u32) {
+        self.heartbeat_timeout_secs = secs;
+    }
+
     /// Polls child process exit status and enforces crash recovery / quarantine circuit breaker (PRD 10.2).
     pub fn poll_worker_status(&mut self) -> Option<i32> {
         if let Some(ref mut child) = self.child {
@@ -197,11 +208,7 @@ impl ScriptSupervisor {
                     Some(exit_code)
                 }
                 Ok(None) => {
-                    if self.check_heartbeat_timeout() {
-                        if let Some(mut c) = self.child.take() {
-                            let _ = c.kill();
-                        }
-                    }
+                    self.check_heartbeat_timeout();
                     None
                 }
                 Err(e) => {
@@ -212,6 +219,7 @@ impl ScriptSupervisor {
                 }
             }
         } else {
+            self.check_heartbeat_timeout();
             None
         }
     }
@@ -233,7 +241,7 @@ impl ScriptSupervisor {
         self.state = SupervisorState::Terminated;
     }
 
-    /// Checks if worker has missed heartbeat responses beyond grace period.
+    /// Checks if worker has missed heartbeat responses beyond grace period and terminates it.
     pub fn check_heartbeat_timeout(&mut self) -> bool {
         if let SupervisorState::Running { pid } = self.state {
             if let Some(last) = self.last_heartbeat {
@@ -244,6 +252,10 @@ impl ScriptSupervisor {
                             pid, self.heartbeat_timeout_secs
                         ),
                     };
+                    if let Some(mut c) = self.child.take() {
+                        let _ = c.kill();
+                        let _ = c.wait();
+                    }
                     return true; // Timed out
                 }
             }
