@@ -58,6 +58,7 @@ windows = { version = "0.58", features = [
     "Win32_System_RemoteDesktop",
     "Win32_System_Power",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_UI_Shell",
     "Win32_UI_Accessibility",
@@ -67,6 +68,7 @@ windows = { version = "0.58", features = [
     "Win32_Media_Audio_Endpoints",
     "Win32_System_Com",
     "Win32_System_ProcessStatus",
+    "Win32_System_JobObjects",
 ] }
 
 # Internal workspace crates

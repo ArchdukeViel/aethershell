@@ -206,7 +206,13 @@ impl AppEngine {
 
         // 4. Initialize System Tray on dedicated OS thread with active message pump (IVA-P1-001)
         let (tray_handle, tray_shutdown) =
-            SystemTray::spawn_tray_thread(Arc::clone(&self.shutdown_flag));
+            SystemTray::spawn_tray_thread(Arc::clone(&self.shutdown_flag), Some(pipe_name.clone()));
+
+        // Start genuine WASAPI shared-loopback audio capture thread
+        {
+            let mut aud = self.audio.lock().await;
+            let _ = aud.start();
+        }
 
         // 5. Start Out-of-Context Shell WinEvent Monitor (PRD Section 4.3)
         let (mut shell_monitor, shell_rx) = ShellEventMonitor::start()
@@ -367,11 +373,13 @@ impl AppEngine {
                     }
                     "pause_audio" => {
                         audio.lock().await.set_paused(true);
+                        SystemTray::set_audio_paused_state(true);
                         info!("Audio capture paused via IPC.");
                         IpcResponse::ok(req.message_id, serde_json::json!({ "paused": true }))
                     }
                     "resume_audio" => {
                         audio.lock().await.set_paused(false);
+                        SystemTray::set_audio_paused_state(false);
                         info!("Audio capture resumed via IPC.");
                         IpcResponse::ok(req.message_id, serde_json::json!({ "paused": false }))
                     }
@@ -531,6 +539,7 @@ impl AppEngine {
 
         info!("Shutting down AetherShell Engine...");
         let _ = shutdown_tx.send(true);
+        self.audio.lock().await.stop();
         shell_monitor.stop();
         let _ = shell_event_task.join();
         tray_shutdown.store(true, Ordering::SeqCst);

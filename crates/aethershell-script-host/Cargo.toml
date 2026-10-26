@@ -19,3 +19,4 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 windows.workspace = true
+mlua = { version = "0.9", features = ["lua54", "vendored"] }

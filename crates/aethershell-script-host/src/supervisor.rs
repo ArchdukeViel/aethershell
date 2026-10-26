@@ -1,5 +1,15 @@
 use serde::{Deserialize, Serialize};
+use std::os::windows::io::AsRawHandle;
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
 use std::time::Instant;
+use tracing::{info, warn};
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
 
 /// Status and health of the supervised script host child process (PRD Section 13.2 / Gate G10).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -11,6 +21,60 @@ pub enum SupervisorState {
     Terminated,
 }
 
+/// Windows Job Object guard ensuring all child worker processes terminate when the job or parent closes.
+#[derive(Debug)]
+pub struct JobObjectGuard(HANDLE);
+
+impl JobObjectGuard {
+    pub fn new() -> Result<Self, String> {
+        unsafe {
+            let job = CreateJobObjectW(None, None)
+                .map_err(|e| format!("CreateJobObjectW failed: {}", e))?;
+
+            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const std::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+            .map_err(|e| {
+                let _ = CloseHandle(job);
+                format!("SetInformationJobObject failed: {}", e)
+            })?;
+
+            Ok(Self(job))
+        }
+    }
+
+    pub fn assign_process(&self, child: &Child) -> Result<(), String> {
+        unsafe {
+            let child_handle = HANDLE(child.as_raw_handle());
+            AssignProcessToJobObject(self.0, child_handle)
+                .map_err(|e| format!("AssignProcessToJobObject failed: {}", e))
+        }
+    }
+
+    pub fn handle(&self) -> HANDLE {
+        self.0
+    }
+}
+
+impl Drop for JobObjectGuard {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.0 .0.is_null() {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+unsafe impl Send for JobObjectGuard {}
+unsafe impl Sync for JobObjectGuard {}
+
 /// Script supervisor managing on-demand child worker process and crash loop recovery.
 #[derive(Debug)]
 pub struct ScriptSupervisor {
@@ -19,6 +83,8 @@ pub struct ScriptSupervisor {
     max_crashes: u32,
     last_heartbeat: Option<Instant>,
     heartbeat_timeout_secs: u32,
+    job: Option<JobObjectGuard>,
+    child: Option<Child>,
 }
 
 impl ScriptSupervisor {
@@ -29,6 +95,8 @@ impl ScriptSupervisor {
             max_crashes,
             last_heartbeat: None,
             heartbeat_timeout_secs: 5,
+            job: JobObjectGuard::new().ok(),
+            child: None,
         }
     }
 
@@ -44,6 +112,10 @@ impl ScriptSupervisor {
         matches!(self.state, SupervisorState::Quarantined { .. })
     }
 
+    pub fn has_active_child(&self) -> bool {
+        self.child.is_some()
+    }
+
     pub fn record_start(&mut self, pid: u32) {
         self.state = SupervisorState::Running { pid };
         self.last_heartbeat = Some(Instant::now());
@@ -51,6 +123,97 @@ impl ScriptSupervisor {
 
     pub fn record_heartbeat(&mut self) {
         self.last_heartbeat = Some(Instant::now());
+    }
+
+    /// Spawns a supervised child process with pure-Rust SHA-256 pre-verification and Windows Job Object containment.
+    pub fn spawn_worker(
+        &mut self,
+        exe_path: &Path,
+        script_path: &Path,
+        approved_digest: &str,
+        pipe_name: &str,
+    ) -> Result<u32, String> {
+        if self.is_quarantined() {
+            return Err(format!(
+                "Worker cannot spawn: currently quarantined. State: {:?}",
+                self.state
+            ));
+        }
+
+        // 1. Pre-spawn verification of script digest
+        crate::verify_script_file_digest(script_path, approved_digest)
+            .map_err(|e| format!("Pre-spawn digest verification failed: {}", e))?;
+
+        // 2. Terminate existing worker if any
+        self.terminate_worker();
+
+        // 3. Ensure Job Object is available
+        if self.job.is_none() {
+            self.job = JobObjectGuard::new().ok();
+        }
+
+        // 4. Spawn child process
+        let mut cmd = Command::new(exe_path);
+        cmd.arg("--script")
+            .arg(script_path)
+            .arg("--digest")
+            .arg(approved_digest);
+        if !pipe_name.is_empty() {
+            cmd.arg("--pipe").arg(pipe_name);
+        }
+        cmd.stdin(Stdio::null());
+
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn child worker process: {}", e))?;
+        let pid = child.id();
+
+        // 5. Assign to Windows Job Object
+        if let Some(ref job) = self.job {
+            if let Err(e) = job.assign_process(&child) {
+                warn!("Job Object assignment failed for PID {}: {}", pid, e);
+            } else {
+                info!(
+                    "Assigned worker PID {} to Windows Job Object (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)",
+                    pid
+                );
+            }
+        }
+
+        self.record_start(pid);
+        self.child = Some(child);
+
+        Ok(pid)
+    }
+
+    /// Polls child process exit status and enforces crash recovery / quarantine circuit breaker (PRD 10.2).
+    pub fn poll_worker_status(&mut self) -> Option<i32> {
+        if let Some(ref mut child) = self.child {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let exit_code = status.code().unwrap_or(-1);
+                    self.child = None;
+                    self.record_exit(exit_code);
+                    Some(exit_code)
+                }
+                Ok(None) => {
+                    if self.check_heartbeat_timeout() {
+                        if let Some(mut c) = self.child.take() {
+                            let _ = c.kill();
+                        }
+                    }
+                    None
+                }
+                Err(e) => {
+                    warn!("Error waiting on worker child: {}", e);
+                    self.child = None;
+                    self.record_exit(-1);
+                    Some(-1)
+                }
+            }
+        } else {
+            None
+        }
     }
 
     /// Records an unexpected worker exit/crash and applies quarantine if limit exceeded.
@@ -88,6 +251,15 @@ impl ScriptSupervisor {
         false
     }
 
+    /// Terminates worker process if running and resets state.
+    pub fn terminate_worker(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        self.stop();
+    }
+
     /// Explicitly stops worker and resets state to Dormant.
     pub fn stop(&mut self) {
         self.state = SupervisorState::Dormant;
@@ -98,6 +270,12 @@ impl ScriptSupervisor {
 impl Default for ScriptSupervisor {
     fn default() -> Self {
         Self::new(2) // Default 2 restarts per PRD 10.2
+    }
+}
+
+impl Drop for ScriptSupervisor {
+    fn drop(&mut self) {
+        self.terminate_worker();
     }
 }
 
@@ -131,5 +309,30 @@ mod tests {
         supervisor.record_exit(0); // Clean exit
         assert_eq!(supervisor.crash_count(), 0);
         assert_eq!(*supervisor.state(), SupervisorState::Terminated);
+    }
+
+    #[test]
+    fn test_job_object_guard_creation_and_assignment() {
+        let job = JobObjectGuard::new();
+        assert!(job.is_ok(), "JobObject creation must succeed on Windows");
+        let job = job.unwrap();
+        assert!(!job.handle().0.is_null());
+
+        // Test assigning a real child process (e.g. powershell or cmd)
+        let child = Command::new("powershell.exe")
+            .arg("-NoProfile")
+            .arg("-Command")
+            .arg("Start-Sleep -Milliseconds 200")
+            .spawn();
+
+        if let Ok(mut c) = child {
+            let res = job.assign_process(&c);
+            assert!(
+                res.is_ok(),
+                "Assigning child process to Job Object must succeed: {:?}",
+                res
+            );
+            let _ = c.wait();
+        }
     }
 }
