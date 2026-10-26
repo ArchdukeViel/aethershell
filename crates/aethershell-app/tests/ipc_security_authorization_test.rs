@@ -17,8 +17,20 @@ struct LiveEnginePipeTestHarness {
     server_handle: tokio::task::JoinHandle<()>,
 }
 
+fn current_session_id() -> u32 {
+    let mut session_id = 0u32;
+    unsafe {
+        let _ = windows::Win32::System::RemoteDesktop::ProcessIdToSessionId(
+            std::process::id(),
+            &mut session_id,
+        );
+    }
+    session_id
+}
+
 impl LiveEnginePipeTestHarness {
-    async fn start(session_id: u32, session_token: &str) -> Self {
+    async fn start(session_token: &str) -> Self {
+        let session_id = current_session_id();
         let engine = Arc::new(AppEngine::with_token(session_token));
         let pipe_name = format!(r"\\.\pipe\aethershell-auth-test-{}", uuid::Uuid::new_v4());
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -50,7 +62,7 @@ impl LiveEnginePipeTestHarness {
 
 #[tokio::test]
 async fn test_real_server_privileged_management_and_live_state_changes() {
-    let harness = LiveEnginePipeTestHarness::start(1, "valid_secret_token_live").await;
+    let harness = LiveEnginePipeTestHarness::start("valid_secret_token_live").await;
 
     // 1. Send pause_audio with valid session_token -> verifies live audio state changes
     let pause_res = IpcClient::send_command(
@@ -138,15 +150,16 @@ async fn test_real_server_privileged_management_and_live_state_changes() {
 
 #[tokio::test]
 async fn test_negative_missing_and_invalid_tokens_rejected_on_real_server() {
-    let harness = LiveEnginePipeTestHarness::start(1, "legit_token_999").await;
+    let harness = LiveEnginePipeTestHarness::start("legit_token_999").await;
+    let my_session = current_session_id();
 
     // To test out-of-process caller security where PID != engine PID:
     let (shutdown_tx, _shutdown_rx) = watch::channel(false);
-    let handler = harness.engine.create_ipc_handler(1, shutdown_tx);
+    let handler = harness.engine.create_ipc_handler(my_session, shutdown_tx);
 
     let external_identity = IpcClientIdentity {
         process_id: 88888,
-        session_id: 1,
+        session_id: my_session,
     };
 
     // Case 1a: Out-of-process caller with NO token
@@ -201,14 +214,15 @@ async fn test_negative_missing_and_invalid_tokens_rejected_on_real_server() {
 
 #[tokio::test]
 async fn test_negative_cross_session_caller_rejected_by_production_handler() {
+    let my_session = current_session_id();
     let engine = AppEngine::with_token("token_sess_1");
     let (shutdown_tx, _shutdown_rx) = watch::channel(false);
-    let handler = engine.create_ipc_handler(1, shutdown_tx);
+    let handler = engine.create_ipc_handler(my_session, shutdown_tx);
 
-    // Caller from Session 2 connecting to Session 1 engine
+    // Caller from different session connecting to engine session
     let cross_session_identity = IpcClientIdentity {
         process_id: 1234,
-        session_id: 2,
+        session_id: my_session + 99,
     };
 
     let req = IpcRequest::new("get_status", serde_json::json!({}));
@@ -222,14 +236,15 @@ async fn test_negative_cross_session_caller_rejected_by_production_handler() {
 
 #[tokio::test]
 async fn test_negative_dead_worker_and_wrong_pids_rejected() {
+    let my_session = current_session_id();
     let engine = AppEngine::with_token("token_worker_test");
     let (shutdown_tx, _shutdown_rx) = watch::channel(false);
-    let handler = engine.create_ipc_handler(1, shutdown_tx);
+    let handler = engine.create_ipc_handler(my_session, shutdown_tx);
 
     // 1. No child worker exists in supervisor -> registration fails closed
     let identity = IpcClientIdentity {
         process_id: 4000,
-        session_id: 1,
+        session_id: my_session,
     };
     let req = IpcRequest::new("script_worker_ready", serde_json::json!({ "pid": 4000 }));
     let resp = (handler)(req, identity).await;
@@ -266,7 +281,7 @@ async fn test_negative_dead_worker_and_wrong_pids_rejected() {
 
     let dead_identity = IpcClientIdentity {
         process_id: dead_pid,
-        session_id: 1,
+        session_id: my_session,
     };
 
     let req = IpcRequest::new(
@@ -292,9 +307,10 @@ async fn test_negative_dead_worker_and_wrong_pids_rejected() {
 
 #[tokio::test]
 async fn test_negative_worker_role_boundary_and_process_replacement() {
+    let my_session = current_session_id();
     let engine = AppEngine::with_token("token_role_boundary");
     let (shutdown_tx, _shutdown_rx) = watch::channel(false);
-    let handler = engine.create_ipc_handler(1, shutdown_tx);
+    let handler = engine.create_ipc_handler(my_session, shutdown_tx);
 
     // Spawn live dummy process Worker A
     let mut worker_a = Command::new("cmd.exe")
@@ -312,7 +328,7 @@ async fn test_negative_worker_role_boundary_and_process_replacement() {
 
     let identity_a = IpcClientIdentity {
         process_id: pid_a,
-        session_id: 1,
+        session_id: my_session,
     };
 
     // 1. Worker A tries privileged management commands -> strictly rejected even if token passed
@@ -362,7 +378,7 @@ async fn test_negative_worker_role_boundary_and_process_replacement() {
 
     let identity_b = IpcClientIdentity {
         process_id: pid_b,
-        session_id: 1,
+        session_id: my_session,
     };
 
     // Now old Worker A attempts heartbeat -> rejected
@@ -387,9 +403,10 @@ async fn test_negative_worker_role_boundary_and_process_replacement() {
 
 #[tokio::test]
 async fn test_negative_quarantined_supervisor_rejects_worker_actions() {
+    let my_session = current_session_id();
     let engine = AppEngine::with_token("token_quarantine");
     let (shutdown_tx, _shutdown_rx) = watch::channel(false);
-    let handler = engine.create_ipc_handler(1, shutdown_tx);
+    let handler = engine.create_ipc_handler(my_session, shutdown_tx);
 
     // Force supervisor into quarantined state by exceeding max crashes
     {
@@ -404,7 +421,7 @@ async fn test_negative_quarantined_supervisor_rejects_worker_actions() {
 
     let identity = IpcClientIdentity {
         process_id: 5003,
-        session_id: 1,
+        session_id: my_session,
     };
 
     // Attempt ready -> rejected
