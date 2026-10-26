@@ -572,6 +572,8 @@ mod tests {
             "target\\debug\\aethershell-script-host.exe",
             "target\\x86_64-pc-windows-msvc\\release\\aethershell-script-host.exe",
             "target\\release\\aethershell-script-host.exe",
+            "..\\..\\target\\x86_64-pc-windows-msvc\\debug\\aethershell-script-host.exe",
+            "..\\..\\target\\debug\\aethershell-script-host.exe",
         ];
         for c in candidates {
             let p = std::path::PathBuf::from(c);
@@ -579,6 +581,35 @@ mod tests {
                 return p;
             }
         }
+
+        // If not found, build it using cargo (e.g. during clean CI runs where lib tests run before bin build)
+        let mut cmd = Command::new("cargo");
+        cmd.args([
+            "build",
+            "-p",
+            "aethershell-script-host",
+            "--bin",
+            "aethershell-script-host",
+        ]);
+        if let Ok(status) = cmd.status() {
+            if status.success() {
+                if let Ok(cur) = std::env::current_exe() {
+                    if let Some(target_dir) = cur.parent().and_then(|p| p.parent()) {
+                        let candidate = target_dir.join("aethershell-script-host.exe");
+                        if candidate.exists() {
+                            return candidate;
+                        }
+                    }
+                }
+                for c in candidates {
+                    let p = std::path::PathBuf::from(c);
+                    if p.exists() {
+                        return p;
+                    }
+                }
+            }
+        }
+
         std::path::PathBuf::from("aethershell-script-host.exe")
     }
 
