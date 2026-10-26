@@ -273,7 +273,7 @@ impl AppEngine {
         let shutdown_tx_clone = shutdown_tx.clone();
         let os_build = self.os_info.build_number;
 
-        let request_handler = Arc::new(move |req: IpcRequest| {
+        let request_handler = Arc::new(move |req: IpcRequest, client_pid: u32| {
             let interaction = Arc::clone(&interaction_clone);
             let taskbar = Arc::clone(&taskbar_clone);
             let telemetry = Arc::clone(&telemetry_clone);
@@ -396,19 +396,69 @@ impl AppEngine {
                         )
                     }
                     "script_worker_ready" => {
-                        let pid = req.payload["pid"].as_u64().unwrap_or(0) as u32;
+                        let claimed_pid = req.payload["pid"].as_u64().unwrap_or(0) as u32;
                         let mut sup = supervisor.lock().await;
-                        sup.record_start(pid);
-                        info!("Script worker child registered (PID: {})", pid);
-                        IpcResponse::ok(
-                            req.message_id,
-                            serde_json::json!({ "registered": true, "pid": pid }),
-                        )
+
+                        // Security: Verify that client_pid matches claimed_pid and matches active supervisor child
+                        if claimed_pid != client_pid {
+                            warn!(
+                                "Security rejection: script_worker_ready claimed PID {} but connected from PID {}",
+                                claimed_pid, client_pid
+                            );
+                            IpcResponse::error(
+                                req.message_id,
+                                "Security violation: claimed PID does not match IPC caller PID",
+                            )
+                        } else if let Some(child_pid) = sup.active_child_pid() {
+                            if child_pid != client_pid {
+                                warn!(
+                                    "Security rejection: client PID {} does not match supervisor spawned worker PID {}",
+                                    client_pid, child_pid
+                                );
+                                IpcResponse::error(
+                                    req.message_id,
+                                    "Security violation: unexpected worker process identity",
+                                )
+                            } else {
+                                sup.record_start(client_pid);
+                                info!(
+                                    "Script worker child verified and registered (PID: {})",
+                                    client_pid
+                                );
+                                IpcResponse::ok(
+                                    req.message_id,
+                                    serde_json::json!({ "registered": true, "pid": client_pid }),
+                                )
+                            }
+                        } else {
+                            sup.record_start(client_pid);
+                            info!("Script worker registered with verified PID {}", client_pid);
+                            IpcResponse::ok(
+                                req.message_id,
+                                serde_json::json!({ "registered": true, "pid": client_pid }),
+                            )
+                        }
                     }
                     "script_worker_heartbeat" => {
                         let mut sup = supervisor.lock().await;
-                        sup.record_heartbeat();
-                        IpcResponse::ok(req.message_id, serde_json::json!({ "acknowledged": true }))
+                        if let Some(child_pid) = sup.active_child_pid() {
+                            if child_pid != client_pid {
+                                warn!("Heartbeat rejected from untrusted PID {}", client_pid);
+                                IpcResponse::error(req.message_id, "Untrusted worker PID")
+                            } else {
+                                sup.record_heartbeat();
+                                IpcResponse::ok(
+                                    req.message_id,
+                                    serde_json::json!({ "acknowledged": true }),
+                                )
+                            }
+                        } else {
+                            sup.record_heartbeat();
+                            IpcResponse::ok(
+                                req.message_id,
+                                serde_json::json!({ "acknowledged": true }),
+                            )
+                        }
                     }
                     "get_script_status" => {
                         let sup = supervisor.lock().await;
@@ -469,10 +519,18 @@ impl AppEngine {
                         IpcResponse::ok(req.message_id, serde_json::json!({ "launched": true }))
                     }
                     "shutdown" => {
-                        info!("IPC: 'shutdown' received. Quitting.");
-                        shutdown_flag.store(true, Ordering::SeqCst);
-                        let _ = shutdown_tx.send(true);
-                        IpcResponse::ok(req.message_id, serde_json::json!({ "quitting": true }))
+                        if client_pid == 0 {
+                            warn!("Rejected anonymous IPC shutdown request");
+                            IpcResponse::error(req.message_id, "Unauthorized caller")
+                        } else {
+                            info!(
+                                "IPC: 'shutdown' received from verified client PID {}. Quitting.",
+                                client_pid
+                            );
+                            shutdown_flag.store(true, Ordering::SeqCst);
+                            let _ = shutdown_tx.send(true);
+                            IpcResponse::ok(req.message_id, serde_json::json!({ "quitting": true }))
+                        }
                     }
                     _ => IpcResponse::error(
                         req.message_id,

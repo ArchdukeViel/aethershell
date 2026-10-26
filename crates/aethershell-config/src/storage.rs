@@ -99,11 +99,26 @@ impl ConfigManager {
             }
         }
 
-        // Atomic replacement on Windows via standard rename
-        fs::rename(&temp_path, &self.config_path).map_err(|e| {
+        // Atomic replacement on Windows with transient lock retry and copy fallback
+        let mut rename_result = fs::rename(&temp_path, &self.config_path);
+        if rename_result.is_err() {
+            for _ in 0..3 {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+                rename_result = fs::rename(&temp_path, &self.config_path);
+                if rename_result.is_ok() {
+                    break;
+                }
+            }
+        }
+
+        if let Err(_e) = rename_result {
+            // Fallback: Copy content then remove temp to prevent data loss on locked files
+            if let Err(copy_err) = fs::copy(&temp_path, &self.config_path) {
+                let _ = fs::remove_file(&temp_path);
+                return Err(ConfigStorageError::Io(copy_err));
+            }
             let _ = fs::remove_file(&temp_path);
-            ConfigStorageError::Io(e)
-        })?;
+        }
 
         Ok(())
     }

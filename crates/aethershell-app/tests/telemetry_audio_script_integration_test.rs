@@ -218,15 +218,27 @@ fn test_phase4_engine_ipc_integration() {
         assert!(resume_res.success);
         assert_eq!(resume_res.payload["paused"], false);
 
-        // 5. Test script worker heartbeat & status
-        let ready_res = IpcClient::send_command(
+        // 5. Test script worker identity verification (Gate G10 security)
+        // 5a. Verify spoofed PID rejection
+        let spoofed_res = IpcClient::send_command(
             &pipe,
             "script_worker_ready",
-            serde_json::json!({ "pid": 9999 }),
+            serde_json::json!({ "pid": 999999 }),
         )
         .await
         .expect("script_worker_ready call");
-        assert!(ready_res.success);
+        assert!(!spoofed_res.success, "Spoofed PID must be rejected");
+
+        // 5b. Verify legitimate PID registration
+        let my_pid = std::process::id();
+        let ready_res = IpcClient::send_command(
+            &pipe,
+            "script_worker_ready",
+            serde_json::json!({ "pid": my_pid }),
+        )
+        .await
+        .expect("script_worker_ready call");
+        assert!(ready_res.success, "Verified caller PID must succeed");
         assert_eq!(ready_res.payload["registered"], true);
 
         let heartbeat_res =

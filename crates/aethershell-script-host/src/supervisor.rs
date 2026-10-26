@@ -8,7 +8,7 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
     SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
 };
 
 /// Status and health of the supervised script host child process (PRD Section 13.2 / Gate G10).
@@ -32,7 +32,9 @@ impl JobObjectGuard {
                 .map_err(|e| format!("CreateJobObjectW failed: {}", e))?;
 
             let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            info.BasicLimitInformation.LimitFlags =
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+            info.ProcessMemoryLimit = 128 * 1024 * 1024; // 128 MiB per-worker memory limit (PRD Table 17-1)
 
             SetInformationJobObject(
                 job,
@@ -114,6 +116,10 @@ impl ScriptSupervisor {
 
     pub fn has_active_child(&self) -> bool {
         self.child.is_some()
+    }
+
+    pub fn active_child_pid(&self) -> Option<u32> {
+        self.child.as_ref().map(|c| c.id())
     }
 
     pub fn record_start(&mut self, pid: u32) {

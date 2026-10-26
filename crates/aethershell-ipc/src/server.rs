@@ -23,7 +23,7 @@ use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 pub type RequestHandler =
-    Arc<dyn Fn(IpcRequest) -> Pin<Box<dyn Future<Output = IpcResponse> + Send>> + Send + Sync>;
+    Arc<dyn Fn(IpcRequest, u32) -> Pin<Box<dyn Future<Output = IpcResponse> + Send>> + Send + Sync>;
 
 /// Asynchronous Named Pipe IPC Server scoped to the user session.
 pub struct IpcServer {
@@ -66,10 +66,11 @@ impl IpcServer {
             // Apply Named Pipe DACL restricting access to the Current User Token SID
             let raw_handle = server.as_raw_handle();
             if let Err(e) = apply_current_user_dacl_to_handle(HANDLE(raw_handle as *mut _)) {
-                warn!(
-                    "Failed to restrict DACL on named pipe '{}': {}",
+                error!(
+                    "CRITICAL SECURITY: Failed to restrict DACL on named pipe '{}': {}. Aborting IPC server loop to prevent unauthorized access (fail-closed).",
                     self.pipe_name, e
                 );
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, e));
             }
 
             tokio::select! {
@@ -201,7 +202,7 @@ pub fn apply_current_user_dacl_to_handle(pipe_handle: HANDLE) -> Result<(), Stri
 async fn handle_connection(
     mut server: NamedPipeServer,
     handler: RequestHandler,
-    _client_pid: u32,
+    client_pid: u32,
 ) -> io::Result<()> {
     let mut buffer = vec![0u8; 4096];
     let mut accumulated = Vec::new();
@@ -219,8 +220,8 @@ async fn handle_connection(
             Ok((request, consumed)) => {
                 accumulated.drain(..consumed);
 
-                // Dispatch to handler
-                let response = handler(request).await;
+                // Dispatch to handler with verified client PID context
+                let response = handler(request, client_pid).await;
 
                 // Encode response
                 match encode_response(&response) {
@@ -277,5 +278,41 @@ mod tests {
             "Applying current user DACL must succeed: {:?}",
             res
         );
+    }
+
+    #[tokio::test]
+    async fn test_ipc_server_passes_verified_client_pid() {
+        use crate::client::IpcClient;
+        use std::time::Duration;
+
+        let pipe_name = format!(r"\\.\pipe\aethershell-pid-test-{}", uuid::Uuid::new_v4());
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let my_pid = std::process::id();
+
+        let handler: RequestHandler = Arc::new(move |req: IpcRequest, client_pid: u32| {
+            Box::pin(async move {
+                IpcResponse::ok(
+                    req.message_id,
+                    serde_json::json!({ "received_pid": client_pid }),
+                )
+            })
+        });
+
+        let server = IpcServer::new(&pipe_name, handler, shutdown_rx);
+        let server_handle = tokio::spawn(async move {
+            let _ = server.run().await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        let res = IpcClient::send_command(&pipe_name, "test_pid", serde_json::json!({}))
+            .await
+            .expect("send command");
+
+        assert!(res.success);
+        assert_eq!(res.payload["received_pid"].as_u64().unwrap() as u32, my_pid);
+
+        let _ = shutdown_tx.send(true);
+        let _ = server_handle.await;
     }
 }

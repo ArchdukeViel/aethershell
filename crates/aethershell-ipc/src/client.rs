@@ -84,7 +84,7 @@ mod tests {
         let pipe_name = format!(r"\\.\pipe\aethershell-test-{}", uuid::Uuid::new_v4());
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-        let handler = Arc::new(|req: IpcRequest| {
+        let handler = Arc::new(|req: IpcRequest, _client_pid: u32| {
             Box::pin(async move {
                 if req.command == "ping" {
                     IpcResponse::ok(req.message_id, serde_json::json!({ "pong": true }))
@@ -124,7 +124,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         // Handler that sleeps longer than the client's deadline
-        let handler = Arc::new(|req: IpcRequest| {
+        let handler = Arc::new(|req: IpcRequest, _client_pid: u32| {
             Box::pin(async move {
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 IpcResponse::ok(req.message_id, serde_json::json!({ "delayed": true }))
