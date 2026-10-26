@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="..\..\packages\Microsoft.Windows.SDK.BuildTools.10.0.26100.1\build\Microsoft.Windows.SDK.BuildTools.props" Condition="Exists('..\..\packages\Microsoft.Windows.SDK.BuildTools.10.0.26100.1\build\Microsoft.Windows.SDK.BuildTools.props')" />
   <Import Project="..\..\packages\Microsoft.WindowsAppSDK.1.5.240428000\build\native\Microsoft.WindowsAppSDK.props" Condition="Exists('..\..\packages\Microsoft.WindowsAppSDK.1.5.240428000\build\native\Microsoft.WindowsAppSDK.props')" />
   <Import Project="..\..\packages\Microsoft.Windows.CppWinRT.2.0.240405.15\build\native\Microsoft.Windows.CppWinRT.props" Condition="Exists('..\..\packages\Microsoft.Windows.CppWinRT.2.0.240405.15\build\native\Microsoft.Windows.CppWinRT.props')" />
   <PropertyGroup Label="Globals">
@@ -8,10 +9,14 @@
     <MinimalCoreWin>true</MinimalCoreWin>
     <ProjectGuid>{4c18f0a2-9b21-4d92-bb8a-3e7428f80456}</ProjectGuid>
     <ProjectName>aethershell-settings</ProjectName>
-    <RootNamespace>AetherShell::Settings</RootNamespace>
+    <RootNamespace>AetherShell.Settings</RootNamespace>
+    <TargetPlatformIdentifier>Windows</TargetPlatformIdentifier>
     <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
     <WindowsTargetPlatformMinVersion>10.0.19041.0</WindowsTargetPlatformMinVersion>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <EnablePriGenTooling>false</EnablePriGenTooling>
+    <AppxGeneratePriEnabled>false</AppxGeneratePriEnabled>
+    <EnableCoreMrtTooling>false</EnableCoreMrtTooling>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <ItemGroup Label="ProjectConfigurations">
@@ -30,11 +35,16 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <ReferenceAssemblyPaths>$(MSBuildProjectDirectory)\..\..\packages\Microsoft.WindowsAppSDK.1.5.240428000\lib\uap10.0\;C:\Program Files (x86)\Windows Kits\10\References\10.0.26100.0\Windows.Foundation.FoundationContract\4.0.0.0\;C:\Program Files (x86)\Windows Kits\10\References\10.0.26100.0\Windows.Foundation.UniversalApiContract\19.0.0.0\;$(ReferenceAssemblyPaths)</ReferenceAssemblyPaths>
+    <BeforeClCompileTargets>ResolveAssemblyReferences;MarkupCompilePass1;MarkupCompilePass2;$(BeforeClCompileTargets)</BeforeClCompileTargets>
+  </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <AdditionalIncludeDirectories>$(MSBuildProjectDirectory);$(MSBuildProjectDirectory)\$(IntermediateOutputPath.TrimEnd('\'));$(MSBuildProjectDirectory)\$(IntermediateOutputPath)Generated Files;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;WINRT_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
@@ -46,6 +56,20 @@
     <Manifest Include="app.manifest" />
   </ItemGroup>
   <ItemGroup>
+    <Reference Include="C:\Program Files (x86)\Windows Kits\10\References\10.0.26100.0\Windows.Foundation.FoundationContract\4.0.0.0\Windows.Foundation.FoundationContract.winmd">
+      <IsWinMDFile>true</IsWinMDFile>
+    </Reference>
+    <Reference Include="C:\Program Files (x86)\Windows Kits\10\References\10.0.26100.0\Windows.Foundation.UniversalApiContract\19.0.0.0\Windows.Foundation.UniversalApiContract.winmd">
+      <IsWinMDFile>true</IsWinMDFile>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <WinMDReferenceToCompile Include="C:\Program Files (x86)\Windows Kits\10\References\10.0.26100.0\Windows.Foundation.FoundationContract\4.0.0.0\Windows.Foundation.FoundationContract.winmd" />
+    <WinMDReferenceToCompile Include="C:\Program Files (x86)\Windows Kits\10\References\10.0.26100.0\Windows.Foundation.UniversalApiContract\19.0.0.0\Windows.Foundation.UniversalApiContract.winmd" />
+    <WinMDReferenceToCompile Include="$(MSBuildProjectDirectory)\..\..\packages\Microsoft.WindowsAppSDK.1.5.240428000\lib\uap10.0\Microsoft.UI.Xaml.winmd" />
+    <WinMDReferenceToCompile Include="$(MSBuildProjectDirectory)\..\..\packages\Microsoft.WindowsAppSDK.1.5.240428000\lib\uap10.0\Microsoft.UI.Text.winmd" />
+  </ItemGroup>
+  <ItemGroup>
     <ClInclude Include="pch.h" />
     <ClInclude Include="App.xaml.h">
       <DependentUpon>App.xaml</DependentUpon>
@@ -54,6 +78,9 @@
       <DependentUpon>MainWindow.xaml</DependentUpon>
     </ClInclude>
     <ClInclude Include="IpcClient.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <Midl Include="MainWindow.idl" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -69,11 +96,16 @@
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml">
+      <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
     <Page Include="MainWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="..\..\packages\Microsoft.Windows.SDK.BuildTools.10.0.26100.1\build\Microsoft.Windows.SDK.BuildTools.targets" Condition="Exists('..\..\packages\Microsoft.Windows.SDK.BuildTools.10.0.26100.1\build\Microsoft.Windows.SDK.BuildTools.targets')" />
+  <Import Project="..\..\packages\Microsoft.WindowsAppSDK.1.5.240428000\build\native\Microsoft.WindowsAppSDK.targets" Condition="Exists('..\..\packages\Microsoft.WindowsAppSDK.1.5.240428000\build\native\Microsoft.WindowsAppSDK.targets')" />
+  <Import Project="..\..\packages\Microsoft.Windows.CppWinRT.2.0.240405.15\build\native\Microsoft.Windows.CppWinRT.targets" Condition="Exists('..\..\packages\Microsoft.Windows.CppWinRT.2.0.240405.15\build\native\Microsoft.Windows.CppWinRT.targets')" />
 </Project>

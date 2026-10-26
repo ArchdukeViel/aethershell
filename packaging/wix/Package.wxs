@@ -4,7 +4,7 @@
            Manufacturer="ArchdukeViel"
            Version="1.0.0.0"
            UpgradeCode="d78b87c1-7c92-4f36-b631-0cf24e6c3821"
-           Scope="perUserOrMachine">
+           Scope="perMachine">
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of AetherShell is already installed." />
     <MediaTemplate EmbedCab="yes" />
@@ -20,6 +20,81 @@
         <Component Id="ScriptHostExecutable" Guid="d59c3f72-7bc0-4dd8-a000-3ed451f0c373">
           <File Id="ScriptHostExe" Source="aethershell-script-host.exe" KeyPath="yes" />
         </Component>
+
+        <Directory Id="AssetsFolder" Name="assets">
+          <Directory Id="ProfilesFolder" Name="profiles">
+            <Component Id="ProfileFiles" Guid="f1a2b3c4-d5e6-4f7a-8b9c-0d1e2f3a4b5c">
+              <File Id="SignatureMinimalProfile" Source="assets\profiles\signature_minimal.toml" KeyPath="yes" />
+            </Component>
+          </Directory>
+
+          <Directory Id="ThemesFolder" Name="themes">
+            <Component Id="ThemeFiles" Guid="a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d">
+              <File Id="ArcticTheme" Source="assets\themes\arctic.toml" KeyPath="yes" />
+              <File Id="AuroraTheme" Source="assets\themes\aurora.toml" />
+              <File Id="MonochromeTheme" Source="assets\themes\monochrome.toml" />
+              <File Id="NeonGridTheme" Source="assets\themes\neon_grid.toml" />
+              <File Id="ObsidianTheme" Source="assets\themes\obsidian.toml" />
+              <File Id="SolarTheme" Source="assets\themes\solar.toml" />
+            </Component>
+          </Directory>
+
+          <Directory Id="SkinsFolder" Name="skins">
+            <Directory Id="SkinAmbientSoft" Name="ambient_soft">
+              <Component Id="SkinAmbientSoftFiles" Guid="b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e">
+                <File Id="AmbientSoftBindings" Source="assets\skins\ambient_soft\bindings.toml" KeyPath="yes" />
+                <File Id="AmbientSoftLayout" Source="assets\skins\ambient_soft\layout.toml" />
+                <File Id="AmbientSoftManifest" Source="assets\skins\ambient_soft\manifest.toml" />
+              </Component>
+            </Directory>
+            <Directory Id="SkinCyberHud" Name="cyber_hud">
+              <Component Id="SkinCyberHudFiles" Guid="c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6e7f">
+                <File Id="CyberHudBindings" Source="assets\skins\cyber_hud\bindings.toml" KeyPath="yes" />
+                <File Id="CyberHudLayout" Source="assets\skins\cyber_hud\layout.toml" />
+                <File Id="CyberHudManifest" Source="assets\skins\cyber_hud\manifest.toml" />
+              </Component>
+            </Directory>
+            <Directory Id="SkinGlassBento" Name="glass_bento">
+              <Component Id="SkinGlassBentoFiles" Guid="d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f8a">
+                <File Id="GlassBentoBindings" Source="assets\skins\glass_bento\bindings.toml" KeyPath="yes" />
+                <File Id="GlassBentoLayout" Source="assets\skins\glass_bento\layout.toml" />
+                <File Id="GlassBentoManifest" Source="assets\skins\glass_bento\manifest.toml" />
+              </Component>
+            </Directory>
+            <Directory Id="SkinMinimalType" Name="minimal_type">
+              <Component Id="SkinMinimalTypeFiles" Guid="e5f6a7b8-c9d0-4e1f-2a3b-4c5d6e7f8a9b">
+                <File Id="MinimalTypeBindings" Source="assets\skins\minimal_type\bindings.toml" KeyPath="yes" />
+                <File Id="MinimalTypeLayout" Source="assets\skins\minimal_type\layout.toml" />
+                <File Id="MinimalTypeManifest" Source="assets\skins\minimal_type\manifest.toml" />
+              </Component>
+            </Directory>
+            <Directory Id="SkinSpectrumDynamic" Name="spectrum_dynamic">
+              <Component Id="SkinSpectrumDynamicFiles" Guid="f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8a9b0c">
+                <File Id="SpectrumDynamicBindings" Source="assets\skins\spectrum_dynamic\bindings.toml" KeyPath="yes" />
+                <File Id="SpectrumDynamicLayout" Source="assets\skins\spectrum_dynamic\layout.toml" />
+                <File Id="SpectrumDynamicManifest" Source="assets\skins\spectrum_dynamic\manifest.toml" />
+              </Component>
+            </Directory>
+            <Directory Id="SkinTerminalMono" Name="terminal_mono">
+              <Component Id="SkinTerminalMonoFiles" Guid="a7b8c9d0-e1f2-4a3b-4c5d-6e7f8a9b0c1d">
+                <File Id="TerminalMonoBindings" Source="assets\skins\terminal_mono\bindings.toml" KeyPath="yes" />
+                <File Id="TerminalMonoLayout" Source="assets\skins\terminal_mono\layout.toml" />
+                <File Id="TerminalMonoManifest" Source="assets\skins\terminal_mono\manifest.toml" />
+              </Component>
+            </Directory>
+          </Directory>
+        </Directory>
+
+        <Directory Id="SchemasFolder" Name="schemas">
+          <Component Id="SchemaFiles" Guid="b8c9d0e1-f2a3-4b4c-5d6e-7f8a9b0c1d2e">
+            <File Id="ConfigSchema" Source="schemas\config.schema.json" KeyPath="yes" />
+            <File Id="ProfileSchema" Source="schemas\profile.schema.json" />
+            <File Id="SkinManifestSchema" Source="schemas\skin-manifest.schema.json" />
+            <File Id="ThemeSchema" Source="schemas\theme.schema.json" />
+            <File Id="WidgetBindingsSchema" Source="schemas\widget-bindings.schema.json" />
+            <File Id="WidgetLayoutSchema" Source="schemas\widget-layout.schema.json" />
+          </Component>
+        </Directory>
       </Directory>
     </StandardDirectory>
 
@@ -37,7 +112,7 @@
                     Target="[#SettingsExe]"
                     WorkingDirectory="INSTALLFOLDER" />
           <RemoveFolder Id="CleanUpShortCut" Directory="ApplicationProgramsFolder" On="uninstall" />
-          <RegistryValue Root="HKCU" Key="Software\ArchdukeViel\AetherShell" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+          <RegistryValue Root="HKLM" Key="Software\ArchdukeViel\AetherShell" Name="installed" Type="integer" Value="1" KeyPath="yes" />
         </Component>
       </Directory>
     </StandardDirectory>
@@ -46,6 +121,15 @@
       <ComponentRef Id="MainExecutable" />
       <ComponentRef Id="SettingsExecutable" />
       <ComponentRef Id="ScriptHostExecutable" />
+      <ComponentRef Id="ProfileFiles" />
+      <ComponentRef Id="ThemeFiles" />
+      <ComponentRef Id="SkinAmbientSoftFiles" />
+      <ComponentRef Id="SkinCyberHudFiles" />
+      <ComponentRef Id="SkinGlassBentoFiles" />
+      <ComponentRef Id="SkinMinimalTypeFiles" />
+      <ComponentRef Id="SkinSpectrumDynamicFiles" />
+      <ComponentRef Id="SkinTerminalMonoFiles" />
+      <ComponentRef Id="SchemaFiles" />
       <ComponentRef Id="ApplicationShortcut" />
     </Feature>
   </Package>

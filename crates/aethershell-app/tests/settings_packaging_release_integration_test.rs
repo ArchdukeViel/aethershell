@@ -1,7 +1,7 @@
 use aethershell_config::{resolve_app_data_dir_from_base, ConfigManager};
 use aethershell_diagnostics::run_benchmark;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -109,22 +109,22 @@ fn test_portable_mode_packaging_identity_gate_g20() {
     let temp_dir = std::env::temp_dir().join(format!("aethershell_pkg_{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&temp_dir).unwrap();
 
-    let fake_local_appdata = PathBuf::from(r"C:\Users\Test\AppData\Local");
+    let fake_local_appdata = temp_dir.join("FakeAppDataLocal");
 
     // Installed / standard mode: resolves to %LOCALAPPDATA%\AetherShell
     let installed_dir =
         resolve_app_data_dir_from_base(Some(temp_dir.clone()), Some(fake_local_appdata.clone()));
     assert_eq!(installed_dir, fake_local_appdata.join("AetherShell"));
 
-    // Portable mode (PRD Q38:B / Gate G20): marker file redirects AppData to <exe_dir>\data
+    // Portable mode (PRD Q38:B / Gate G20): portable binaries consistently resolve to canonical AppData
     let marker_file = temp_dir.join("aethershell.portable");
     fs::write(&marker_file, "").unwrap();
 
     let portable_dir =
-        resolve_app_data_dir_from_base(Some(temp_dir.clone()), Some(fake_local_appdata));
-    assert_eq!(portable_dir, temp_dir.join("data"));
+        resolve_app_data_dir_from_base(Some(temp_dir.clone()), Some(fake_local_appdata.clone()));
+    assert_eq!(portable_dir, fake_local_appdata.join("AetherShell"));
 
-    // Verify ConfigManager works identically inside portable data directory
+    // Verify ConfigManager works identically inside canonical data directory
     let manager = ConfigManager::new(&portable_dir);
     let cfg = manager.load_or_default().expect("load or default");
     assert_eq!(cfg.profile, "signature_minimal");
@@ -141,15 +141,39 @@ fn test_five_channel_packaging_artifacts_gate_g15() {
     assert!(wix_pkg.exists(), "WiX Package.wxs must exist");
     let wix_content = fs::read_to_string(&wix_pkg).unwrap();
     assert!(wix_content.contains("UpgradeCode=\"d78b87c1-7c92-4f36-b631-0cf24e6c3821\""));
+    assert!(wix_content.contains("Scope=\"perMachine\""));
     assert!(wix_content.contains("aethershell.exe"));
     assert!(wix_content.contains("aethershell-settings.exe"));
+    assert!(wix_content.contains("assets\\skins"));
+    assert!(wix_content.contains("assets\\themes"));
+    assert!(wix_content.contains("assets\\profiles"));
+    assert!(wix_content.contains("schemas\\"));
 
-    // 2. MSIX AppxManifest.xml
+    // 2. MSIX AppxManifest.xml and visual assets
     let msix_manifest = root.join("packaging/msix/AppxManifest.xml");
     assert!(msix_manifest.exists(), "MSIX AppxManifest.xml must exist");
     let msix_content = fs::read_to_string(&msix_manifest).unwrap();
     assert!(msix_content.contains("Name=\"ArchdukeViel.AetherShell\""));
     assert!(msix_content.contains("runFullTrust"));
+
+    let msix_assets_dir = root.join("packaging/msix/Assets");
+    assert!(msix_assets_dir.exists(), "MSIX Assets directory must exist");
+    for asset_name in &[
+        "StoreLogo.png",
+        "Square150x150Logo.png",
+        "Square44x44Logo.png",
+        "Wide310x150Logo.png",
+        "Square71x71Logo.png",
+        "SplashScreen.png",
+    ] {
+        let asset_file = msix_assets_dir.join(asset_name);
+        assert!(asset_file.exists(), "Visual asset {asset_name} must exist");
+        let meta = fs::metadata(&asset_file).expect("asset metadata");
+        assert!(
+            meta.len() > 100,
+            "Visual asset {asset_name} must be authentic and non-empty"
+        );
+    }
 
     // 3. Store Preflight Checklist
     let store_checklist = root.join("packaging/store/StorePreflight.md");
@@ -160,6 +184,7 @@ fn test_five_channel_packaging_artifacts_gate_g15() {
     let store_content = fs::read_to_string(&store_checklist).unwrap();
     assert!(store_content.contains("10.5 Personal Data & Privacy"));
     assert!(store_content.contains("Audio Privacy Guarantee"));
+    assert!(store_content.contains("Five-Channel Packaging Matrix Audit"));
 
     // 4. WinGet Manifests
     let winget_dir = root.join("packaging/winget/manifests/a/ArchdukeViel/AetherShell/1.0.0");
@@ -170,6 +195,15 @@ fn test_five_channel_packaging_artifacts_gate_g15() {
     assert!(winget_dir
         .join("ArchdukeViel.AetherShell.locale.en-US.yaml")
         .exists());
+
+    let winget_installer =
+        fs::read_to_string(winget_dir.join("ArchdukeViel.AetherShell.installer.yaml")).unwrap();
+    assert!(winget_installer.contains("Scope: machine"));
+    assert!(
+        !winget_installer
+            .contains("0000000000000000000000000000000000000000000000000000000000000000"),
+        "WinGet InstallerSha256 must be computed"
+    );
 
     let winget_locale =
         fs::read_to_string(winget_dir.join("ArchdukeViel.AetherShell.locale.en-US.yaml")).unwrap();
@@ -183,5 +217,6 @@ fn test_five_channel_packaging_artifacts_gate_g15() {
         "Portable packaging script must exist"
     );
     let portable_content = fs::read_to_string(&portable_script).unwrap();
-    assert!(portable_content.contains("aethershell.portable"));
+    assert!(portable_content.contains("AetherShell-v1.0.0-portable-win-x64.zip"));
+    assert!(portable_content.contains("PRD Q38:B Storage Contract"));
 }

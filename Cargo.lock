@@ -81,7 +81,9 @@ dependencies = [
 name = "aethershell-diagnostics"
 version = "0.1.0"
 dependencies = [
+ "aethershell-audio",
  "aethershell-core",
+ "aethershell-renderer",
  "chrono",
  "serde",
  "serde_json",

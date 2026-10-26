@@ -1,4 +1,5 @@
 #pragma once
+#include "MainWindow.g.h"
 #include "MainWindow.xaml.g.h"
 
 namespace winrt::AetherShell::Settings::implementation
@@ -13,6 +14,15 @@ namespace winrt::AetherShell::Settings::implementation
         void OnWindowClosed(
             winrt::Windows::Foundation::IInspectable const& sender,
             winrt::Microsoft::UI::Xaml::WindowEventArgs const& args);
+
+    private:
+        void NavigateToPage(winrt::hstring const& tag);
+        winrt::Microsoft::UI::Xaml::UIElement CreateGeneralView();
+        winrt::Microsoft::UI::Xaml::UIElement CreateTaskbarView();
+        winrt::Microsoft::UI::Xaml::UIElement CreateDesktopView();
+        winrt::Microsoft::UI::Xaml::UIElement CreateWidgetsView();
+        winrt::Microsoft::UI::Xaml::UIElement CreateAudioView();
+        winrt::Microsoft::UI::Xaml::UIElement CreateScriptsView();
     };
 }
 

@@ -13,4 +13,6 @@
 #include <winrt/Microsoft.UI.Xaml.Data.h>
 #include <winrt/Microsoft.UI.Xaml.Interop.h>
 #include <winrt/Microsoft.UI.Xaml.Markup.h>
+#include <winrt/Windows.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Navigation.h>
+#include <winrt/AetherShell.Settings.h>

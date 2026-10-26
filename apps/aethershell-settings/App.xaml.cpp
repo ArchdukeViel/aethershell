@@ -1,6 +1,18 @@
 #include "pch.h"
 #include "App.xaml.h"
 #include "MainWindow.xaml.h"
+#if __has_include("XamlTypeInfo.Impl.g.cpp")
+#include "XamlTypeInfo.Impl.g.cpp"
+#endif
+#if __has_include("XamlTypeInfo.g.cpp")
+#include "XamlTypeInfo.g.cpp"
+#endif
+#if __has_include("XamlMetaDataProvider.g.cpp")
+#include "XamlMetaDataProvider.g.cpp"
+#endif
+#if __has_include("module.g.cpp")
+#include "module.g.cpp"
+#endif
 
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
@@ -17,13 +29,4 @@ namespace winrt::AetherShell::Settings::implementation
         m_window = make<MainWindow>();
         m_window.Activate();
     }
-}
-
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
-{
-    winrt::init_apartment(winrt::apartment_type::single_threaded);
-    ::Microsoft::UI::Xaml::Application::Start([](auto&&) {
-        winrt::make<::winrt::AetherShell::Settings::implementation::App>();
-    });
-    return 0;
 }
