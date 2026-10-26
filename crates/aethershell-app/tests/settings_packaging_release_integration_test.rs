@@ -11,10 +11,18 @@ fn test_settings_ipc_on_demand_lifecycle_and_exit_gate_g11() {
     let settings_bin = Path::new(app_bin).with_file_name("aethershell-settings.exe");
 
     if !settings_bin.exists() {
-        let status = Command::new("cargo")
-            .args(["build", "--bin", "aethershell-settings"])
-            .status()
-            .expect("cargo build aethershell-settings");
+        let mut cmd = Command::new("cargo");
+        cmd.args([
+            "build",
+            "-p",
+            "aethershell-settings",
+            "--bin",
+            "aethershell-settings",
+        ]);
+        if !cfg!(debug_assertions) || app_bin.contains("release") {
+            cmd.arg("--release");
+        }
+        let status = cmd.status().expect("cargo build aethershell-settings");
         assert!(status.success());
     }
 
