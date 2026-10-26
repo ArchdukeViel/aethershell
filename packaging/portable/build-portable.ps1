@@ -44,7 +44,7 @@ if (Test-Path "$WinUiSettingsDir\aethershell-settings.exe") {
     Write-Host "Packaging native WinUI 3 Settings application and self-contained runtime..." -ForegroundColor Green
     Copy-Item "$WinUiSettingsDir\aethershell-settings.exe" "$StageDir\aethershell-settings.exe"
     # Copy self-contained runtime dependencies (DLLs, PRIs, XBFs)
-    Get-ChildItem -Path $WinUiSettingsDir -Include @("*.dll", "*.pri", "*.xbf") -File | ForEach-Object {
+    Get-ChildItem -Path "$WinUiSettingsDir\*" -Include @("*.dll", "*.pri", "*.xbf") -File | ForEach-Object {
         Copy-Item $_.FullName "$StageDir\$($_.Name)"
     }
     if (Test-Path "$WinUiSettingsDir\Microsoft.UI.Xaml") {

@@ -40,14 +40,19 @@ foreach ($bin in $RequiredBins) {
     Copy-Item "$BinDir\$bin" "$StageDir\$bin"
 }
 
-# Copy WinUI 3 Settings Application
-$WinUiSettings = "$WorkspaceRoot\apps\aethershell-settings\x64\Release\aethershell-settings.exe"
-if (Test-Path $WinUiSettings) {
-    Copy-Item $WinUiSettings "$StageDir\aethershell-settings.exe"
+# Copy WinUI 3 Settings Application & Self-Contained Runtime (PRD Section 16 Table 16)
+$WinUiSettingsDir = "$WorkspaceRoot\apps\aethershell-settings\x64\Release"
+if (Test-Path "$WinUiSettingsDir\aethershell-settings.exe") {
+    Write-Host "Packaging native WinUI 3 Settings application and runtime dependencies..." -ForegroundColor Green
+    Copy-Item "$WinUiSettingsDir\aethershell-settings.exe" "$StageDir\aethershell-settings.exe"
+    Get-ChildItem -Path "$WinUiSettingsDir\*" -Include @("*.dll", "*.pri", "*.xbf") -File | ForEach-Object {
+        Copy-Item $_.FullName "$StageDir\$($_.Name)"
+    }
 } elseif (Test-Path "$BinDir\aethershell-settings.exe") {
+    Write-Host "Packaging fallback Settings binary..." -ForegroundColor Yellow
     Copy-Item "$BinDir\aethershell-settings.exe" "$StageDir\aethershell-settings.exe"
 } else {
-    throw "aethershell-settings.exe not found in either $WinUiSettings or $BinDir"
+    throw "aethershell-settings.exe not found in either $WinUiSettingsDir or $BinDir"
 }
 
 # Stage assets and schemas for packaging

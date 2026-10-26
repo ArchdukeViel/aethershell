@@ -46,7 +46,7 @@ $WinUiSettingsDir = "$WorkspaceRoot\apps\aethershell-settings\x64\Release"
 if (Test-Path "$WinUiSettingsDir\aethershell-settings.exe") {
     Write-Host "Packaging native WinUI 3 Settings application and runtime..." -ForegroundColor Green
     Copy-Item "$WinUiSettingsDir\aethershell-settings.exe" "$StageDir\aethershell-settings.exe"
-    Get-ChildItem -Path $WinUiSettingsDir -Include @("*.dll", "*.pri", "*.xbf") -File | ForEach-Object {
+    Get-ChildItem -Path "$WinUiSettingsDir\*" -Include @("*.dll", "*.pri", "*.xbf") -File | ForEach-Object {
         Copy-Item $_.FullName "$StageDir\$($_.Name)"
     }
     if (Test-Path "$WinUiSettingsDir\Microsoft.UI.Xaml") {
@@ -97,7 +97,7 @@ $PackageFile = "$OutputDir\ArchdukeViel.AetherShell_1.0.0.0_x64.msix"
 
 if ($MakeAppx) {
     Write-Host "Creating MSIX package using $MakeAppx..." -ForegroundColor Cyan
-    & $MakeAppx pack /d $StageDir /p $PackageFile /nv /o
+    & $MakeAppx pack /d $StageDir /p $PackageFile /o
     if ($LASTEXITCODE -ne 0) {
         throw "makeappx.exe failed with exit code $LASTEXITCODE"
     }

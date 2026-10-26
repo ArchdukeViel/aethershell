@@ -20,6 +20,44 @@
         <Component Id="ScriptHostExecutable" Guid="d59c3f72-7bc0-4dd8-a000-3ed451f0c373">
           <File Id="ScriptHostExe" Source="aethershell-script-host.exe" KeyPath="yes" />
         </Component>
+        <Component Id="SettingsRuntimeFiles" Guid="e71e5192-8cd2-4ee9-b222-5fe66201e595">
+          <File Id="WinUiXamlDll" Source="Microsoft.ui.xaml.dll" KeyPath="yes" />
+          <File Id="WinUiBootstrapDll" Source="Microsoft.WindowsAppRuntime.Bootstrap.dll" />
+          <File Id="WinUiRuntimeDll" Source="Microsoft.WindowsAppRuntime.dll" />
+          <File Id="WinUiControlsDll" Source="Microsoft.UI.Xaml.Controls.dll" />
+          <File Id="WinUiControlsPri" Source="Microsoft.UI.Xaml.Controls.pri" />
+          <File Id="WinUiAppXbf" Source="App.xbf" />
+          <File Id="WinUiMainWindowXbf" Source="MainWindow.xbf" />
+          <File Id="WinUiDWriteCoreDll" Source="DWriteCore.dll" />
+          <File Id="WinUiDcompiDll" Source="dcompi.dll" />
+          <File Id="WinUiDwmcoreiDll" Source="dwmcorei.dll" />
+          <File Id="WinUiDwmSceneIDll" Source="DwmSceneI.dll" />
+          <File Id="WinUiMrmDll" Source="MRM.dll" />
+          <File Id="WinUiCoreMessagingXpDll" Source="CoreMessagingXP.dll" />
+          <File Id="WinUiDirectManipulationDll" Source="Microsoft.DirectManipulation.dll" />
+          <File Id="WinUiGraphicsDisplayDll" Source="Microsoft.Graphics.Display.dll" />
+          <File Id="WinUiInputStateManagerDll" Source="Microsoft.InputStateManager.dll" />
+          <File Id="WinUiInternalFrameworkUdkDll" Source="Microsoft.Internal.FrameworkUdk.dll" />
+          <File Id="WinUiCompositionOSSupportDll" Source="Microsoft.UI.Composition.OSSupport.dll" />
+          <File Id="WinUiDll" Source="Microsoft.UI.dll" />
+          <File Id="WinUiInputDll" Source="Microsoft.UI.Input.dll" />
+          <File Id="WinUiWindowingCoreDll" Source="Microsoft.UI.Windowing.Core.dll" />
+          <File Id="WinUiWindowingDll" Source="Microsoft.UI.Windowing.dll" />
+          <File Id="WinUiXamlInternalDll" Source="Microsoft.UI.Xaml.Internal.dll" />
+          <File Id="WinUiXamlPhoneDll" Source="Microsoft.UI.Xaml.Phone.dll" />
+          <File Id="WinUiXamlResources19h1Dll" Source="Microsoft.ui.xaml.resources.19h1.dll" />
+          <File Id="WinUiXamlResourcesCommonDll" Source="Microsoft.ui.xaml.resources.common.dll" />
+          <File Id="WinUiWebview2CoreDll" Source="Microsoft.Web.WebView2.Core.dll" />
+          <File Id="WinUiAppModelResourcesDll" Source="Microsoft.Windows.ApplicationModel.Resources.dll" />
+          <File Id="WinUiWidgetsDll" Source="Microsoft.Windows.Widgets.dll" />
+          <File Id="WinUiInsightsResourceDll" Source="Microsoft.WindowsAppRuntime.Insights.Resource.dll" />
+          <File Id="WinUiPushNotificationsDll" Source="PushNotificationsLongRunningTask.ProxyStub.dll" />
+          <File Id="WinUiDeploymentDesktopEventLogDll" Source="WindowsAppSdk.AppxDeploymentExtensions.Desktop-EventLog-Instrumentation.dll" />
+          <File Id="WinUiDeploymentDesktopDll" Source="WindowsAppSdk.AppxDeploymentExtensions.Desktop.dll" />
+          <File Id="WinUiEditDll" Source="WinUIEdit.dll" />
+          <File Id="WinUiWuceffectsiDll" Source="wuceffectsi.dll" />
+          <File Id="WinUiMarshalDll" Source="marshal.dll" />
+        </Component>
 
         <Directory Id="AssetsFolder" Name="assets">
           <Directory Id="ProfilesFolder" Name="profiles">
@@ -121,6 +159,7 @@
       <ComponentRef Id="MainExecutable" />
       <ComponentRef Id="SettingsExecutable" />
       <ComponentRef Id="ScriptHostExecutable" />
+      <ComponentRef Id="SettingsRuntimeFiles" />
       <ComponentRef Id="ProfileFiles" />
       <ComponentRef Id="ThemeFiles" />
       <ComponentRef Id="SkinAmbientSoftFiles" />

@@ -136,7 +136,7 @@ fn test_portable_mode_packaging_identity_gate_g20() {
 fn test_five_channel_packaging_artifacts_gate_g15() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
 
-    // 1. WiX MSI package source
+    // 1. WiX MSI package source & self-contained runtime deployment (PRD Table 16 / Line 1205)
     let wix_pkg = root.join("packaging/wix/Package.wxs");
     assert!(wix_pkg.exists(), "WiX Package.wxs must exist");
     let wix_content = fs::read_to_string(&wix_pkg).unwrap();
@@ -144,17 +144,27 @@ fn test_five_channel_packaging_artifacts_gate_g15() {
     assert!(wix_content.contains("Scope=\"perMachine\""));
     assert!(wix_content.contains("aethershell.exe"));
     assert!(wix_content.contains("aethershell-settings.exe"));
+    assert!(wix_content.contains("SettingsRuntimeFiles"));
+    assert!(wix_content.contains("Microsoft.ui.xaml.dll"));
     assert!(wix_content.contains("assets\\skins"));
     assert!(wix_content.contains("assets\\themes"));
     assert!(wix_content.contains("assets\\profiles"));
     assert!(wix_content.contains("schemas\\"));
 
-    // 2. MSIX AppxManifest.xml and visual assets
+    // 2. MSIX AppxManifest.xml, visual assets, and validated build script
     let msix_manifest = root.join("packaging/msix/AppxManifest.xml");
     assert!(msix_manifest.exists(), "MSIX AppxManifest.xml must exist");
     let msix_content = fs::read_to_string(&msix_manifest).unwrap();
     assert!(msix_content.contains("Name=\"ArchdukeViel.AetherShell\""));
     assert!(msix_content.contains("runFullTrust"));
+
+    let msix_script = root.join("packaging/msix/build-msix.ps1");
+    assert!(msix_script.exists(), "build-msix.ps1 must exist");
+    let msix_script_content = fs::read_to_string(&msix_script).unwrap();
+    assert!(
+        !msix_script_content.contains("/nv"),
+        "MSIX build script must enforce genuine semantic validation without /nv bypass"
+    );
 
     let msix_assets_dir = root.join("packaging/msix/Assets");
     assert!(msix_assets_dir.exists(), "MSIX Assets directory must exist");
@@ -186,7 +196,7 @@ fn test_five_channel_packaging_artifacts_gate_g15() {
     assert!(store_content.contains("Audio Privacy Guarantee"));
     assert!(store_content.contains("Five-Channel Packaging Matrix Audit"));
 
-    // 4. WinGet Manifests
+    // 4. WinGet Manifests & Genuine SHA-256 Computation Script
     let winget_dir = root.join("packaging/winget/manifests/a/ArchdukeViel/AetherShell/1.0.0");
     assert!(winget_dir.join("ArchdukeViel.AetherShell.yaml").exists());
     assert!(winget_dir
@@ -195,6 +205,12 @@ fn test_five_channel_packaging_artifacts_gate_g15() {
     assert!(winget_dir
         .join("ArchdukeViel.AetherShell.locale.en-US.yaml")
         .exists());
+
+    let winget_script = root.join("packaging/winget/compute-manifest-sha256.ps1");
+    assert!(
+        winget_script.exists(),
+        "WinGet genuine SHA-256 computation script must exist"
+    );
 
     let winget_installer =
         fs::read_to_string(winget_dir.join("ArchdukeViel.AetherShell.installer.yaml")).unwrap();
@@ -210,7 +226,7 @@ fn test_five_channel_packaging_artifacts_gate_g15() {
     assert!(winget_locale.contains("PackageIdentifier: ArchdukeViel.AetherShell"));
     assert!(winget_locale.contains("PackageVersion: 1.0.0"));
 
-    // 5. Portable ZIP packaging script
+    // 5. Portable ZIP packaging script & self-contained runtime contract (Q38:B / PRD Table 16)
     let portable_script = root.join("packaging/portable/build-portable.ps1");
     assert!(
         portable_script.exists(),
@@ -219,4 +235,8 @@ fn test_five_channel_packaging_artifacts_gate_g15() {
     let portable_content = fs::read_to_string(&portable_script).unwrap();
     assert!(portable_content.contains("AetherShell-v1.0.0-portable-win-x64.zip"));
     assert!(portable_content.contains("PRD Q38:B Storage Contract"));
+    assert!(
+        portable_content.contains(r#""$WinUiSettingsDir\*""#),
+        "Portable packaging script must use wildcard path to stage runtime DLLs"
+    );
 }
