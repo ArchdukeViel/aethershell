@@ -196,7 +196,15 @@ impl Drop for SystemTray {
     }
 }
 
-fn dispatch_tray_ipc(command: &'static str, payload: serde_json::Value) {
+fn dispatch_tray_ipc(command: &'static str, mut payload: serde_json::Value) {
+    if let Some(token) = aethershell_ipc::SessionToken::load() {
+        if let Some(obj) = payload.as_object_mut() {
+            if !obj.contains_key("session_token") {
+                obj.insert("session_token".into(), serde_json::json!(token));
+            }
+        }
+    }
+
     let pipe_name = {
         let lock = TRAY_PIPE_NAME.read().ok();
         lock.and_then(|g| g.clone())

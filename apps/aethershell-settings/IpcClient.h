@@ -16,6 +16,7 @@ namespace AetherShell::Settings
     {
     public:
         static std::wstring ResolvePipeName();
+        static std::string LoadSessionToken();
         static IpcResult SendCommand(const std::string& command, const std::string& jsonPayload = "{}");
     };
 }

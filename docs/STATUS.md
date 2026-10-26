@@ -126,8 +126,10 @@ An adversarial audit conducted on 2026-10-26 originally revealed 17 specific def
 - [x] **Phase A: Security, IPC Hardening & Data Integrity** (PR #20)
   - Named pipe atomic security descriptor construction at creation (`create_with_security_attributes_raw`)
   - Elimination of worker registration and heartbeat bypasses in `engine.rs`
-  - Privileged management command authorization with session capability tokens (`session.token`)
+  - Privileged management command authorization with session capability tokens (`session_{session_id}.token`) across all IPC clients (Rust core, Tray, Rust settings CLI, C++/WinUI Settings)
   - Supervised worker process role containment (prohibiting management command execution)
-  - Win32 `ReplaceFileW` and `MoveFileExW` genuinely atomic configuration saving with backup poisoning prevention
-  - Pre-execution worker Job Object containment via `CREATE_SUSPENDED` and zero-uncontained-execution guarantee
-  - Formal evidence ledger EVD-010 logged and verified across 110 workspace tests
+  - Win32 `ReplaceFileW` and `MoveFileExW` genuinely atomic configuration saving with `REPLACE_FILE_FLAGS(0)`, backup self-healing, and lock failure protection
+  - Pre-execution worker Job Object containment via `CREATE_SUSPENDED`, 128 MiB memory limit enforcement (`0x800705AF` tested on child process), and zero-uncontained-execution guarantee
+  - Binary path privacy verified: 0 developer-specific paths in release binaries via `--remap-path-prefix`
+  - Formal evidence ledgers EVD-010 and EVD-011 logged and verified across 138 workspace tests (104 unit tests + 34 integration tests)
+

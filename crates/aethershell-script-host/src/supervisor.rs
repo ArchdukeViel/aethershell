@@ -99,6 +99,11 @@ pub struct JobObjectGuard(HANDLE);
 
 impl JobObjectGuard {
     pub fn new() -> Result<Self, String> {
+        // 128 MiB per-worker memory limit (PRD Table 17-1)
+        Self::with_memory_limit(128 * 1024 * 1024)
+    }
+
+    pub fn with_memory_limit(memory_limit_bytes: usize) -> Result<Self, String> {
         unsafe {
             let job = CreateJobObjectW(None, None)
                 .map_err(|e| format!("CreateJobObjectW failed: {}", e))?;
@@ -106,7 +111,7 @@ impl JobObjectGuard {
             let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
             info.BasicLimitInformation.LimitFlags =
                 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_PROCESS_MEMORY;
-            info.ProcessMemoryLimit = 128 * 1024 * 1024; // 128 MiB per-worker memory limit (PRD Table 17-1)
+            info.ProcessMemoryLimit = memory_limit_bytes;
 
             SetInformationJobObject(
                 job,
@@ -494,5 +499,116 @@ mod tests {
             );
             let _ = c.wait();
         }
+    }
+
+    #[test]
+    fn test_job_object_guard_invalid_handle_failure() {
+        let job = JobObjectGuard::new().expect("create job");
+        let invalid_res = job.assign_handle(HANDLE::default());
+        assert!(
+            invalid_res.is_err(),
+            "Assigning null handle to Job Object must return Err"
+        );
+    }
+
+    #[test]
+    fn test_job_object_within_memory_limit_succeeds() {
+        let job = JobObjectGuard::with_memory_limit(128 * 1024 * 1024)
+            .expect("create job with 128 MiB limit");
+
+        let mut child = Command::new("cmd.exe")
+            .args(["/c", "exit", "0"])
+            .spawn()
+            .expect("spawn cmd");
+
+        let assign_res = job.assign_process(&child);
+        assert!(assign_res.is_ok(), "Process assignment must succeed");
+
+        let status = child.wait().expect("wait child");
+        assert!(
+            status.success(),
+            "Process within memory limit must succeed: status={:?}",
+            status
+        );
+    }
+
+    #[test]
+    fn test_job_object_memory_limit_enforced_on_real_worker() {
+        // Create Job Object with strict 20 MiB memory limit
+        let job = JobObjectGuard::with_memory_limit(20 * 1024 * 1024)
+            .expect("create job with 20 MiB limit");
+
+        // PowerShell allocating a 60 MiB buffer exceeds the 20 MiB Job Object limit
+        let child = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$arr = [byte[]]::new(60 * 1024 * 1024)",
+            ])
+            .spawn();
+
+        if let Ok(mut c) = child {
+            let assign_res = job.assign_process(&c);
+            assert!(assign_res.is_ok(), "Process assignment must succeed");
+
+            let status = c.wait().expect("wait child");
+            assert!(
+                !status.success(),
+                "Process exceeding memory limit must be terminated or fail: {:?}",
+                status
+            );
+        }
+    }
+
+    #[test]
+    fn test_spawn_worker_nonexistent_binary_fails_before_execution() {
+        let mut supervisor = ScriptSupervisor::new(2);
+        let nonexistent = Path::new("C:\\NonExistent_Worker_Path_12345.exe");
+        let script = std::env::temp_dir().join(format!(
+            "test_s_{}_{}.lua",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&script, b"-- dummy lua").unwrap();
+
+        let sha = crate::sha256_hex(b"-- dummy lua");
+        let res = supervisor.spawn_worker(nonexistent, &script, &sha, "");
+        assert!(
+            res.is_err(),
+            "Spawning nonexistent binary must fail cleanly"
+        );
+        assert!(res.unwrap_err().contains("CreateProcessW failed"));
+
+        let _ = std::fs::remove_file(script);
+    }
+
+    #[test]
+    fn test_spawn_worker_digest_mismatch_fails_before_process_creation() {
+        let mut supervisor = ScriptSupervisor::new(2);
+        let script = std::env::temp_dir().join(format!(
+            "test_mismatch_{}_{}.lua",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&script, b"-- actual content").unwrap();
+
+        let bogus_sha = "0000000000000000000000000000000000000000000000000000000000000000";
+        let res = supervisor.spawn_worker(Path::new("cmd.exe"), &script, bogus_sha, "");
+        assert!(
+            res.is_err(),
+            "Digest mismatch must reject spawn before any process creation"
+        );
+        assert!(res
+            .unwrap_err()
+            .contains("Pre-spawn digest verification failed"));
+
+        let _ = std::fs::remove_file(script);
     }
 }

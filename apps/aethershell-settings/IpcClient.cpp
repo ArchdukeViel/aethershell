@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "IpcClient.h"
+#include <fstream>
 #include <sstream>
 
 namespace AetherShell::Settings
@@ -11,6 +12,62 @@ namespace AetherShell::Settings
         std::wstringstream ss;
         ss << L"\\\\.\\pipe\\aethershell-ipc-" << sessionId;
         return ss.str();
+    }
+
+    std::string SettingsIpcClient::LoadSessionToken()
+    {
+        // 1. Check override environment variable AETHERSHELL_SESSION_TOKEN_PATH
+        wchar_t overridePath[MAX_PATH] = { 0 };
+        DWORD len = GetEnvironmentVariableW(L"AETHERSHELL_SESSION_TOKEN_PATH", overridePath, MAX_PATH);
+        if (len > 0 && len < MAX_PATH)
+        {
+            std::ifstream file(overridePath);
+            if (file.is_open())
+            {
+                std::string tok;
+                if (std::getline(file, tok))
+                {
+                    while (!tok.empty() && (tok.back() == '\r' || tok.back() == '\n' || tok.back() == ' ')) tok.pop_back();
+                    if (!tok.empty()) return tok;
+                }
+            }
+        }
+
+        // 2. Resolve per-session token path: %LOCALAPPDATA%\AetherShell\session_{sessionId}.token
+        DWORD sessionId = 1;
+        ProcessIdToSessionId(GetCurrentProcessId(), &sessionId);
+
+        wchar_t localAppData[MAX_PATH] = { 0 };
+        len = GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH);
+        if (len > 0 && len < MAX_PATH)
+        {
+            std::wstring sessionPath = std::wstring(localAppData) + L"\\AetherShell\\session_" + std::to_wstring(sessionId) + L".token";
+            std::ifstream file(sessionPath);
+            if (file.is_open())
+            {
+                std::string tok;
+                if (std::getline(file, tok))
+                {
+                    while (!tok.empty() && (tok.back() == '\r' || tok.back() == '\n' || tok.back() == ' ')) tok.pop_back();
+                    if (!tok.empty()) return tok;
+                }
+            }
+
+            // Fallback to legacy session.token path
+            std::wstring fallbackPath = std::wstring(localAppData) + L"\\AetherShell\\session.token";
+            std::ifstream fallbackFile(fallbackPath);
+            if (fallbackFile.is_open())
+            {
+                std::string tok;
+                if (std::getline(fallbackFile, tok))
+                {
+                    while (!tok.empty() && (tok.back() == '\r' || tok.back() == '\n' || tok.back() == ' ')) tok.pop_back();
+                    if (!tok.empty()) return tok;
+                }
+            }
+        }
+
+        return "";
     }
 
     IpcResult SettingsIpcClient::SendCommand(const std::string& command, const std::string& jsonPayload)
@@ -35,10 +92,29 @@ namespace AetherShell::Settings
             return result;
         }
 
+        // Attach session capability token to payload for privileged management commands
+        std::string effectivePayload = jsonPayload;
+        std::string token = LoadSessionToken();
+        if (!token.empty() && effectivePayload.find("session_token") == std::string::npos)
+        {
+            if (effectivePayload.empty() || effectivePayload == "{}")
+            {
+                effectivePayload = "{\"session_token\":\"" + token + "\"}";
+            }
+            else
+            {
+                size_t openBrace = effectivePayload.find('{');
+                if (openBrace != std::string::npos)
+                {
+                    effectivePayload.insert(openBrace + 1, "\"session_token\":\"" + token + "\",");
+                }
+            }
+        }
+
         // Build framed IPC JSON message: {"protocol_version":1,"message_id":"...","command":"...","payload":...}
         std::stringstream req;
         req << "{\"protocol_version\":1,\"message_id\":\"settings-cmd\",\"command\":\""
-            << command << "\",\"payload\":" << jsonPayload << ",\"deadline_ms\":5000}";
+            << command << "\",\"payload\":" << effectivePayload << ",\"deadline_ms\":5000}";
         std::string reqBody = req.str();
 
         uint32_t lengthPrefix = static_cast<uint32_t>(reqBody.size());

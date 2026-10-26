@@ -102,6 +102,10 @@ impl AppEngine {
         Arc::clone(&self.taskbar)
     }
 
+    pub fn is_shutdown_requested(&self) -> bool {
+        self.shutdown_flag.load(Ordering::Relaxed)
+    }
+
     /// Primary runtime entry point.
     pub async fn run(&self, is_safe_mode: bool) -> Result<(), Box<dyn std::error::Error>> {
         info!(
@@ -286,401 +290,7 @@ impl AppEngine {
 
         // 6. Setup IPC Server and Command Router
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let interaction_clone = Arc::clone(&self.interaction);
-        let taskbar_clone = Arc::clone(&self.taskbar);
-        let telemetry_clone = Arc::clone(&self.telemetry);
-        let audio_clone = Arc::clone(&self.audio);
-        let supervisor_clone = Arc::clone(&self.script_supervisor);
-        let desktop_windows_clone = Arc::clone(&self.desktop_windows);
-        let desktop_renderer_clone = Arc::clone(&self.desktop_renderer);
-        let shutdown_flag_clone = Arc::clone(&self.shutdown_flag);
-        let shutdown_tx_clone = shutdown_tx.clone();
-        let os_build = self.os_info.build_number;
-
-        let expected_session_token = self.session_token.clone();
-        let expected_session_id = session_id;
-
-        let request_handler = Arc::new(
-            move |req: IpcRequest, client_identity: IpcClientIdentity| {
-                let interaction = Arc::clone(&interaction_clone);
-                let taskbar = Arc::clone(&taskbar_clone);
-                let telemetry = Arc::clone(&telemetry_clone);
-                let audio = Arc::clone(&audio_clone);
-                let supervisor = Arc::clone(&supervisor_clone);
-                let desktop_windows = Arc::clone(&desktop_windows_clone);
-                let desktop_renderer = Arc::clone(&desktop_renderer_clone);
-                let shutdown_flag = Arc::clone(&shutdown_flag_clone);
-                let shutdown_tx = shutdown_tx_clone.clone();
-                let session_token = expected_session_token.clone();
-                let valid_session_id = expected_session_id;
-
-                Box::pin(async move {
-                    // 1. Session Isolation: Enforce same-session client callers
-                    if client_identity.session_id != valid_session_id {
-                        warn!(
-                        "Security violation: cross-session IPC client rejected (client session {}, engine session {})",
-                        client_identity.session_id, valid_session_id
-                    );
-                        return IpcResponse::error(
-                            req.message_id,
-                            "Security violation: cross-session caller rejected",
-                        );
-                    }
-
-                    // 2. Worker Role Separation: Supervised worker child is restricted to worker lifecycle & data queries only
-                    let is_script_worker = {
-                        let sup = supervisor.lock().await;
-                        sup.active_child_pid() == Some(client_identity.process_id)
-                    };
-
-                    if is_script_worker
-                        && !matches!(
-                            req.command.as_str(),
-                            "script_worker_ready"
-                                | "script_worker_heartbeat"
-                                | "get_telemetry"
-                                | "get_spectrum"
-                                | "get_status"
-                        )
-                    {
-                        warn!(
-                        "Security violation: supervised script worker PID {} attempted forbidden command '{}'",
-                        client_identity.process_id, req.command
-                    );
-                        return IpcResponse::error(
-                        req.message_id,
-                        "Security violation: script worker is not authorized to invoke privileged management commands",
-                    );
-                    }
-
-                    // 3. Privileged Management Commands Authorization (Session Capability Token)
-                    let is_management_command = matches!(
-                        req.command.as_str(),
-                        "shutdown"
-                            | "enter_interactive_mode"
-                            | "exit_interactive_mode"
-                            | "reload_profile"
-                            | "update_layout"
-                            | "pause_audio"
-                            | "resume_audio"
-                    );
-
-                    if is_management_command {
-                        let is_same_process = client_identity.process_id == std::process::id();
-                        let has_valid_token = req
-                            .payload
-                            .get("session_token")
-                            .or_else(|| req.payload.get("token"))
-                            .and_then(|v| v.as_str())
-                            .map(|tok| !tok.is_empty() && tok == session_token.as_str())
-                            .unwrap_or(false);
-
-                        if !is_same_process && !has_valid_token {
-                            warn!(
-                            "Security violation: caller PID {} attempted management command '{}' without valid session token",
-                            client_identity.process_id, req.command
-                        );
-                            return IpcResponse::error(
-                            req.message_id,
-                            "Security violation: unauthorized caller; valid session capability token required",
-                        );
-                        }
-                    }
-
-                    match req.command.as_str() {
-                        "get_status" => {
-                            let mut report =
-                                SystemDiagnosticReport::new(LifecycleState::Running, os_build);
-                            report.record_subsystem(SubsystemHealth {
-                                name: "core_engine".into(),
-                                status: VerificationStatus::Verified,
-                                healthy: true,
-                                last_heartbeat: chrono::Utc::now(),
-                                message: Some("Core running normally".into()),
-                            });
-
-                            let tb = taskbar.lock().await;
-                            let conflict = tb.conflict_info().map(|c| c.name.clone());
-                            report.record_subsystem(SubsystemHealth {
-                                name: "taskbar_coordinator".into(),
-                                status: VerificationStatus::Verified,
-                                healthy: true,
-                                last_heartbeat: chrono::Utc::now(),
-                                message: conflict.map(|c| format!("Conflict detected with {}", c)),
-                            });
-
-                            report.record_subsystem(SubsystemHealth {
-                                name: "telemetry_provider".into(),
-                                status: VerificationStatus::Verified,
-                                healthy: true,
-                                last_heartbeat: chrono::Utc::now(),
-                                message: Some("Native Windows sensors active".into()),
-                            });
-
-                            let aud = audio.lock().await;
-                            report.record_subsystem(SubsystemHealth {
-                                name: "audio_spectrum".into(),
-                                status: VerificationStatus::Verified,
-                                healthy: !aud.is_paused(),
-                                last_heartbeat: chrono::Utc::now(),
-                                message: if aud.is_paused() {
-                                    Some("Audio capture paused".into())
-                                } else {
-                                    Some(format!(
-                                        "WASAPI loopback active ({} bands)",
-                                        aud.band_count()
-                                    ))
-                                },
-                            });
-
-                            let sup = supervisor.lock().await;
-                            report.record_subsystem(SubsystemHealth {
-                                name: "script_supervisor".into(),
-                                status: VerificationStatus::Verified,
-                                healthy: !sup.is_quarantined(),
-                                last_heartbeat: chrono::Utc::now(),
-                                message: if sup.is_quarantined() {
-                                    Some("Script host quarantined".into())
-                                } else {
-                                    Some(format!("State: {:?}", sup.state()))
-                                },
-                            });
-
-                            IpcResponse::ok(
-                                req.message_id,
-                                serde_json::to_value(report).unwrap_or_default(),
-                            )
-                        }
-                        "get_capabilities" => {
-                            let taskbars = probe_taskbars();
-                            let desktop = probe_desktop_hierarchy();
-                            IpcResponse::ok(
-                                req.message_id,
-                                serde_json::json!({
-                                    "os_build": os_build,
-                                    "taskbar_count": taskbars.len(),
-                                    "desktop_layering_available": desktop.shelldll_defview_hwnd.is_some(),
-                                    "audio_spectrum_enabled": true,
-                                    "script_sandbox_enabled": true,
-                                }),
-                            )
-                        }
-                        "get_telemetry" => {
-                            let mut tel = telemetry.lock().await;
-                            let snapshot = tel.poll_all();
-                            IpcResponse::ok(
-                                req.message_id,
-                                serde_json::to_value(snapshot).unwrap_or_default(),
-                            )
-                        }
-                        "pause_audio" => {
-                            audio.lock().await.set_paused(true);
-                            SystemTray::set_audio_paused_state(true);
-                            info!("Audio capture paused via IPC.");
-                            IpcResponse::ok(req.message_id, serde_json::json!({ "paused": true }))
-                        }
-                        "resume_audio" => {
-                            audio.lock().await.set_paused(false);
-                            SystemTray::set_audio_paused_state(false);
-                            info!("Audio capture resumed via IPC.");
-                            IpcResponse::ok(req.message_id, serde_json::json!({ "paused": false }))
-                        }
-                        "get_spectrum" => {
-                            let aud = audio.lock().await;
-                            IpcResponse::ok(
-                                req.message_id,
-                                serde_json::json!({
-                                    "bands": aud.current_bands(),
-                                    "is_silent": aud.is_silent(),
-                                    "should_auto_hide": aud.should_auto_hide(),
-                                    "fps_mode": aud.fps_mode(),
-                                }),
-                            )
-                        }
-                        "script_worker_ready" => {
-                            let claimed_pid = req.payload["pid"].as_u64().unwrap_or(0) as u32;
-                            let mut sup = supervisor.lock().await;
-
-                            if sup.is_quarantined() {
-                                warn!("Security rejection: worker tried to register while supervisor is quarantined");
-                                IpcResponse::error(
-                                req.message_id,
-                                "Security violation: supervisor is quarantined; worker registration forbidden",
-                            )
-                            } else if claimed_pid == 0 || claimed_pid != client_identity.process_id
-                            {
-                                warn!(
-                                "Security rejection: script_worker_ready claimed PID {} but connected from PID {}",
-                                claimed_pid, client_identity.process_id
-                            );
-                                IpcResponse::error(
-                                    req.message_id,
-                                    "Security violation: claimed PID does not match IPC caller PID",
-                                )
-                            } else if let Some(child_pid) = sup.active_child_pid() {
-                                if child_pid != client_identity.process_id {
-                                    warn!(
-                                    "Security rejection: client PID {} does not match supervisor spawned worker PID {}",
-                                    client_identity.process_id, child_pid
-                                );
-                                    IpcResponse::error(
-                                        req.message_id,
-                                        "Security violation: unexpected worker process identity",
-                                    )
-                                } else if !sup.is_child_alive() {
-                                    warn!(
-                                        "Security rejection: worker child PID {} is dead",
-                                        child_pid
-                                    );
-                                    sup.invalidate_worker();
-                                    IpcResponse::error(
-                                        req.message_id,
-                                        "Security violation: worker process is no longer alive",
-                                    )
-                                } else {
-                                    sup.record_start(client_identity.process_id);
-                                    info!(
-                                        "Script worker child verified and registered (PID: {})",
-                                        client_identity.process_id
-                                    );
-                                    IpcResponse::ok(
-                                        req.message_id,
-                                        serde_json::json!({ "registered": true, "pid": client_identity.process_id }),
-                                    )
-                                }
-                            } else {
-                                warn!(
-                                "Security rejection: worker registration attempted from PID {} with no active supervised child",
-                                client_identity.process_id
-                            );
-                                IpcResponse::error(
-                                req.message_id,
-                                "Security violation: no supervised worker child is currently expected",
-                            )
-                            }
-                        }
-                        "script_worker_heartbeat" => {
-                            let mut sup = supervisor.lock().await;
-                            if sup.is_quarantined() {
-                                warn!("Heartbeat rejected: supervisor is quarantined");
-                                IpcResponse::error(
-                                    req.message_id,
-                                    "Security violation: supervisor is quarantined",
-                                )
-                            } else if let Some(child_pid) = sup.active_child_pid() {
-                                if child_pid != client_identity.process_id {
-                                    warn!(
-                                        "Heartbeat rejected from untrusted PID {}",
-                                        client_identity.process_id
-                                    );
-                                    IpcResponse::error(
-                                        req.message_id,
-                                        "Security violation: untrusted worker PID",
-                                    )
-                                } else if !sup.is_child_alive() {
-                                    warn!("Heartbeat rejected: worker PID {} is dead", child_pid);
-                                    sup.invalidate_worker();
-                                    IpcResponse::error(
-                                        req.message_id,
-                                        "Security violation: worker process is dead",
-                                    )
-                                } else {
-                                    sup.record_heartbeat();
-                                    IpcResponse::ok(
-                                        req.message_id,
-                                        serde_json::json!({ "acknowledged": true }),
-                                    )
-                                }
-                            } else {
-                                warn!(
-                                "Heartbeat rejected from PID {}: no supervised worker child exists",
-                                client_identity.process_id
-                            );
-                                IpcResponse::error(
-                                req.message_id,
-                                "Security violation: no supervised worker child exists to heartbeat",
-                            )
-                            }
-                        }
-                        "get_script_status" => {
-                            let sup = supervisor.lock().await;
-                            IpcResponse::ok(
-                                req.message_id,
-                                serde_json::json!({
-                                    "state": sup.state(),
-                                    "crash_count": sup.crash_count(),
-                                    "is_quarantined": sup.is_quarantined(),
-                                }),
-                            )
-                        }
-                        "enter_interactive_mode" => {
-                            let timeout =
-                                req.payload["timeout_seconds"].as_u64().unwrap_or(8) as u32;
-                            let mut ctrl = interaction.lock().await;
-                            ctrl.enter_temporary_mode(timeout);
-                            let mut win_mgr = desktop_windows.lock().await;
-                            win_mgr.enter_interactive_mode();
-                            info!("Entered Temporary Interactive Mode (timeout: {}s) on live desktop host", timeout);
-                            IpcResponse::ok(
-                                req.message_id,
-                                serde_json::json!({ "active": true, "timeout_seconds": timeout }),
-                            )
-                        }
-                        "exit_interactive_mode" => {
-                            let mut ctrl = interaction.lock().await;
-                            ctrl.dismiss_to_passive();
-                            let mut win_mgr = desktop_windows.lock().await;
-                            win_mgr.exit_interactive_mode();
-                            info!("Dismissed to passive desktop mode on live desktop host");
-                            IpcResponse::ok(req.message_id, serde_json::json!({ "active": false }))
-                        }
-                        "update_layout" | "reload_profile" => {
-                            let win_mgr = desktop_windows.lock().await;
-                            let mut rendered_commands = 0;
-                            if let Some(primary) = win_mgr.primary_window() {
-                                let width = primary.bounds[2].max(100) as f32;
-                                let height = primary.bounds[3].max(100) as f32;
-                                let scene = compile_first_run_scene(width, height);
-                                let mut r_lock = desktop_renderer.lock().await;
-                                if let Some(ref mut renderer) = *r_lock {
-                                    if let Ok(count) = renderer.render_scene(&scene) {
-                                        rendered_commands = count;
-                                    }
-                                }
-                            }
-                            info!(
-                                "Updated layout and re-rendered on live desktop host ({} commands)",
-                                rendered_commands
-                            );
-                            IpcResponse::ok(
-                                req.message_id,
-                                serde_json::json!({ "rendered_commands": rendered_commands, "success": true }),
-                            )
-                        }
-                        "open_settings" => {
-                            info!(
-                                "IPC: 'open_settings' received. Activating Settings application."
-                            );
-                            IpcResponse::ok(req.message_id, serde_json::json!({ "launched": true }))
-                        }
-                        "shutdown" => {
-                            info!(
-                                "IPC: 'shutdown' received from authorized client PID {}. Quitting.",
-                                client_identity.process_id
-                            );
-                            shutdown_flag.store(true, Ordering::SeqCst);
-                            let _ = shutdown_tx.send(true);
-                            IpcResponse::ok(req.message_id, serde_json::json!({ "quitting": true }))
-                        }
-                        _ => IpcResponse::error(
-                            req.message_id,
-                            format!("Unknown command: '{}'", req.command),
-                        ),
-                    }
-                })
-                    as std::pin::Pin<Box<dyn std::future::Future<Output = IpcResponse> + Send>>
-            },
-        );
+        let request_handler = self.create_ipc_handler(session_id, shutdown_tx.clone());
 
         let ipc_server = IpcServer::new(&pipe_name, request_handler, shutdown_rx);
         let ipc_handle = tokio::spawn(async move {
@@ -756,6 +366,398 @@ impl AppEngine {
         let _ = ipc_handle.await;
 
         Ok(())
+    }
+
+    /// Constructs the production IPC request handler enforcing session isolation,
+    /// worker role separation, and capability token authorization.
+    pub fn create_ipc_handler(
+        &self,
+        session_id: u32,
+        shutdown_tx: watch::Sender<bool>,
+    ) -> aethershell_ipc::RequestHandler {
+        let interaction = Arc::clone(&self.interaction);
+        let taskbar = Arc::clone(&self.taskbar);
+        let telemetry = Arc::clone(&self.telemetry);
+        let audio = Arc::clone(&self.audio);
+        let supervisor = Arc::clone(&self.script_supervisor);
+        let desktop_windows = Arc::clone(&self.desktop_windows);
+        let desktop_renderer = Arc::clone(&self.desktop_renderer);
+        let shutdown_flag = Arc::clone(&self.shutdown_flag);
+        let os_build = self.os_info.build_number;
+        let session_token = self.session_token.clone();
+        let valid_session_id = session_id;
+
+        Arc::new(move |req: IpcRequest, client_identity: IpcClientIdentity| {
+            let interaction = Arc::clone(&interaction);
+            let taskbar = Arc::clone(&taskbar);
+            let telemetry = Arc::clone(&telemetry);
+            let audio = Arc::clone(&audio);
+            let supervisor = Arc::clone(&supervisor);
+            let desktop_windows = Arc::clone(&desktop_windows);
+            let desktop_renderer = Arc::clone(&desktop_renderer);
+            let shutdown_flag = Arc::clone(&shutdown_flag);
+            let shutdown_tx = shutdown_tx.clone();
+            let session_token = session_token.clone();
+
+            Box::pin(async move {
+                // 1. Session Isolation: Enforce same-session client callers
+                if client_identity.session_id != valid_session_id {
+                    warn!(
+                        "Security violation: cross-session IPC client rejected (client session {}, engine session {})",
+                        client_identity.session_id, valid_session_id
+                    );
+                    return IpcResponse::error(
+                        req.message_id,
+                        "Security violation: cross-session caller rejected",
+                    );
+                }
+
+                // 2. Worker Role Separation: Supervised worker child is restricted to worker lifecycle & data queries only
+                let is_script_worker = {
+                    let sup = supervisor.lock().await;
+                    sup.active_child_pid() == Some(client_identity.process_id)
+                };
+
+                if is_script_worker
+                    && !matches!(
+                        req.command.as_str(),
+                        "script_worker_ready"
+                            | "script_worker_heartbeat"
+                            | "get_telemetry"
+                            | "get_spectrum"
+                            | "get_status"
+                    )
+                {
+                    warn!(
+                        "Security violation: supervised script worker PID {} attempted forbidden command '{}'",
+                        client_identity.process_id, req.command
+                    );
+                    return IpcResponse::error(
+                        req.message_id,
+                        "Security violation: script worker is not authorized to invoke privileged management commands",
+                    );
+                }
+
+                // 3. Privileged Management Commands Authorization (Session Capability Token)
+                let is_management_command = matches!(
+                    req.command.as_str(),
+                    "shutdown"
+                        | "enter_interactive_mode"
+                        | "exit_interactive_mode"
+                        | "reload_profile"
+                        | "update_layout"
+                        | "pause_audio"
+                        | "resume_audio"
+                );
+
+                if is_management_command {
+                    let is_same_process = client_identity.process_id == std::process::id();
+                    let has_valid_token = req
+                        .payload
+                        .get("session_token")
+                        .or_else(|| req.payload.get("token"))
+                        .and_then(|v| v.as_str())
+                        .map(|tok| !tok.is_empty() && tok == session_token.as_str())
+                        .unwrap_or(false);
+
+                    if !is_same_process && !has_valid_token {
+                        warn!(
+                            "Security violation: caller PID {} attempted management command '{}' without valid session token",
+                            client_identity.process_id, req.command
+                        );
+                        return IpcResponse::error(
+                            req.message_id,
+                            "Security violation: unauthorized caller; valid session capability token required",
+                        );
+                    }
+                }
+
+                match req.command.as_str() {
+                    "get_status" => {
+                        let mut report =
+                            SystemDiagnosticReport::new(LifecycleState::Running, os_build);
+                        report.record_subsystem(SubsystemHealth {
+                            name: "core_engine".into(),
+                            status: VerificationStatus::Verified,
+                            healthy: true,
+                            last_heartbeat: chrono::Utc::now(),
+                            message: Some("Core running normally".into()),
+                        });
+
+                        let tb = taskbar.lock().await;
+                        let conflict = tb.conflict_info().map(|c| c.name.clone());
+                        report.record_subsystem(SubsystemHealth {
+                            name: "taskbar_coordinator".into(),
+                            status: VerificationStatus::Verified,
+                            healthy: true,
+                            last_heartbeat: chrono::Utc::now(),
+                            message: conflict.map(|c| format!("Conflict detected with {}", c)),
+                        });
+
+                        report.record_subsystem(SubsystemHealth {
+                            name: "telemetry_provider".into(),
+                            status: VerificationStatus::Verified,
+                            healthy: true,
+                            last_heartbeat: chrono::Utc::now(),
+                            message: Some("Native Windows sensors active".into()),
+                        });
+
+                        let aud = audio.lock().await;
+                        report.record_subsystem(SubsystemHealth {
+                            name: "audio_spectrum".into(),
+                            status: VerificationStatus::Verified,
+                            healthy: !aud.is_paused(),
+                            last_heartbeat: chrono::Utc::now(),
+                            message: if aud.is_paused() {
+                                Some("Audio capture paused".into())
+                            } else {
+                                Some(format!(
+                                    "WASAPI loopback active ({} bands)",
+                                    aud.band_count()
+                                ))
+                            },
+                        });
+
+                        let sup = supervisor.lock().await;
+                        report.record_subsystem(SubsystemHealth {
+                            name: "script_supervisor".into(),
+                            status: VerificationStatus::Verified,
+                            healthy: !sup.is_quarantined(),
+                            last_heartbeat: chrono::Utc::now(),
+                            message: if sup.is_quarantined() {
+                                Some("Script host quarantined".into())
+                            } else {
+                                Some(format!("State: {:?}", sup.state()))
+                            },
+                        });
+
+                        IpcResponse::ok(
+                            req.message_id,
+                            serde_json::to_value(report).unwrap_or_default(),
+                        )
+                    }
+                    "get_capabilities" => {
+                        let taskbars = probe_taskbars();
+                        let desktop = probe_desktop_hierarchy();
+                        IpcResponse::ok(
+                            req.message_id,
+                            serde_json::json!({
+                                "os_build": os_build,
+                                "taskbar_count": taskbars.len(),
+                                "desktop_layering_available": desktop.shelldll_defview_hwnd.is_some(),
+                                "audio_spectrum_enabled": true,
+                                "script_sandbox_enabled": true,
+                            }),
+                        )
+                    }
+                    "get_telemetry" => {
+                        let mut tel = telemetry.lock().await;
+                        let snapshot = tel.poll_all();
+                        IpcResponse::ok(
+                            req.message_id,
+                            serde_json::to_value(snapshot).unwrap_or_default(),
+                        )
+                    }
+                    "pause_audio" => {
+                        audio.lock().await.set_paused(true);
+                        SystemTray::set_audio_paused_state(true);
+                        info!("Audio capture paused via IPC.");
+                        IpcResponse::ok(req.message_id, serde_json::json!({ "paused": true }))
+                    }
+                    "resume_audio" => {
+                        audio.lock().await.set_paused(false);
+                        SystemTray::set_audio_paused_state(false);
+                        info!("Audio capture resumed via IPC.");
+                        IpcResponse::ok(req.message_id, serde_json::json!({ "paused": false }))
+                    }
+                    "get_spectrum" => {
+                        let aud = audio.lock().await;
+                        IpcResponse::ok(
+                            req.message_id,
+                            serde_json::json!({
+                                "bands": aud.current_bands(),
+                                "is_silent": aud.is_silent(),
+                                "should_auto_hide": aud.should_auto_hide(),
+                                "fps_mode": aud.fps_mode(),
+                            }),
+                        )
+                    }
+                    "script_worker_ready" => {
+                        let claimed_pid = req.payload["pid"].as_u64().unwrap_or(0) as u32;
+                        let mut sup = supervisor.lock().await;
+
+                        if sup.is_quarantined() {
+                            warn!("Security rejection: worker tried to register while supervisor is quarantined");
+                            IpcResponse::error(
+                                req.message_id,
+                                "Security violation: supervisor is quarantined; worker registration forbidden",
+                            )
+                        } else if claimed_pid == 0 || claimed_pid != client_identity.process_id {
+                            warn!(
+                                "Security rejection: script_worker_ready claimed PID {} but connected from PID {}",
+                                claimed_pid, client_identity.process_id
+                            );
+                            IpcResponse::error(
+                                req.message_id,
+                                "Security violation: claimed PID does not match IPC caller PID",
+                            )
+                        } else if let Some(child_pid) = sup.active_child_pid() {
+                            if child_pid != client_identity.process_id {
+                                warn!(
+                                    "Security rejection: client PID {} does not match supervisor spawned worker PID {}",
+                                    client_identity.process_id, child_pid
+                                );
+                                IpcResponse::error(
+                                    req.message_id,
+                                    "Security violation: unexpected worker process identity",
+                                )
+                            } else if !sup.is_child_alive() {
+                                warn!("Security rejection: worker child PID {} is dead", child_pid);
+                                sup.invalidate_worker();
+                                IpcResponse::error(
+                                    req.message_id,
+                                    "Security violation: worker process is no longer alive",
+                                )
+                            } else {
+                                sup.record_start(client_identity.process_id);
+                                info!(
+                                    "Script worker child verified and registered (PID: {})",
+                                    client_identity.process_id
+                                );
+                                IpcResponse::ok(
+                                    req.message_id,
+                                    serde_json::json!({ "registered": true, "pid": client_identity.process_id }),
+                                )
+                            }
+                        } else {
+                            warn!(
+                                "Security rejection: worker registration attempted from PID {} with no active supervised child",
+                                client_identity.process_id
+                            );
+                            IpcResponse::error(
+                                req.message_id,
+                                "Security violation: no supervised worker child is currently expected",
+                            )
+                        }
+                    }
+                    "script_worker_heartbeat" => {
+                        let mut sup = supervisor.lock().await;
+                        if sup.is_quarantined() {
+                            warn!("Heartbeat rejected: supervisor is quarantined");
+                            IpcResponse::error(
+                                req.message_id,
+                                "Security violation: supervisor is quarantined",
+                            )
+                        } else if let Some(child_pid) = sup.active_child_pid() {
+                            if child_pid != client_identity.process_id {
+                                warn!(
+                                    "Heartbeat rejected from untrusted PID {}",
+                                    client_identity.process_id
+                                );
+                                IpcResponse::error(
+                                    req.message_id,
+                                    "Security violation: untrusted worker PID",
+                                )
+                            } else if !sup.is_child_alive() {
+                                warn!("Heartbeat rejected: worker PID {} is dead", child_pid);
+                                sup.invalidate_worker();
+                                IpcResponse::error(
+                                    req.message_id,
+                                    "Security violation: worker process is dead",
+                                )
+                            } else {
+                                sup.record_heartbeat();
+                                IpcResponse::ok(
+                                    req.message_id,
+                                    serde_json::json!({ "acknowledged": true }),
+                                )
+                            }
+                        } else {
+                            warn!(
+                                "Heartbeat rejected from PID {}: no supervised worker child exists",
+                                client_identity.process_id
+                            );
+                            IpcResponse::error(
+                                req.message_id,
+                                "Security violation: no supervised worker child exists to heartbeat",
+                            )
+                        }
+                    }
+                    "get_script_status" => {
+                        let sup = supervisor.lock().await;
+                        IpcResponse::ok(
+                            req.message_id,
+                            serde_json::json!({
+                                "state": sup.state(),
+                                "crash_count": sup.crash_count(),
+                                "is_quarantined": sup.is_quarantined(),
+                            }),
+                        )
+                    }
+                    "enter_interactive_mode" => {
+                        let timeout = req.payload["timeout_seconds"].as_u64().unwrap_or(8) as u32;
+                        let mut ctrl = interaction.lock().await;
+                        ctrl.enter_temporary_mode(timeout);
+                        let mut win_mgr = desktop_windows.lock().await;
+                        win_mgr.enter_interactive_mode();
+                        info!("Entered Temporary Interactive Mode (timeout: {}s) on live desktop host", timeout);
+                        IpcResponse::ok(
+                            req.message_id,
+                            serde_json::json!({ "active": true, "timeout_seconds": timeout }),
+                        )
+                    }
+                    "exit_interactive_mode" => {
+                        let mut ctrl = interaction.lock().await;
+                        ctrl.dismiss_to_passive();
+                        let mut win_mgr = desktop_windows.lock().await;
+                        win_mgr.exit_interactive_mode();
+                        info!("Dismissed to passive desktop mode on live desktop host");
+                        IpcResponse::ok(req.message_id, serde_json::json!({ "active": false }))
+                    }
+                    "update_layout" | "reload_profile" => {
+                        let win_mgr = desktop_windows.lock().await;
+                        let mut rendered_commands = 0;
+                        if let Some(primary) = win_mgr.primary_window() {
+                            let width = primary.bounds[2].max(100) as f32;
+                            let height = primary.bounds[3].max(100) as f32;
+                            let scene = compile_first_run_scene(width, height);
+                            let mut r_lock = desktop_renderer.lock().await;
+                            if let Some(ref mut renderer) = *r_lock {
+                                if let Ok(count) = renderer.render_scene(&scene) {
+                                    rendered_commands = count;
+                                }
+                            }
+                        }
+                        info!(
+                            "Updated layout and re-rendered on live desktop host ({} commands)",
+                            rendered_commands
+                        );
+                        IpcResponse::ok(
+                            req.message_id,
+                            serde_json::json!({ "rendered_commands": rendered_commands, "success": true }),
+                        )
+                    }
+                    "open_settings" => {
+                        info!("IPC: 'open_settings' received. Activating Settings application.");
+                        IpcResponse::ok(req.message_id, serde_json::json!({ "launched": true }))
+                    }
+                    "shutdown" => {
+                        info!(
+                            "IPC: 'shutdown' received from authorized client PID {}. Quitting.",
+                            client_identity.process_id
+                        );
+                        shutdown_flag.store(true, Ordering::SeqCst);
+                        let _ = shutdown_tx.send(true);
+                        IpcResponse::ok(req.message_id, serde_json::json!({ "quitting": true }))
+                    }
+                    _ => IpcResponse::error(
+                        req.message_id,
+                        format!("Unknown command: '{}'", req.command),
+                    ),
+                }
+            })
+                as std::pin::Pin<Box<dyn std::future::Future<Output = IpcResponse> + Send>>
+        })
     }
 }
 
