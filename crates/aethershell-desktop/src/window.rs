@@ -10,12 +10,16 @@ use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::RemoteDesktop::{
+    WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowLongPtrW, RegisterClassExW,
-    SetWindowLongPtrW, SetWindowPos, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA,
-    GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WINDOW_EX_STYLE, WM_ACTIVATE, WM_DISPLAYCHANGE,
-    WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_NCCREATE, WM_NCDESTROY, WM_PAINT,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetWindowLongPtrW,
+    LoadCursorW, PeekMessageW, RegisterClassExW, SetWindowLongPtrW, SetWindowPos, TranslateMessage,
+    CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST,
+    IDC_ARROW, MSG, PM_REMOVE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, SWP_SHOWWINDOW, WINDOW_EX_STYLE, WM_ACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED,
+    WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_QUIT,
     WNDCLASSEXW, WS_POPUP, WS_VISIBLE,
 };
 
@@ -37,6 +41,7 @@ fn register_desktop_host_class() -> Result<(), DesktopHostError> {
             style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(desktop_host_wnd_proc),
             hInstance: hinstance.into(),
+            hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
             lpszClassName: DESKTOP_HOST_CLASS_NAME,
             ..Default::default()
         };
@@ -58,10 +63,15 @@ fn register_desktop_host_class() -> Result<(), DesktopHostError> {
     }
 }
 
+pub type DismissCallback = Arc<dyn Fn(DismissalReason) + Send + Sync>;
+pub type PaintCallback = Arc<dyn Fn(HWND) + Send + Sync>;
+
 /// Internal state stored on the Win32 HWND via GWLP_USERDATA.
 pub struct DesktopWindowState {
     pub is_interactive: Arc<AtomicBool>,
-    pub on_dismiss: Option<Arc<dyn Fn(DismissalReason) + Send + Sync>>,
+    pub shelldll_defview: Option<HWND>,
+    pub on_dismiss: std::sync::Mutex<Option<DismissCallback>>,
+    pub on_paint: std::sync::Mutex<Option<PaintCallback>>,
 }
 
 /// Represents a real Win32 desktop overlay window for a specific monitor.
@@ -97,7 +107,9 @@ impl DesktopHostWindow {
 
         let state = Box::new(DesktopWindowState {
             is_interactive: Arc::clone(&is_interactive),
-            on_dismiss: None,
+            shelldll_defview,
+            on_dismiss: std::sync::Mutex::new(None),
+            on_paint: std::sync::Mutex::new(None),
         });
         let state_ptr = Box::into_raw(state);
 
@@ -134,6 +146,9 @@ impl DesktopHostWindow {
             // Ensure GWLP_USERDATA is set in case WM_NCCREATE didn't run synchronously
             let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, state_ptr as isize);
 
+            // Register session notifications (WM_WTSSESSION_CHANGE)
+            let _ = WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION);
+
             // Stacking order: Place behind SHELLDLL_DefView (or HWND_BOTTOM)
             let insert_after = shelldll_defview.unwrap_or(HWND_BOTTOM);
             let _ = SetWindowPos(
@@ -158,14 +173,30 @@ impl DesktopHostWindow {
         }
     }
 
-    /// Sets an auto-dismissal callback invoked when user presses Escape or focus is lost.
+    /// Sets an auto-dismissal callback invoked when user presses Escape, focus is lost, or session is locked.
     pub fn set_on_dismiss<F>(&mut self, cb: F)
     where
         F: Fn(DismissalReason) + Send + Sync + 'static,
     {
         if !self.state_ptr.is_null() {
             unsafe {
-                (*self.state_ptr).on_dismiss = Some(Arc::new(cb));
+                if let Ok(mut guard) = (*self.state_ptr).on_dismiss.lock() {
+                    *guard = Some(Arc::new(cb));
+                }
+            }
+        }
+    }
+
+    /// Sets a paint callback invoked on WM_PAINT messages.
+    pub fn set_on_paint<F>(&mut self, cb: F)
+    where
+        F: Fn(HWND) + Send + Sync + 'static,
+    {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(mut guard) = (*self.state_ptr).on_paint.lock() {
+                    *guard = Some(Arc::new(cb));
+                }
             }
         }
     }
@@ -255,6 +286,7 @@ impl Drop for DesktopHostWindow {
     fn drop(&mut self) {
         if !self.hwnd.0.is_null() {
             unsafe {
+                let _ = WTSUnRegisterSessionNotification(self.hwnd);
                 let _ = DestroyWindow(self.hwnd);
             }
         }
@@ -287,6 +319,15 @@ unsafe extern "system" fn desktop_host_wnd_proc(
         WM_PAINT => {
             let mut ps = PAINTSTRUCT::default();
             let _hdc = BeginPaint(hwnd, &mut ps);
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
+            if !ptr.is_null() {
+                let state = &*ptr;
+                if let Ok(guard) = state.on_paint.lock() {
+                    if let Some(ref cb) = *guard {
+                        cb(hwnd);
+                    }
+                }
+            }
             let _ = EndPaint(hwnd, &ps);
             LRESULT(0)
         }
@@ -320,17 +361,20 @@ unsafe extern "system" fn desktop_host_wnd_proc(
                         state.is_interactive.store(false, Ordering::SeqCst);
                         let passive_styles = DesktopHost::surface_extended_styles(false);
                         let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, passive_styles as isize);
+                        let behind = state.shelldll_defview.unwrap_or(HWND_BOTTOM);
                         let _ = SetWindowPos(
                             hwnd,
-                            HWND_BOTTOM,
+                            behind,
                             0,
                             0,
                             0,
                             0,
                             SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE,
                         );
-                        if let Some(ref cb) = state.on_dismiss {
-                            cb(DismissalReason::EscapeKey);
+                        if let Ok(guard) = state.on_dismiss.lock() {
+                            if let Some(ref cb) = *guard {
+                                cb(DismissalReason::EscapeKey);
+                            }
                         }
                     }
                 }
@@ -349,6 +393,12 @@ unsafe extern "system" fn desktop_host_wnd_proc(
             trigger_focus_loss_dismissal(hwnd);
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
+        0x02B1 /* WM_WTSSESSION_CHANGE */ => {
+            if wparam.0 == 0x7 /* WTS_SESSION_LOCK */ || wparam.0 == 0x5 /* WTS_SESSION_LOGOFF */ {
+                trigger_session_lock_dismissal(hwnd);
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
         WM_NCDESTROY => {
             let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -365,17 +415,47 @@ unsafe fn trigger_focus_loss_dismissal(hwnd: HWND) {
             state.is_interactive.store(false, Ordering::SeqCst);
             let passive_styles = DesktopHost::surface_extended_styles(false);
             let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, passive_styles as isize);
+            let behind = state.shelldll_defview.unwrap_or(HWND_BOTTOM);
             let _ = SetWindowPos(
                 hwnd,
-                HWND_BOTTOM,
+                behind,
                 0,
                 0,
                 0,
                 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE,
             );
-            if let Some(ref cb) = state.on_dismiss {
-                cb(DismissalReason::FocusLost);
+            if let Ok(guard) = state.on_dismiss.lock() {
+                if let Some(ref cb) = *guard {
+                    cb(DismissalReason::FocusLost);
+                }
+            }
+        }
+    }
+}
+
+unsafe fn trigger_session_lock_dismissal(hwnd: HWND) {
+    let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
+    if !ptr.is_null() {
+        let state = &*ptr;
+        if state.is_interactive.load(Ordering::SeqCst) {
+            state.is_interactive.store(false, Ordering::SeqCst);
+            let passive_styles = DesktopHost::surface_extended_styles(false);
+            let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, passive_styles as isize);
+            let behind = state.shelldll_defview.unwrap_or(HWND_BOTTOM);
+            let _ = SetWindowPos(
+                hwnd,
+                behind,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE,
+            );
+            if let Ok(guard) = state.on_dismiss.lock() {
+                if let Some(ref cb) = *guard {
+                    cb(DismissalReason::SessionLocked);
+                }
             }
         }
     }
@@ -476,6 +556,48 @@ impl DesktopWindowManager {
             }
         }
     }
+
+    /// Sets an auto-dismissal callback on all managed desktop host windows.
+    pub fn set_on_dismiss<F>(&mut self, cb: F)
+    where
+        F: Fn(DismissalReason) + Send + Sync + 'static,
+    {
+        let cb_arc = Arc::new(cb);
+        for win in &mut self.windows {
+            let cb_clone = Arc::clone(&cb_arc);
+            win.set_on_dismiss(move |reason| {
+                cb_clone(reason);
+            });
+        }
+    }
+
+    /// Sets a paint callback on all managed desktop host windows.
+    pub fn set_on_paint<F>(&mut self, cb: F)
+    where
+        F: Fn(HWND) + Send + Sync + 'static,
+    {
+        let cb_arc = Arc::new(cb);
+        for win in &mut self.windows {
+            let cb_clone = Arc::clone(&cb_arc);
+            win.set_on_paint(move |hwnd| {
+                cb_clone(hwnd);
+            });
+        }
+    }
+
+    /// Drains and dispatches pending Win32 messages (WM_PAINT, WM_KEYDOWN, WM_ACTIVATE, etc.).
+    pub fn pump_messages() {
+        unsafe {
+            let mut msg = MSG::default();
+            while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
+                if msg.message == WM_QUIT {
+                    break;
+                }
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+    }
 }
 
 impl Default for DesktopWindowManager {
@@ -559,5 +681,39 @@ mod tests {
 
         assert!(!win.is_interactive());
         assert_eq!(dismissed_count.load(Ordering::SeqCst), 1);
+
+        // Re-enter and simulate session lock (WM_WTSSESSION_CHANGE = 0x02B1 with WTS_SESSION_LOCK = 7)
+        let session_locked = Arc::new(AtomicBool::new(false));
+        let sl_clone = Arc::clone(&session_locked);
+        win.set_on_dismiss(move |reason| {
+            if reason == DismissalReason::SessionLocked {
+                sl_clone.store(true, Ordering::SeqCst);
+            }
+        });
+
+        win.set_interactive(true);
+        assert!(win.is_interactive());
+
+        unsafe {
+            desktop_host_wnd_proc(win.hwnd, 0x02B1, WPARAM(7), LPARAM(0));
+        }
+
+        assert!(!win.is_interactive());
+        assert!(session_locked.load(Ordering::SeqCst));
+
+        // Test paint callback invocation
+        let painted = Arc::new(AtomicBool::new(false));
+        let paint_clone = Arc::clone(&painted);
+        win.set_on_paint(move |_hwnd| {
+            paint_clone.store(true, Ordering::SeqCst);
+        });
+
+        unsafe {
+            desktop_host_wnd_proc(win.hwnd, WM_PAINT, WPARAM(0), LPARAM(0));
+        }
+        assert!(painted.load(Ordering::SeqCst));
+
+        // Test pump_messages does not panic
+        DesktopWindowManager::pump_messages();
     }
 }

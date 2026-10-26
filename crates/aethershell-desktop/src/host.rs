@@ -2,7 +2,7 @@ use aethershell_core::DesktopLayer;
 use aethershell_win::{probe_desktop_hierarchy, DesktopHierarchyProbe};
 use thiserror::Error;
 use windows::Win32::UI::WindowsAndMessaging::{
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 
 #[derive(Debug, Error, PartialEq)]
@@ -63,9 +63,9 @@ impl DesktopHost {
     /// so `WS_EX_TOPMOST` is strictly prohibited.
     pub fn surface_extended_styles(is_interactive: bool) -> u32 {
         if is_interactive {
-            WS_EX_TOOLWINDOW.0
+            (WS_EX_TOOLWINDOW | WS_EX_LAYERED).0
         } else {
-            (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT).0
+            (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED).0
         }
     }
 }
@@ -91,11 +91,13 @@ mod tests {
         assert!((passive_styles & WS_EX_TRANSPARENT.0) != 0);
         assert!((passive_styles & WS_EX_NOACTIVATE.0) != 0);
         assert!((passive_styles & WS_EX_TOOLWINDOW.0) != 0);
+        assert!((passive_styles & WS_EX_LAYERED.0) != 0);
 
         let interactive_styles = DesktopHost::surface_extended_styles(true);
         assert!((interactive_styles & WS_EX_TRANSPARENT.0) == 0);
         assert!((interactive_styles & WS_EX_NOACTIVATE.0) == 0);
         assert!((interactive_styles & WS_EX_TOOLWINDOW.0) != 0);
+        assert!((interactive_styles & WS_EX_LAYERED.0) != 0);
         // Eliminate WS_EX_TOPMOST defect per PRD Section 5.3 & Q31:A
         assert_eq!(
             interactive_styles & WS_EX_TOPMOST.0,

@@ -151,21 +151,23 @@ impl AppEngine {
                 Err(e) => warn!("Desktop host window initialization warning: {}", e),
             }
 
-            // Wire auto-dismissal on Escape key / focus loss
+            // Wire auto-dismissal on Escape key / focus loss / session lock across all windows
             let ctrl_dismiss = Arc::clone(&self.interaction);
-            for win in win_mgr.windows_mut() {
-                let c = Arc::clone(&ctrl_dismiss);
-                win.set_on_dismiss(move |reason| {
-                    if let Ok(mut ctrl) = c.try_lock() {
-                        ctrl.dismiss(reason);
-                    }
-                });
-            }
+            let win_mgr_dismiss = Arc::clone(&self.desktop_windows);
+            win_mgr.set_on_dismiss(move |reason| {
+                if let Ok(mut ctrl) = ctrl_dismiss.try_lock() {
+                    ctrl.dismiss(reason);
+                }
+                if let Ok(mut mgr) = win_mgr_dismiss.try_lock() {
+                    mgr.exit_interactive_mode();
+                }
+            });
 
             // Direct2D / DirectWrite canvas rendering pipeline initialization
-            if let Some(primary) = win_mgr.primary_window() {
+            if let Some(primary) = win_mgr.primary_window_mut() {
                 let width = primary.bounds[2].max(100) as u32;
                 let height = primary.bounds[3].max(100) as u32;
+                let bounds = primary.bounds;
                 match D2D1CanvasRenderer::new_for_hwnd(primary.hwnd, width, height) {
                     Ok(mut renderer) => {
                         let scene = compile_first_run_scene(width as f32, height as f32);
@@ -186,6 +188,19 @@ impl AppEngine {
                         );
                     }
                 }
+
+                // Wire on_paint callback to automatically repaint scene on WM_PAINT
+                let r_paint = Arc::clone(&self.desktop_renderer);
+                primary.set_on_paint(move |_hwnd| {
+                    let w = bounds[2].max(100) as f32;
+                    let h = bounds[3].max(100) as f32;
+                    let scene = compile_first_run_scene(w, h);
+                    if let Ok(mut r_lock) = r_paint.try_lock() {
+                        if let Some(ref mut renderer) = *r_lock {
+                            let _ = renderer.render_scene(&scene);
+                        }
+                    }
+                });
             }
         }
 
@@ -474,6 +489,9 @@ impl AppEngine {
         let mut last_watchdog_check = std::time::Instant::now();
 
         while !self.shutdown_flag.load(Ordering::Relaxed) {
+            // Pump Win32 messages (WM_PAINT, WM_KEYDOWN, WM_ACTIVATE, WM_WTSSESSION_CHANGE, etc.)
+            DesktopWindowManager::pump_messages();
+
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
             // Tick interaction mode timeout

@@ -6,11 +6,12 @@ use std::collections::HashMap;
 use windows::core::w;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
+    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_POINT_2F, D2D_RECT_F,
+    D2D_SIZE_U,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1RenderTarget,
-    D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
+    D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
     D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES,
     D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
 };
@@ -20,6 +21,9 @@ use windows::Win32::Graphics::DirectWrite::{
     DWRITE_MEASURING_MODE_NATURAL,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
+
+/// Direct2D device loss HRESULT (0x8899000C)
+pub const D2DERR_RECREATE_TARGET: i32 = 0x8899000Cu32 as i32;
 
 /// Real Direct2D 1.1 / DirectWrite canvas renderer implementing `CanvasRenderer`.
 pub struct D2D1CanvasRenderer {
@@ -40,8 +44,9 @@ impl D2D1CanvasRenderer {
     /// Creates a new unattached Direct2D renderer with factories initialized.
     pub fn new() -> Result<Self, String> {
         unsafe {
-            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)
-                .map_err(|e| format!("Failed to create D2D1Factory: {}", e))?;
+            let factory: ID2D1Factory =
+                D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)
+                    .map_err(|e| format!("Failed to create D2D1Factory: {}", e))?;
 
             let dwrite_factory: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)
                 .map_err(|e| format!("Failed to create DWriteFactory: {}", e))?;
@@ -112,8 +117,15 @@ impl D2D1CanvasRenderer {
         self.height = height;
         if let Some(ref rt) = self.render_target {
             unsafe {
-                rt.Resize(&D2D_SIZE_U { width, height })
-                    .map_err(|e| format!("D2D1 Resize failed: {}", e))?;
+                if let Err(e) = rt.Resize(&D2D_SIZE_U { width, height }) {
+                    if e.code().0 == D2DERR_RECREATE_TARGET {
+                        self.render_target = None;
+                        if let Some(hwnd) = self.hwnd {
+                            return self.attach_hwnd(hwnd, width, height);
+                        }
+                    }
+                    return Err(format!("D2D1 Resize failed: {}", e));
+                }
             }
         }
         Ok(())
@@ -358,11 +370,41 @@ impl CanvasRenderer for D2D1CanvasRenderer {
                             drawn_count += 1;
                         }
                     }
+                    RenderCommand::DrawLine {
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        color,
+                        stroke_width,
+                    } => {
+                        let stroke_brush = rt
+                            .CreateSolidColorBrush(&to_d2d_color(color) as *const _, None)
+                            .map_err(|e| format!("Stroke brush error: {}", e))?;
+                        rt.DrawLine(
+                            D2D_POINT_2F { x: *x1, y: *y1 },
+                            D2D_POINT_2F { x: *x2, y: *y2 },
+                            &stroke_brush,
+                            *stroke_width,
+                            None,
+                        );
+                        drawn_count += 1;
+                    }
                 }
             }
 
-            rt.EndDraw(None, None)
-                .map_err(|e| format!("EndDraw error: {}", e))?;
+            let end_draw_res = rt.EndDraw(None, None);
+            if let Err(e) = end_draw_res {
+                if e.code().0 == D2DERR_RECREATE_TARGET {
+                    drop(hwnd_rt);
+                    self.render_target = None;
+                    if let Some(hwnd) = self.hwnd {
+                        self.attach_hwnd(hwnd, self.width, self.height)?;
+                        return self.render_scene(scene);
+                    }
+                }
+                return Err(format!("EndDraw error: {}", e));
+            }
             Ok(drawn_count)
         }
     }
@@ -483,11 +525,21 @@ mod tests {
                                 bands: vec![0.3, 0.6, 0.9, 0.4],
                                 color: ColorRgba::new(0, 150, 255, 255),
                             },
+                            RenderCommand::DrawLine {
+                                x1: 5.0,
+                                y1: 5.0,
+                                x2: 195.0,
+                                y2: 5.0,
+                                color: ColorRgba::new(200, 200, 200, 255),
+                                stroke_width: 2.0,
+                            },
                         ],
                     };
 
                     let drawn = renderer.render_scene(&scene).expect("Render scene failed");
-                    assert_eq!(drawn, 4);
+                    assert_eq!(drawn, 5);
+
+                    renderer.resize(250, 150).expect("Resize should succeed");
 
                     let _ = DestroyWindow(hwnd);
                 }

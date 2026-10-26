@@ -151,6 +151,26 @@ fn test_temporary_interactive_mode_stacking_eliminates_topmost_defect() {
         !win.is_interactive(),
         "Window must auto-dismiss to passive on kill focus"
     );
+
+    // 5. Re-enter and auto-dismiss on Session Lock (WM_WTSSESSION_CHANGE = 0x02B1, WTS_SESSION_LOCK = 7)
+    win.set_interactive(true);
+    assert!(win.is_interactive());
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+            win.hwnd,
+            0x02B1,
+            WPARAM(7),
+            LPARAM(0),
+        );
+    }
+    assert!(
+        !win.is_interactive(),
+        "Window must auto-dismiss to passive on session lock"
+    );
+    {
+        let reasons = dismiss_reasons.lock().unwrap();
+        assert_eq!(reasons.last(), Some(&DismissalReason::SessionLocked));
+    }
 }
 
 #[test]
@@ -217,6 +237,15 @@ fn test_direct2d_canvas_renderer_live_overlay_drawing() {
                 bands: vec![0.2, 0.5, 0.85, 0.95, 0.7, 0.45, 0.3, 0.15],
                 color: ColorRgba::new(0, 190, 255, 255),
             },
+            // 6. Direct2D stroke line
+            RenderCommand::DrawLine {
+                x1: 20.0,
+                y1: 215.0,
+                x2: 440.0,
+                y2: 215.0,
+                color: ColorRgba::new(120, 140, 180, 255),
+                stroke_width: 2.0,
+            },
         ],
     };
 
@@ -224,8 +253,8 @@ fn test_direct2d_canvas_renderer_live_overlay_drawing() {
         .render_scene(&scene)
         .expect("Direct2D render_scene failed");
     assert_eq!(
-        rendered, 5,
-        "All 5 render commands should execute on Direct2D target"
+        rendered, 6,
+        "All 6 render commands should execute on Direct2D target"
     );
 
     // Test resize handling
@@ -263,6 +292,22 @@ fn test_multi_monitor_window_manager_and_display_change() {
 
     // Refresh monitor geometry
     manager.refresh_monitors();
+
+    // Verify manager-level dismissal and paint callbacks wiring
+    let manager_dismissed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let md_clone = Arc::clone(&manager_dismissed);
+    manager.set_on_dismiss(move |_| {
+        md_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    let manager_painted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mp_clone = Arc::clone(&manager_painted);
+    manager.set_on_paint(move |_| {
+        mp_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    // Pump messages safely
+    DesktopWindowManager::pump_messages();
 }
 
 #[test]
