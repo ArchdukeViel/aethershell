@@ -206,7 +206,13 @@ impl AppEngine {
 
         // 4. Initialize System Tray on dedicated OS thread with active message pump (IVA-P1-001)
         let (tray_handle, tray_shutdown) =
-            SystemTray::spawn_tray_thread(Arc::clone(&self.shutdown_flag));
+            SystemTray::spawn_tray_thread(Arc::clone(&self.shutdown_flag), Some(pipe_name.clone()));
+
+        // Start genuine WASAPI shared-loopback audio capture thread
+        {
+            let mut aud = self.audio.lock().await;
+            let _ = aud.start();
+        }
 
         // 5. Start Out-of-Context Shell WinEvent Monitor (PRD Section 4.3)
         let (mut shell_monitor, shell_rx) = ShellEventMonitor::start()
@@ -367,11 +373,13 @@ impl AppEngine {
                     }
                     "pause_audio" => {
                         audio.lock().await.set_paused(true);
+                        SystemTray::set_audio_paused_state(true);
                         info!("Audio capture paused via IPC.");
                         IpcResponse::ok(req.message_id, serde_json::json!({ "paused": true }))
                     }
                     "resume_audio" => {
                         audio.lock().await.set_paused(false);
+                        SystemTray::set_audio_paused_state(false);
                         info!("Audio capture resumed via IPC.");
                         IpcResponse::ok(req.message_id, serde_json::json!({ "paused": false }))
                     }
@@ -514,11 +522,21 @@ impl AppEngine {
                 last_telemetry_poll = now;
             }
 
-            // Periodic script worker watchdog check (2s interval)
+            // Periodic script worker watchdog check and crash monitor (2s interval)
             if now.duration_since(last_watchdog_check) >= std::time::Duration::from_secs(2) {
                 if let Ok(mut sup) = self.script_supervisor.try_lock() {
-                    if sup.check_heartbeat_timeout() {
-                        warn!("Script worker watchdog timed out! Quarantined worker.");
+                    let exit_code = sup.poll_worker_status();
+                    if let Some(code) = exit_code {
+                        if code != 0 {
+                            warn!(
+                                "Script worker exited unexpectedly with code {}; crash count: {}",
+                                code,
+                                sup.crash_count()
+                            );
+                        }
+                    }
+                    if sup.is_quarantined() {
+                        warn!("Script worker is quarantined: {:?}", sup.state());
                     }
                 }
                 last_watchdog_check = now;
@@ -531,6 +549,7 @@ impl AppEngine {
 
         info!("Shutting down AetherShell Engine...");
         let _ = shutdown_tx.send(true);
+        self.audio.lock().await.stop();
         shell_monitor.stop();
         let _ = shell_event_task.join();
         tray_shutdown.store(true, Ordering::SeqCst);

@@ -253,3 +253,178 @@ fn test_phase4_engine_ipc_integration() {
     let exit_status = child.wait().expect("child exit");
     assert!(exit_status.success());
 }
+
+fn find_script_host_binary() -> std::path::PathBuf {
+    let mut path = std::env::current_exe().expect("current exe");
+    path.pop();
+    if path.file_name().map(|n| n == "deps").unwrap_or(false) {
+        path.pop();
+    }
+    path.join("aethershell-script-host.exe")
+}
+
+#[test]
+fn test_phase5_wasapi_loopback_capture_thread_lifecycle() {
+    let mut capture = WasapiLoopbackCapture::new(32, FpsMode::AcBalanced);
+    let start_res = capture.start();
+    assert!(
+        start_res.is_ok(),
+        "WASAPI loopback start must succeed (or fallback)"
+    );
+    assert!(capture.is_running());
+
+    std::thread::sleep(Duration::from_millis(50));
+
+    // Pause audio
+    capture.set_paused(true);
+    assert!(capture.is_paused());
+
+    // Resume audio
+    capture.set_paused(false);
+    assert!(!capture.is_paused());
+
+    capture.stop();
+    assert!(!capture.is_running());
+}
+
+#[test]
+fn test_phase5_lua_script_host_real_execution() {
+    let host_bin = find_script_host_binary();
+    if !host_bin.exists() {
+        eprintln!("Skipping out-of-process test: binary not built yet");
+        return;
+    }
+
+    let temp_dir = std::env::temp_dir();
+    let script_path = temp_dir.join("aether_phase5_test.lua");
+    let script_code = b"local t = aether.get_telemetry()\nlocal s = aether.get_spectrum()\nassert(t ~= nil)\nassert(s ~= nil)\n";
+    std::fs::write(&script_path, script_code).expect("write script");
+
+    let digest = sha256_hex(script_code);
+
+    let status = Command::new(&host_bin)
+        .arg("--script")
+        .arg(&script_path)
+        .arg("--digest")
+        .arg(&digest)
+        .arg("--once")
+        .status()
+        .expect("run script host");
+
+    assert!(
+        status.success(),
+        "Lua 5.4 script host execution must exit with 0"
+    );
+
+    let _ = std::fs::remove_file(script_path);
+}
+
+#[test]
+fn test_phase5_job_object_containment() {
+    let host_bin = find_script_host_binary();
+    if !host_bin.exists() {
+        return;
+    }
+
+    let temp_dir = std::env::temp_dir();
+    let script_path = temp_dir.join("aether_job_test.lua");
+    let script_code = b"print('Job object test script')\n";
+    std::fs::write(&script_path, script_code).expect("write script");
+
+    let digest = sha256_hex(script_code);
+
+    let mut supervisor = ScriptSupervisor::new(2);
+    let spawn_res = supervisor.spawn_worker(&host_bin, &script_path, &digest, "");
+    assert!(
+        spawn_res.is_ok(),
+        "Spawn worker under Job Object must succeed: {:?}",
+        spawn_res
+    );
+    assert!(supervisor.has_active_child());
+
+    std::thread::sleep(Duration::from_millis(100));
+
+    supervisor.terminate_worker();
+    assert!(!supervisor.has_active_child());
+
+    let _ = std::fs::remove_file(script_path);
+}
+
+#[test]
+fn test_phase5_supervised_infinite_loop_watchdog_quarantine() {
+    let host_bin = find_script_host_binary();
+    if !host_bin.exists() {
+        return;
+    }
+
+    let temp_dir = std::env::temp_dir();
+    let script_path = temp_dir.join("aether_hang_test.lua");
+    // Script that hangs in top-level execution
+    let script_code = b"while true do end\n";
+    std::fs::write(&script_path, script_code).expect("write script");
+
+    let digest = sha256_hex(script_code);
+
+    let mut supervisor = ScriptSupervisor::new(2);
+    supervisor.set_heartbeat_timeout_secs(1); // 1-second timeout for fast test
+
+    let spawn_res = supervisor.spawn_worker(&host_bin, &script_path, &digest, "");
+    assert!(spawn_res.is_ok());
+    assert!(supervisor.has_active_child());
+
+    // Sleep long enough for heartbeat timeout (1.5s > 1s)
+    std::thread::sleep(Duration::from_millis(1500));
+
+    // Poll worker status: should detect hung worker, kill child process, and transition to Quarantined
+    let exit = supervisor.poll_worker_status();
+    assert_eq!(exit, None);
+    assert!(supervisor.is_quarantined());
+    assert!(!supervisor.has_active_child());
+
+    let _ = std::fs::remove_file(script_path);
+}
+
+#[test]
+fn test_phase5_supervised_crash_circuit_breaker() {
+    let host_bin = find_script_host_binary();
+    if !host_bin.exists() {
+        return;
+    }
+
+    let temp_dir = std::env::temp_dir();
+    let script_path = temp_dir.join("aether_crash_test.lua");
+    // Script that exits with error
+    let script_code = b"error('intentional crash test')\n";
+    std::fs::write(&script_path, script_code).expect("write script");
+
+    let digest = sha256_hex(script_code);
+
+    let mut supervisor = ScriptSupervisor::new(2);
+
+    // Crash 1: First spawn crashes
+    let spawn1 = supervisor.spawn_worker(&host_bin, &script_path, &digest, "");
+    assert!(spawn1.is_ok());
+
+    // Wait for process to exit
+    std::thread::sleep(Duration::from_millis(400));
+    let exit1 = supervisor.poll_worker_status();
+    assert!(exit1.is_some());
+    assert_eq!(supervisor.crash_count(), 1);
+    assert!(!supervisor.is_quarantined());
+
+    // Crash 2: Second spawn crashes -> triggers circuit breaker
+    let spawn2 = supervisor.spawn_worker(&host_bin, &script_path, &digest, "");
+    assert!(spawn2.is_ok());
+
+    std::thread::sleep(Duration::from_millis(400));
+    let exit2 = supervisor.poll_worker_status();
+    assert!(exit2.is_some());
+    assert_eq!(supervisor.crash_count(), 2);
+    assert!(supervisor.is_quarantined());
+
+    // Third spawn attempt must be rejected because supervisor is quarantined
+    let spawn3 = supervisor.spawn_worker(&host_bin, &script_path, &digest, "");
+    assert!(spawn3.is_err());
+
+    let _ = std::fs::remove_file(script_path);
+}
