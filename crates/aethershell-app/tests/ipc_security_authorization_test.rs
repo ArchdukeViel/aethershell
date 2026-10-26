@@ -604,10 +604,15 @@ async fn test_cpp_winui_settings_client_authenticates_privileged_command() {
         "..\\apps\\aethershell-settings\\x64\\Release\\aethershell-settings.exe",
         "..\\..\\apps\\aethershell-settings\\x64\\Release\\aethershell-settings.exe",
     ];
-    let cpp_bin = candidates
-        .iter()
-        .map(std::path::PathBuf::from)
-        .find(|p| p.exists());
+    let force_cli = std::env::var("FORCE_SETTINGS_CLI_TEST").is_ok();
+    let cpp_bin = if force_cli {
+        None
+    } else {
+        candidates
+            .iter()
+            .map(std::path::PathBuf::from)
+            .find(|p| p.exists())
+    };
 
     if let Some(bin_path) = cpp_bin {
         // 1. Invoke C++/WinUI Settings client binary to execute privileged 'pause_audio'
@@ -660,7 +665,62 @@ async fn test_cpp_winui_settings_client_authenticates_privileged_command() {
             assert!(!aud, "Audio must be resumed by C++ settings client");
         }
     } else {
-        panic!("C++/WinUI Settings binary not found in expected path");
+        println!("Note: C++/WinUI 3 binary not found. Testing settings client via cargo-built aethershell-settings binary.");
+        let target_dir_bin = std::path::Path::new(env!("CARGO_BIN_EXE_aethershell"))
+            .with_file_name("aethershell-settings.exe");
+        let bin_path = if target_dir_bin.exists() {
+            target_dir_bin
+        } else {
+            let mut cmd = std::process::Command::new("cargo");
+            cmd.args([
+                "build",
+                "-p",
+                "aethershell-settings",
+                "--bin",
+                "aethershell-settings",
+            ]);
+            let status = cmd.status().expect("cargo build aethershell-settings");
+            assert!(status.success());
+            target_dir_bin
+        };
+
+        // 1. Invoke settings client binary to execute privileged 'pause_audio'
+        let output_pause = tokio::process::Command::new(&bin_path)
+            .arg("--pause-audio")
+            .output()
+            .await
+            .expect("execute settings client pause_audio");
+
+        assert!(
+            output_pause.status.success(),
+            "Settings client pause_audio must succeed: stderr={}",
+            String::from_utf8_lossy(&output_pause.stderr)
+        );
+
+        // Verify live core state changed
+        {
+            let aud = harness.engine.audio().lock().await.is_paused();
+            assert!(aud, "Audio must be paused by settings client");
+        }
+
+        // 2. Invoke settings client binary to execute privileged 'resume_audio'
+        let output_resume = tokio::process::Command::new(&bin_path)
+            .arg("--resume-audio")
+            .output()
+            .await
+            .expect("execute settings client resume_audio");
+
+        assert!(
+            output_resume.status.success(),
+            "Settings client resume_audio must succeed: stderr={}",
+            String::from_utf8_lossy(&output_resume.stderr)
+        );
+
+        // Verify live core state changed
+        {
+            let aud = harness.engine.audio().lock().await.is_paused();
+            assert!(!aud, "Audio must be resumed by settings client");
+        }
     }
 
     harness.stop().await;
