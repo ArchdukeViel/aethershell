@@ -57,6 +57,32 @@ impl LiveEnginePipeTestHarness {
         }
     }
 
+    async fn start_with_pipe_and_session(
+        session_token: &str,
+        pipe_name: &str,
+        session_id: u32,
+    ) -> Self {
+        let engine = Arc::new(AppEngine::with_token(session_token));
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        let handler = engine.create_ipc_handler(session_id, shutdown_tx.clone());
+        let server = IpcServer::new(pipe_name, handler, shutdown_rx);
+
+        let server_handle = tokio::spawn(async move {
+            let _ = server.run().await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        Self {
+            engine,
+            pipe_name: pipe_name.to_string(),
+            session_token: session_token.to_string(),
+            shutdown_tx,
+            server_handle,
+        }
+    }
+
     async fn stop(self) {
         let _ = self.shutdown_tx.send(true);
         let _ = self.server_handle.await;
@@ -477,4 +503,166 @@ async fn test_negative_quarantined_supervisor_rejects_worker_actions() {
         .contains("supervisor is quarantined"));
 
     harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_runtime_token_rotation_through_production_ipc_handler() {
+    let custom_dir = std::env::temp_dir().join(format!("test_rot_live_{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::create_dir_all(&custom_dir);
+    let token_file = custom_dir.join("session_live.token");
+    std::env::set_var("AETHERSHELL_SESSION_TOKEN_PATH", &token_file);
+
+    let initial_token = "initial_secret_token_12345".to_string();
+    let mut guard = aethershell_ipc::SessionTokenGuard::with_token(&initial_token)
+        .expect("create initial guard");
+
+    let harness = LiveEnginePipeTestHarness::start(&initial_token).await;
+
+    // 1. Authenticate with initial token over live Named Pipe -> succeeds
+    let initial_res = IpcClient::send_command(
+        &harness.pipe_name,
+        "pause_audio",
+        serde_json::json!({ "session_token": &initial_token }),
+    )
+    .await
+    .expect("send pause with initial token");
+    assert!(initial_res.success, "Initial token must be accepted");
+    {
+        let aud = harness.engine.audio().lock().await.is_paused();
+        assert!(aud, "Audio must be paused");
+    }
+
+    // 2. Perform live runtime token rotation on engine
+    let new_token = harness
+        .engine
+        .rotate_session_token(&mut guard)
+        .expect("rotate token");
+    assert_ne!(new_token, initial_token);
+    assert_eq!(harness.engine.session_token(), new_token);
+
+    // 3. Attempt command with old/stale token -> must be REJECTED
+    let stale_res = IpcClient::send_command(
+        &harness.pipe_name,
+        "resume_audio",
+        serde_json::json!({ "session_token": &initial_token }),
+    )
+    .await
+    .expect("send resume with stale token");
+    assert!(
+        !stale_res.success,
+        "Stale token must be rejected after rotation"
+    );
+    assert!(stale_res
+        .error_message
+        .unwrap()
+        .contains("valid session capability token required"));
+
+    // 4. Client reloads rotated token from disk (mirroring client behavior)
+    let reloaded_token =
+        aethershell_ipc::SessionToken::load().expect("load rotated token from disk");
+    assert_eq!(reloaded_token, new_token);
+
+    // 5. Send command with newly rotated token -> SUCCEEDS without engine restart!
+    let rotated_res = IpcClient::send_command(
+        &harness.pipe_name,
+        "resume_audio",
+        serde_json::json!({ "session_token": &reloaded_token }),
+    )
+    .await
+    .expect("send resume with rotated token");
+    assert!(
+        rotated_res.success,
+        "Newly rotated token must be accepted immediately"
+    );
+    {
+        let aud = harness.engine.audio().lock().await.is_paused();
+        assert!(!aud, "Audio must be resumed");
+    }
+
+    harness.stop().await;
+    drop(guard);
+    std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
+    let _ = std::fs::remove_dir_all(custom_dir);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_cpp_winui_settings_client_authenticates_privileged_command() {
+    let session_id = current_session_id();
+    let pipe_name = format!(r"\\.\pipe\aethershell-ipc-{}", session_id);
+    let token = format!("cpp_winui_token_{}", uuid::Uuid::new_v4());
+
+    let guard = aethershell_ipc::SessionTokenGuard::with_token_and_session(&token, session_id)
+        .expect("persist session token for C++ client");
+
+    let harness =
+        LiveEnginePipeTestHarness::start_with_pipe_and_session(&token, &pipe_name, session_id)
+            .await;
+
+    // Locate compiled C++/WinUI 3 settings client binary
+    let candidates = [
+        "apps\\aethershell-settings\\x64\\Release\\aethershell-settings.exe",
+        "..\\apps\\aethershell-settings\\x64\\Release\\aethershell-settings.exe",
+        "..\\..\\apps\\aethershell-settings\\x64\\Release\\aethershell-settings.exe",
+    ];
+    let cpp_bin = candidates
+        .iter()
+        .map(std::path::PathBuf::from)
+        .find(|p| p.exists());
+
+    if let Some(bin_path) = cpp_bin {
+        // 1. Invoke C++/WinUI Settings client binary to execute privileged 'pause_audio'
+        let output_pause = tokio::process::Command::new(&bin_path)
+            .args(["--test-ipc-command", "pause_audio"])
+            .output()
+            .await
+            .expect("execute C++ settings client pause_audio");
+
+        assert!(
+            output_pause.status.success(),
+            "C++ Settings client pause_audio must succeed: stderr={}",
+            String::from_utf8_lossy(&output_pause.stderr)
+        );
+        let stdout_pause = String::from_utf8_lossy(&output_pause.stdout);
+        assert!(
+            stdout_pause.contains("IPC_TEST_SUCCESS:"),
+            "C++ Settings client must report IPC success: {}",
+            stdout_pause
+        );
+
+        // Verify live core state changed
+        {
+            let aud = harness.engine.audio().lock().await.is_paused();
+            assert!(aud, "Audio must be paused by C++ settings client");
+        }
+
+        // 2. Invoke C++/WinUI Settings client binary to execute privileged 'resume_audio'
+        let output_resume = tokio::process::Command::new(&bin_path)
+            .args(["--test-ipc-command", "resume_audio"])
+            .output()
+            .await
+            .expect("execute C++ settings client resume_audio");
+
+        assert!(
+            output_resume.status.success(),
+            "C++ Settings client resume_audio must succeed: stderr={}",
+            String::from_utf8_lossy(&output_resume.stderr)
+        );
+        let stdout_resume = String::from_utf8_lossy(&output_resume.stdout);
+        assert!(
+            stdout_resume.contains("IPC_TEST_SUCCESS:"),
+            "C++ Settings client must report IPC success: {}",
+            stdout_resume
+        );
+
+        // Verify live core state changed
+        {
+            let aud = harness.engine.audio().lock().await.is_paused();
+            assert!(!aud, "Audio must be resumed by C++ settings client");
+        }
+    } else {
+        panic!("C++/WinUI Settings binary not found in expected path");
+    }
+
+    harness.stop().await;
+    drop(guard);
 }

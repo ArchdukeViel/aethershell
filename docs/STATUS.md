@@ -82,7 +82,7 @@ An adversarial audit conducted on 2026-10-26 originally revealed 17 specific def
 14. **Portable Storage PRD Q38:B Violation**: Remediated in PR #17 (`crates/aethershell-config/src/storage.rs`) with canonical `%LOCALAPPDATA%\AetherShell` resolution across all packaging modes.
 15. **Insecure IPC Named Pipes**: Remediated in PR #16 (`crates/aethershell-ipc/src/server.rs`) with Windows DACLs, client SID verification, and PID checking.
 16. **Synthetic Performance Benchmark**: Remediated in PR #17 (`crates/aethershell-diagnostics/src/benchmark.rs`) with active 512-sample harmonic PCM synthesis, real-time FFT spectrum analysis, layout engine evaluation, and true private working set measurement.
-17. **Committed Binaries in Git History & Developer Path Leaks**: Cleaned tracked binaries from layout; configured compiler path remapping in `.cargo/config.toml` (`--remap-path-prefix`) eliminating developer username (`AKMALSAFARIPELLU`) and machine paths from compiled binaries.
+17. **Committed Binaries in Git History & Developer Path Leaks**: Cleaned tracked binaries from layout; configured compiler path remapping in build tooling (`--remap-path-prefix` and MSVC `/pathmap`) eliminating developer usernames and local machine paths from compiled binaries.
 
 ---
 

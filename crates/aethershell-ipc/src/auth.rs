@@ -23,11 +23,59 @@
 //! 4. **Crash Recovery & Rotation**:
 //!    Stale token files from ungraceful engine crashes are safely overwritten upon new instance creation,
 //!    and token files are automatically removed upon RAII drop during clean shutdown.
+//!
+//! 5. **Unrestricted Trusted Lua Threat Model (PRD Q32:B)**:
+//!    Per PRD Q32:B, script workers execute with unrestricted, trusted Lua 5.4 (including standard
+//!    library modules like `io` and `os`). The script worker process is explicitly NOT an in-process
+//!    sandbox against malicious code running under the same Windows user account. Under Windows security
+//!    architecture, all code executed by the same user account operates within the same OS security principal.
+//!    Containment is enforced through out-of-process separation, kernel Job Object resource limits
+//!    (128 MiB process memory ceiling and termination on supervisor exit), and Named Pipe client PID
+//!    validation, preserving standard library capabilities without false security claims.
 
 use std::io;
-use std::path::PathBuf;
+use std::os::windows::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
+use windows::core::PCWSTR;
+use windows::Win32::Storage::FileSystem::{
+    MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+};
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::Threading::GetCurrentProcessId;
+
+/// Writes a session capability token to disk atomically to prevent partial reads by concurrent clients.
+fn write_token_atomic(path: &Path, token: &str) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let temp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+    std::fs::write(&temp_path, token.as_bytes())?;
+
+    let src_u16: Vec<u16> = temp_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let dst_u16: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let res = unsafe {
+        MoveFileExW(
+            PCWSTR(src_u16.as_ptr()),
+            PCWSTR(dst_u16.as_ptr()),
+            MOVEFILE_WRITE_THROUGH | MOVEFILE_REPLACE_EXISTING,
+        )
+    };
+
+    let _ = std::fs::remove_file(&temp_path);
+    if res.is_err() {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
 
 /// Resolves the Windows session ID for the current process.
 pub fn current_session_id() -> u32 {
@@ -131,18 +179,15 @@ impl SessionTokenGuard {
     pub fn with_token_and_session(token: impl Into<String>, session_id: u32) -> io::Result<Self> {
         let token = token.into();
         let path = SessionToken::token_path_for_session(session_id);
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        // Write fresh token, replacing any stale token left behind by an ungraceful crash
-        std::fs::write(&path, token.as_bytes())?;
+        // Atomically write fresh token, replacing any stale token left behind by an ungraceful crash
+        write_token_atomic(&path, &token)?;
         Ok(Self { token, path })
     }
 
-    /// Rotates the session token, generating a fresh UUID and updating the token file.
+    /// Rotates the session token, generating a fresh UUID and atomically updating the token file on disk.
     pub fn rotate(&mut self) -> io::Result<String> {
         let new_token = uuid::Uuid::new_v4().to_string();
-        std::fs::write(&self.path, new_token.as_bytes())?;
+        write_token_atomic(&self.path, &new_token)?;
         self.token = new_token.clone();
         Ok(new_token)
     }
@@ -158,7 +203,13 @@ impl SessionTokenGuard {
 
 impl Drop for SessionTokenGuard {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        // Only delete the token file if it still contains our token,
+        // preventing a stale or previous guard from deleting a newer token.
+        if let Ok(current) = std::fs::read_to_string(&self.path) {
+            if current.trim() == self.token.trim() {
+                let _ = std::fs::remove_file(&self.path);
+            }
+        }
     }
 }
 
@@ -300,6 +351,46 @@ mod tests {
 
         drop(guard);
         assert!(!stale_token_file.exists());
+        std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
+        let _ = std::fs::remove_dir_all(custom_dir);
+    }
+
+    #[test]
+    fn test_previous_guard_does_not_delete_newer_token() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let custom_dir =
+            std::env::temp_dir().join(format!("test_guard_no_delete_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&custom_dir);
+        let token_file = custom_dir.join("session_7.token");
+        std::env::set_var("AETHERSHELL_SESSION_TOKEN_PATH", &token_file);
+
+        // Guard 1 creates token T1
+        let guard_1 = SessionTokenGuard::with_token_and_session("TOKEN_ONE", 7).unwrap();
+        assert_eq!(SessionToken::load_for_session(7), Some("TOKEN_ONE".into()));
+
+        // Guard 2 (e.g. newer instance or rotation) overwrites token with T2
+        let guard_2 = SessionTokenGuard::with_token_and_session("TOKEN_TWO", 7).unwrap();
+        assert_eq!(SessionToken::load_for_session(7), Some("TOKEN_TWO".into()));
+
+        // Guard 1 drops: must NOT delete the file because token_file now contains TOKEN_TWO!
+        drop(guard_1);
+        assert!(
+            token_file.exists(),
+            "Token file must NOT be deleted by older guard"
+        );
+        assert_eq!(
+            SessionToken::load_for_session(7),
+            Some("TOKEN_TWO".into()),
+            "Token file must preserve newer token"
+        );
+
+        // Guard 2 drops: matches TOKEN_TWO, so it cleans up the file
+        drop(guard_2);
+        assert!(
+            !token_file.exists(),
+            "Token file should be cleaned up when owning guard drops"
+        );
+
         std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
         let _ = std::fs::remove_dir_all(custom_dir);
     }

@@ -74,6 +74,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args: Vec<String> = env::args().collect();
 
+    // Dedicated deterministic memory allocation test mode for Job Object quota verification
+    if let Some(pos) = args.iter().position(|a| a == "--test-alloc-mib") {
+        if pos + 1 < args.len() {
+            let mib: usize = args[pos + 1].parse().unwrap_or(0);
+            println!("WORKER_STARTED:{}", std::process::id());
+            let page_size = 4096;
+            let total_bytes = mib * 1024 * 1024;
+            let num_pages = total_bytes / page_size;
+            let mut buffer = Vec::with_capacity(total_bytes);
+            for _ in 0..num_pages {
+                buffer.extend_from_slice(&[42u8; 4096]);
+            }
+            println!("ALLOCATED_{}_MIB_SUCCESS", mib);
+            std::process::exit(0);
+        }
+    }
+
     if args.contains(&"--version".to_string()) {
         println!("aethershell-script-host 1.0.0");
         return Ok(());

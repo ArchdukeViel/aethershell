@@ -42,3 +42,5 @@ jobs:
 
       - name: Build Release Binaries
         run: cargo build --workspace --release
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static --remap-path-prefix=${{ github.workspace }}=. --remap-path-prefix=${{ runner.temp }}=~"

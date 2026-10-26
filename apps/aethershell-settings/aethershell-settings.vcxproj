@@ -45,7 +45,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <AdditionalIncludeDirectories>$(MSBuildProjectDirectory);$(MSBuildProjectDirectory)\$(IntermediateOutputPath.TrimEnd('\'));$(MSBuildProjectDirectory)\$(IntermediateOutputPath)Generated Files;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;WINRT_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;WINRT_LEAN_AND_MEAN;DISABLE_XAML_GENERATED_MAIN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -55,7 +55,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
     <ClCompile>
       <DebugInformationFormat>None</DebugInformationFormat>
-      <AdditionalOptions>/experimental:deterministic /pathmap:C:\Akmal\aethershell=. /pathmap:c:\Akmal\aethershell=. %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/experimental:deterministic /pathmap:$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..'))=. %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>false</GenerateDebugInformation>

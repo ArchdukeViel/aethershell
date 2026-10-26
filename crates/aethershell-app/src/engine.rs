@@ -19,9 +19,10 @@ use aethershell_win::{
 };
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::{watch, Mutex};
 use tracing::{info, warn};
 use windows::Win32::Foundation::HWND;
@@ -37,7 +38,7 @@ pub struct AppEngine {
     desktop_windows: Arc<Mutex<DesktopWindowManager>>,
     desktop_renderer: Arc<Mutex<Option<D2D1CanvasRenderer>>>,
     shutdown_flag: Arc<AtomicBool>,
-    session_token: String,
+    session_token: Arc<RwLock<String>>,
 }
 
 impl AppEngine {
@@ -59,12 +60,24 @@ impl AppEngine {
             desktop_windows: Arc::new(Mutex::new(DesktopWindowManager::new())),
             desktop_renderer: Arc::new(Mutex::new(None)),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
-            session_token: token.into(),
+            session_token: Arc::new(RwLock::new(token.into())),
         }
     }
 
-    pub fn session_token(&self) -> &str {
-        &self.session_token
+    pub fn session_token(&self) -> String {
+        self.session_token
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_default()
+    }
+
+    /// Rotates the authoritative runtime session token and updates the persistent token file.
+    pub fn rotate_session_token(&self, guard: &mut SessionTokenGuard) -> io::Result<String> {
+        let new_token = guard.rotate()?;
+        if let Ok(mut writer) = self.session_token.write() {
+            *writer = new_token.clone();
+        }
+        Ok(new_token)
     }
 
     #[allow(dead_code)]
@@ -136,16 +149,17 @@ impl AppEngine {
         );
 
         // Initialize session capability token guard (PRD Section 3 & Owner Review PR #20)
-        let _session_guard = match SessionTokenGuard::with_token(&self.session_token) {
-            Ok(g) => {
-                info!("Session capability token registered at {:?}", g.path());
-                Some(g)
-            }
-            Err(e) => {
-                warn!("Could not persist session capability token: {}", e);
-                None
-            }
-        };
+        // Fail-closed if token persistence fails to ensure management controls are never left broken
+        let _session_guard = SessionTokenGuard::with_token(self.session_token()).map_err(|e| {
+            format!(
+                "Fatal error: Could not persist session capability token: {}",
+                e
+            )
+        })?;
+        info!(
+            "Session capability token registered at {:?}",
+            _session_guard.path()
+        );
 
         // 2. Configure Safe Mode & Conflict Detection (PRD Section 3.4 & Q21:A)
         {
@@ -384,7 +398,7 @@ impl AppEngine {
         let desktop_renderer = Arc::clone(&self.desktop_renderer);
         let shutdown_flag = Arc::clone(&self.shutdown_flag);
         let os_build = self.os_info.build_number;
-        let session_token = self.session_token.clone();
+        let session_token = Arc::clone(&self.session_token);
         let valid_session_id = session_id;
 
         Arc::new(move |req: IpcRequest, client_identity: IpcClientIdentity| {
@@ -397,7 +411,7 @@ impl AppEngine {
             let desktop_renderer = Arc::clone(&desktop_renderer);
             let shutdown_flag = Arc::clone(&shutdown_flag);
             let shutdown_tx = shutdown_tx.clone();
-            let session_token = session_token.clone();
+            let session_token = Arc::clone(&session_token);
 
             Box::pin(async move {
                 // 1. Session Isolation: Enforce same-session client callers
@@ -451,13 +465,16 @@ impl AppEngine {
                 );
 
                 if is_management_command {
-                    let has_valid_token = req
-                        .payload
-                        .get("session_token")
-                        .or_else(|| req.payload.get("token"))
-                        .and_then(|v| v.as_str())
-                        .map(|tok| !tok.is_empty() && tok == session_token.as_str())
-                        .unwrap_or(false);
+                    let has_valid_token = {
+                        let active_token =
+                            session_token.read().map(|g| g.clone()).unwrap_or_default();
+                        req.payload
+                            .get("session_token")
+                            .or_else(|| req.payload.get("token"))
+                            .and_then(|v| v.as_str())
+                            .map(|tok| !tok.is_empty() && tok == active_token.as_str())
+                            .unwrap_or(false)
+                    };
 
                     if !has_valid_token {
                         warn!(

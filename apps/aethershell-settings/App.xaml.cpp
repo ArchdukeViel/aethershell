@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "App.xaml.h"
 #include "MainWindow.xaml.h"
+#include "IpcClient.h"
+#include <shellapi.h>
 #if __has_include("XamlTypeInfo.Impl.g.cpp")
 #include "XamlTypeInfo.Impl.g.cpp"
 #endif
@@ -29,4 +31,49 @@ namespace winrt::AetherShell::Settings::implementation
         m_window = make<MainWindow>();
         m_window.Activate();
     }
+}
+
+int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
+{
+    // Narrow compatibility smoke test handler (PR #20 directive F5)
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv)
+    {
+        for (int i = 1; i < argc; ++i)
+        {
+            if (wcscmp(argv[i], L"--test-ipc-command") == 0 && i + 1 < argc)
+            {
+                std::string cmd = winrt::to_string(argv[i + 1]);
+                std::string payload = (i + 2 < argc && argv[i + 2][0] != L'-')
+                    ? winrt::to_string(argv[i + 2])
+                    : "{}";
+                auto res = ::AetherShell::Settings::SettingsIpcClient::SendCommand(cmd, payload);
+
+                // Write directly to standard output handle for test capture
+                HANDLE hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
+                std::string out = res.success
+                    ? ("IPC_TEST_SUCCESS:" + res.payload + "\n")
+                    : ("IPC_TEST_ERROR:" + res.error + "\n");
+                DWORD written = 0;
+                if (hStdout != INVALID_HANDLE_VALUE && hStdout != nullptr)
+                {
+                    WriteFile(hStdout, out.data(), static_cast<DWORD>(out.size()), &written, nullptr);
+                }
+
+                LocalFree(argv);
+                return res.success ? 0 : 1;
+            }
+        }
+        LocalFree(argv);
+    }
+
+    winrt::init_apartment();
+    ::winrt::Microsoft::UI::Xaml::Application::Start(
+        [](auto&&)
+        {
+            ::winrt::make<::winrt::AetherShell::Settings::implementation::App>();
+        });
+
+    return 0;
 }

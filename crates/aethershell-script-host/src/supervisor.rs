@@ -7,7 +7,7 @@ use tracing::info;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    QueryInformationJobObject, SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
 };
 use windows::Win32::System::Threading::{
@@ -141,6 +141,22 @@ impl JobObjectGuard {
 
     pub fn handle(&self) -> HANDLE {
         self.0
+    }
+
+    /// Queries the configured per-process memory limit from the Windows Job Object.
+    pub fn query_memory_limit(&self) -> Result<usize, String> {
+        unsafe {
+            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            QueryInformationJobObject(
+                self.0,
+                JobObjectExtendedLimitInformation,
+                &mut info as *mut _ as *mut std::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                None,
+            )
+            .map_err(|e| format!("QueryInformationJobObject failed: {}", e))?;
+            Ok(info.ProcessMemoryLimit)
+        }
     }
 
     #[cfg(test)]
@@ -542,33 +558,109 @@ mod tests {
         );
     }
 
+    fn resolve_script_host_binary() -> std::path::PathBuf {
+        if let Ok(cur) = std::env::current_exe() {
+            if let Some(target_dir) = cur.parent().and_then(|p| p.parent()) {
+                let candidate = target_dir.join("aethershell-script-host.exe");
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+        }
+        let candidates = [
+            "target\\x86_64-pc-windows-msvc\\debug\\aethershell-script-host.exe",
+            "target\\debug\\aethershell-script-host.exe",
+            "target\\x86_64-pc-windows-msvc\\release\\aethershell-script-host.exe",
+            "target\\release\\aethershell-script-host.exe",
+        ];
+        for c in candidates {
+            let p = std::path::PathBuf::from(c);
+            if p.exists() {
+                return p;
+            }
+        }
+        std::path::PathBuf::from("aethershell-script-host.exe")
+    }
+
     #[test]
     fn test_job_object_memory_limit_enforced_on_real_worker() {
-        // Create Job Object with strict 20 MiB memory limit
-        let job = JobObjectGuard::with_memory_limit(20 * 1024 * 1024)
-            .expect("create job with 20 MiB limit");
+        // 1. Verify Job Object exists with expected configured limit
+        let limit_20mib = 20 * 1024 * 1024;
+        let job =
+            JobObjectGuard::with_memory_limit(limit_20mib).expect("create job with 20 MiB limit");
+        let queried_limit = job.query_memory_limit().expect("query memory limit");
+        assert_eq!(
+            queried_limit, limit_20mib,
+            "Job Object limit must match configured value"
+        );
 
-        // PowerShell allocating a 60 MiB buffer exceeds the 20 MiB Job Object limit
-        let child = Command::new("powershell.exe")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "$arr = [byte[]]::new(60 * 1024 * 1024)",
-            ])
-            .spawn();
+        // Also verify production default limit
+        let prod_job = JobObjectGuard::new().expect("create prod job");
+        assert_eq!(
+            prod_job.query_memory_limit().unwrap(),
+            128 * 1024 * 1024,
+            "Production Job Object memory limit must be 128 MiB per PRD Table 17-1"
+        );
 
-        if let Ok(mut c) = child {
-            let assign_res = job.assign_process(&c);
-            assert!(assign_res.is_ok(), "Process assignment must succeed");
+        let worker_bin = resolve_script_host_binary();
+        assert!(
+            worker_bin.exists(),
+            "Dedicated test worker binary must exist: {:?}",
+            worker_bin
+        );
 
-            let status = c.wait().expect("wait child");
-            assert!(
-                !status.success(),
-                "Process exceeding memory limit must be terminated or fail: {:?}",
-                status
-            );
-        }
+        // 2. Below-limit test (5 MiB under 20 MiB limit):
+        // Worker actually starts, is assigned before execution, and succeeds.
+        let child_below = Command::new(&worker_bin)
+            .args(["--test-alloc-mib", "5"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn below-limit worker");
+
+        job.assign_process(&child_below)
+            .expect("assign below-limit worker to job");
+
+        let output_below = child_below.wait_with_output().expect("wait below-limit");
+        assert!(
+            output_below.status.success(),
+            "Below-limit worker must succeed with exit code 0: {:?}",
+            output_below.status
+        );
+        let stdout_below = String::from_utf8_lossy(&output_below.stdout);
+        assert!(
+            stdout_below.contains("WORKER_STARTED:"),
+            "Worker must start: {}",
+            stdout_below
+        );
+        assert!(
+            stdout_below.contains("ALLOCATED_5_MIB_SUCCESS"),
+            "Below-limit allocation must succeed: {}",
+            stdout_below
+        );
+
+        // 3. Above-limit test (50 MiB under 20 MiB limit):
+        // Worker starts, attempts allocation, and produces a quota-related OS failure.
+        let child_above = Command::new(&worker_bin)
+            .args(["--test-alloc-mib", "50"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn above-limit worker");
+
+        job.assign_process(&child_above)
+            .expect("assign above-limit worker to job");
+
+        let output_above = child_above.wait_with_output().expect("wait above-limit");
+        assert!(
+            !output_above.status.success(),
+            "Above-limit worker must fail or be terminated by Job Object: {:?}",
+            output_above.status
+        );
+        let stdout_above = String::from_utf8_lossy(&output_above.stdout);
+        assert!(
+            !stdout_above.contains("ALLOCATED_50_MIB_SUCCESS"),
+            "Above-limit allocation must NOT succeed: {}",
+            stdout_above
+        );
     }
 
     #[test]
