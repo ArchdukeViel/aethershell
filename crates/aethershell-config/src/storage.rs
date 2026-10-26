@@ -187,86 +187,83 @@ impl ConfigManager {
             .chain(std::iter::once(0))
             .collect();
 
-        // Case 1: First-time save when destination config does not exist
-        if !self.config_path.exists() {
-            let res = unsafe {
-                MoveFileExW(
-                    PCWSTR(temp_u16.as_ptr()),
-                    PCWSTR(dest_u16.as_ptr()),
-                    MOVEFILE_WRITE_THROUGH | MOVEFILE_REPLACE_EXISTING,
-                )
-            };
-
-            if res.is_err() {
-                let err = std::io::Error::last_os_error();
-                let _ = fs::remove_file(&temp_path);
-                return Err(ConfigStorageError::Io(err));
-            }
-
-            return Ok(());
-        }
-
-        // Case 2: Destination config exists -> Perform atomic ReplaceFileW
-        // Only promote the existing config to backup if it currently parses validly
-        let dest_is_valid = if let Ok(existing_content) = fs::read_to_string(&self.config_path) {
-            toml::from_str::<AppConfig>(&existing_content).is_ok()
-        } else {
-            false
-        };
-
-        let backup_u16: Vec<u16> = if dest_is_valid {
-            self.backup_path
-                .as_os_str()
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect()
-        } else {
-            tracing::warn!(
-                "Existing config on disk is invalid; preserving existing backup from being overwritten"
-            );
-            Vec::new()
-        };
-
-        let lp_backup = if dest_is_valid {
-            PCWSTR(backup_u16.as_ptr())
-        } else {
-            PCWSTR::null()
-        };
-
-        let mut replace_ok = false;
+        let mut save_ok = false;
         let mut last_err = std::io::Error::other("Atomic replacement failed");
 
-        for attempt in 0..4 {
-            // Per Microsoft documentation: REPLACEFILE_WRITE_THROUGH (0x00000001) is explicitly not supported.
-            // We use REPLACEFILE_FLAGS(0).
-            let res = unsafe {
-                ReplaceFileW(
-                    PCWSTR(dest_u16.as_ptr()),
-                    PCWSTR(temp_u16.as_ptr()),
-                    lp_backup,
-                    REPLACE_FILE_FLAGS(0),
-                    None,
-                    None,
-                )
-            };
+        for attempt in 0..5 {
+            if self.config_path.exists() {
+                // Determine whether destination should be backed up
+                let dest_is_valid =
+                    if let Ok(existing_content) = fs::read_to_string(&self.config_path) {
+                        toml::from_str::<AppConfig>(&existing_content).is_ok()
+                    } else {
+                        false
+                    };
 
-            if res.is_ok() {
-                replace_ok = true;
-                break;
+                let backup_u16: Vec<u16> = if dest_is_valid {
+                    self.backup_path
+                        .as_os_str()
+                        .encode_wide()
+                        .chain(std::iter::once(0))
+                        .collect()
+                } else {
+                    tracing::warn!(
+                        "Existing config on disk is invalid; preserving existing backup from being overwritten"
+                    );
+                    Vec::new()
+                };
+
+                let lp_backup = if dest_is_valid {
+                    PCWSTR(backup_u16.as_ptr())
+                } else {
+                    PCWSTR::null()
+                };
+
+                // Per Microsoft documentation: REPLACEFILE_WRITE_THROUGH (0x00000001) is explicitly not supported.
+                // We use REPLACE_FILE_FLAGS(0).
+                let res = unsafe {
+                    ReplaceFileW(
+                        PCWSTR(dest_u16.as_ptr()),
+                        PCWSTR(temp_u16.as_ptr()),
+                        lp_backup,
+                        REPLACE_FILE_FLAGS(0),
+                        None,
+                        None,
+                    )
+                };
+
+                if res.is_ok() {
+                    save_ok = true;
+                    break;
+                }
+                last_err = std::io::Error::last_os_error();
+            } else {
+                let res = unsafe {
+                    MoveFileExW(
+                        PCWSTR(temp_u16.as_ptr()),
+                        PCWSTR(dest_u16.as_ptr()),
+                        MOVEFILE_WRITE_THROUGH | MOVEFILE_REPLACE_EXISTING,
+                    )
+                };
+
+                if res.is_ok() {
+                    save_ok = true;
+                    break;
+                }
+                last_err = std::io::Error::last_os_error();
             }
 
-            last_err = std::io::Error::last_os_error();
-            if attempt < 3 {
+            if attempt < 4 {
                 std::thread::sleep(std::time::Duration::from_millis(30 * (attempt + 1) as u64));
             }
         }
 
-        // Clean up temporary file in all paths (ReplaceFileW deletes temp on success, but guarantee cleanup)
+        // Clean up temporary file in all paths (ReplaceFileW/MoveFileExW delete temp on success, but guarantee cleanup)
         let _ = fs::remove_file(&temp_path);
 
-        if !replace_ok {
+        if !save_ok {
             return Err(ConfigStorageError::AtomicRename(format!(
-                "Atomic ReplaceFileW failed: {}. Live configuration preserved untouched.",
+                "Atomic file replacement failed: {}. Live configuration preserved untouched.",
                 last_err
             )));
         }
