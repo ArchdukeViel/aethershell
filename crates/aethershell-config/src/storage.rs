@@ -65,6 +65,12 @@ impl ConfigManager {
                 if self.backup_path.exists() {
                     let backup_content = fs::read_to_string(&self.backup_path)?;
                     if let Ok(backup_cfg) = toml::from_str::<AppConfig>(&backup_content) {
+                        if backup_cfg.schema_version != CURRENT_SCHEMA_VERSION {
+                            return Err(ConfigStorageError::UnsupportedSchemaVersion(
+                                backup_cfg.schema_version,
+                                CURRENT_SCHEMA_VERSION.into(),
+                            ));
+                        }
                         tracing::warn!("Recovered configuration from backup after detecting corruption in primary config");
                         // Safely and atomically heal primary config file with known-good backup
                         self.heal_from_backup(&backup_content)?;
@@ -125,11 +131,8 @@ impl ConfigManager {
             }
         }
 
-        let _ = fs::remove_file(&temp_path);
-
         if !replace_ok {
             // Fallback to MoveFileExW if destination file did not exist
-            fs::write(&temp_path, backup_content.as_bytes())?;
             let move_res = unsafe {
                 MoveFileExW(
                     PCWSTR(temp_u16.as_ptr()),
@@ -145,6 +148,8 @@ impl ConfigManager {
                     err, last_err
                 )));
             }
+        } else {
+            let _ = fs::remove_file(&temp_path);
         }
 
         Ok(())
@@ -633,6 +638,40 @@ mod tests {
                 .load_or_default()
                 .expect("recovery after lock released");
             assert_eq!(second_recovery.profile, "signature_minimal");
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_load_or_default_rejects_backup_with_unsupported_schema_version() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("aethershell_schema_check_{}", uuid::Uuid::new_v4()));
+        let manager = ConfigManager::new(&temp_dir);
+
+        // Corrupt live config
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(&manager.config_path, "INVALID TOML").unwrap();
+
+        // Write backup with incompatible schema version 999.0
+        let incompatible = AppConfig {
+            schema_version: "999.0".into(),
+            ..Default::default()
+        };
+        let incompatible_toml = toml::to_string_pretty(&incompatible).unwrap();
+        fs::write(&manager.backup_path, incompatible_toml).unwrap();
+
+        let res = manager.load_or_default();
+        assert!(
+            res.is_err(),
+            "Recovery must fail when backup has unsupported schema version"
+        );
+        match res.err().unwrap() {
+            ConfigStorageError::UnsupportedSchemaVersion(actual, expected) => {
+                assert_eq!(actual, "999.0");
+                assert_eq!(expected, CURRENT_SCHEMA_VERSION);
+            }
+            other => panic!("Expected UnsupportedSchemaVersion, got {:?}", other),
         }
 
         let _ = fs::remove_dir_all(&temp_dir);

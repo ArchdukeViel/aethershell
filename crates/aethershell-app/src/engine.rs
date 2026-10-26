@@ -451,7 +451,6 @@ impl AppEngine {
                 );
 
                 if is_management_command {
-                    let is_same_process = client_identity.process_id == std::process::id();
                     let has_valid_token = req
                         .payload
                         .get("session_token")
@@ -460,7 +459,7 @@ impl AppEngine {
                         .map(|tok| !tok.is_empty() && tok == session_token.as_str())
                         .unwrap_or(false);
 
-                    if !is_same_process && !has_valid_token {
+                    if !has_valid_token {
                         warn!(
                             "Security violation: caller PID {} attempted management command '{}' without valid session token",
                             client_identity.process_id, req.command

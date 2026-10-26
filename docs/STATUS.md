@@ -130,6 +130,6 @@ An adversarial audit conducted on 2026-10-26 originally revealed 17 specific def
   - Supervised worker process role containment (prohibiting management command execution)
   - Win32 `ReplaceFileW` and `MoveFileExW` genuinely atomic configuration saving with `REPLACE_FILE_FLAGS(0)`, backup self-healing, and lock failure protection
   - Pre-execution worker Job Object containment via `CREATE_SUSPENDED`, 128 MiB memory limit enforcement (`0x800705AF` tested on child process), and zero-uncontained-execution guarantee
-  - Binary path privacy verified: 0 developer-specific paths in release binaries via `--remap-path-prefix`
-  - Formal evidence ledgers EVD-010 and EVD-011 logged and verified across 138 workspace tests (104 unit tests + 34 integration tests)
+  - Binary path privacy verified: 0 developer-specific paths across all 4 release binaries via `--remap-path-prefix` and MSVC `/pathmap`
+  - Formal evidence ledgers EVD-010 and EVD-011 logged and verified across 142 workspace tests (108 unit tests + 34 integration tests)
 

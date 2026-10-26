@@ -142,6 +142,11 @@ impl JobObjectGuard {
     pub fn handle(&self) -> HANDLE {
         self.0
     }
+
+    #[cfg(test)]
+    pub fn from_raw_handle_for_test(handle: HANDLE) -> Self {
+        Self(handle)
+    }
 }
 
 impl Drop for JobObjectGuard {
@@ -228,6 +233,11 @@ impl ScriptSupervisor {
 
     pub fn record_heartbeat(&mut self) {
         self.last_heartbeat = Some(Instant::now());
+    }
+
+    #[cfg(test)]
+    pub fn set_job_for_test(&mut self, job: Option<JobObjectGuard>) {
+        self.job = job;
     }
 
     /// Spawns a supervised child process with pure-Rust SHA-256 pre-verification and Windows Job Object containment.
@@ -610,5 +620,65 @@ mod tests {
             .contains("Pre-spawn digest verification failed"));
 
         let _ = std::fs::remove_file(script);
+    }
+
+    #[test]
+    fn test_job_object_creation_with_zero_limit_fails_closed() {
+        // Zero memory limit with JOB_OBJECT_LIMIT_PROCESS_MEMORY is invalid in Win32
+        let res = JobObjectGuard::with_memory_limit(0);
+        assert!(res.is_err(), "Zero memory limit must fail closed");
+        assert!(res.unwrap_err().contains("SetInformationJobObject failed"));
+    }
+
+    #[test]
+    fn test_spawn_worker_assignment_failure_terminates_suspended_child_fail_closed() {
+        let mut supervisor = ScriptSupervisor::new(2);
+        // Inject invalid Job Object handle (12345678)
+        let invalid_job = JobObjectGuard::from_raw_handle_for_test(HANDLE(12345678 as *mut _));
+        supervisor.set_job_for_test(Some(invalid_job));
+
+        let script = std::env::temp_dir().join(format!(
+            "test_assign_fail_{}_{}.lua",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&script, b"-- dummy lua content").unwrap();
+        let sha = crate::sha256_hex(b"-- dummy lua content");
+
+        // spawn_worker will create the process in CREATE_SUSPENDED state,
+        // then job.assign_handle will fail, triggering immediate fail-closed termination.
+        let res = supervisor.spawn_worker(Path::new("cmd.exe"), &script, &sha, "");
+        assert!(
+            res.is_err(),
+            "Spawn must fail when Job Object assignment fails"
+        );
+        let err_msg = res.unwrap_err();
+        assert!(
+            err_msg.contains("CRITICAL: Job Object assignment failed"),
+            "Error must report Job Object assignment failure: {}",
+            err_msg
+        );
+        assert!(
+            !supervisor.has_active_child(),
+            "Supervisor must have no active child after assignment failure"
+        );
+
+        let _ = std::fs::remove_file(script);
+    }
+
+    #[test]
+    fn test_thread_resumption_failure_returns_max() {
+        // Verify Win32 ResumeThread on invalid handle returns u32::MAX
+        unsafe {
+            let res = ResumeThread(HANDLE(99999999 as *mut _));
+            assert_eq!(
+                res,
+                u32::MAX,
+                "ResumeThread on invalid handle must return u32::MAX"
+            );
+        }
     }
 }

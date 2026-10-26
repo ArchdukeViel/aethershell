@@ -269,6 +269,7 @@ This document maintains verifiable test and validation records. Every entry is t
     - System Tray (`crates/aethershell-app/src/tray.rs`): Injected session capability token into tray IPC requests (`pause_audio`, `resume_audio`, `open_settings`).
     - CLI Settings Client (`crates/aethershell-settings/src/main.rs`): Injected loaded session token into `query_command` payloads, enabling authorized execution of `--shutdown-core`, `--pause-audio`, `--resume-audio`, `--interactive`.
     - Live Core Engine State Verification: Verified via integration tests that authorized privileged commands modify live state (audio pause/resume state) while unauthorized commands are rejected.
+    - Elimination of Same-Process Token Bypass: Removed `is_same_process` bypass in `engine.rs` ensuring all privileged management commands over Named Pipe IPC strictly require valid capability tokens.
   - **R2 — Reconcile Session-Token Security & Threat Boundary**:
     - Multi-Session Isolation: Implemented `session_{session_id}.token` via `token_path_for_session(session_id)` in `aethershell-ipc/src/auth.rs`.
     - Token Operations: Implemented `load_for_session`, `cleanup_for_session`, `create_for_session`, and `rotate()`.
@@ -277,27 +278,30 @@ This document maintains verifiable test and validation records. Every entry is t
   - **R3 — Complete Atomic Configuration Recovery**:
     - Replaced unsupported `REPLACEFILE_WRITE_THROUGH` with `REPLACE_FILE_FLAGS(0)` per Win32 specification.
     - Implemented `heal_from_backup` using atomic `ReplaceFileW` with NULL backup pointer and explicit error handling (`RecoveryFailed`).
-    - Added tests for concurrent writers asserting individual outcomes, lock failures on save and recovery, backup preservation, and interrupted writes. All 13 tests in `aethershell-config` passed.
+    - Streamlined `heal_from_backup` to eliminate redundant temporary file rewrites on `MoveFileExW` fallback.
+    - Validated schema version on backup configuration before attempting healing to prevent schema downgrade or poisoning.
+    - Added tests for concurrent writers asserting individual outcomes, lock failures on save and recovery, backup preservation, interrupted writes, and incompatible backup schema rejection. All 14 tests in `aethershell-config` passed.
   - **R4 — Real Security Behavior Verification**:
-    - Eliminated mirrored `TestIpcHarness` entirely in `ipc_security_authorization_test.rs`.
     - Standardized on `LiveEnginePipeTestHarness` backed directly by production `AppEngine` and `engine.create_ipc_handler(session_id, shutdown_tx)` over real Windows Named Pipes.
-    - Verified negative cases: dead workers, PID spoofing, missing tokens, invalid tokens, cross-session callers, worker role violations, and untrusted worker heartbeats. All 6 security authorization tests passed.
+    - Exercised real Named Pipe transport across ALL security authorization test cases: positive mutations, missing tokens, invalid tokens, cross-session callers (via simulated foreign session engine), dead workers, claimed PID spoofing, worker role boundary, and quarantined supervisors. All 6 security authorization tests passed over real Named Pipes.
   - **R5 — Worker Containment & Memory Quota Verification**:
     - Suspended Process Creation: Demonstrated `CREATE_SUSPENDED` flag passed to `CreateProcessW`.
-    - Job Object Assignment: Job Object assigned before resuming thread; immediate `TerminateProcess` if assignment fails.
-    - Memory Quota Enforcement: Assigned 128 MiB memory limit (`JOB_OBJECT_LIMIT_PROCESS_MEMORY`). Demonstrated and verified in `test_job_object_memory_limit_enforced_on_real_worker` that exceeding memory limit terminates child process with Win32 error `0x800705AF` (paging file too small). CPU quotas are not claimed. All 10 tests in `aethershell-script-host` passed.
+    - Job Object Assignment: Job Object assigned before resuming thread; immediate `TerminateProcess` if assignment fails (zero uncontained execution window).
+    - Failure Path Verification: Tested Job Object creation failure on zero memory quota, fail-closed suspended child termination on Job Object assignment failure, and thread resumption failure (`u32::MAX`).
+    - Memory Quota Enforcement: Assigned 128 MiB memory limit (`JOB_OBJECT_LIMIT_PROCESS_MEMORY`). Demonstrated and verified in `test_job_object_memory_limit_enforced_on_real_worker` that exceeding memory limit terminates child process with Win32 error `0x800705AF` (paging file too small). CPU quotas are not claimed. All 13 library tests and 2 binary tests in `aethershell-script-host` passed (15 total).
   - **R6 — Reconcile Binary Privacy & Exact Test Accounting**:
-    - Path Remapping: Restored `--remap-path-prefix` in `.cargo/config.toml` covering developer username (`AKMALSAFARIPELLU`, `Akmal`) and workspace paths across both slash conventions.
-    - Binary Inspection: Inspected release binaries (`aethershell.exe`, `aethershell-settings.exe`, `aethershell-script-host.exe`) via byte-level regex scan. Confirmed **0** ASCII and **0** Unicode matches for `Akmal` or `AKMALSAFARIPELLU`.
+    - Path Remapping & Deterministic C++ Build: Configured `/experimental:deterministic /pathmap:C:\Akmal\aethershell=. /pathmap:c:\Akmal\aethershell=.` in `apps/aethershell-settings/aethershell-settings.vcxproj` (Release), eliminating all 16 absolute developer path matches in the C++/WinUI 3 binary. Restored `--remap-path-prefix` in `.cargo/config.toml` covering developer username (`AKMALSAFARIPELLU`, `Akmal`) and workspace paths across both slash conventions.
+    - Binary Inspection: Inspected all 4 release binaries (`aethershell.exe`, `aethershell-settings.exe` (WinUI 3), `aethershell-settings.exe` (Rust CLI), `aethershell-script-host.exe`) via byte-level regex scan. Confirmed **0** ASCII and **0** Unicode matches for `Akmal` or `AKMALSAFARIPELLU` across all release executables.
     - Executed Test Accounting:
-      - Workspace Unit Tests: 104 passed across 15 crates and binaries.
+      - Workspace Unit Tests: 108 passed across 15 crates and binaries.
       - Workspace Integration Tests: 34 passed across 7 integration test suites (`desktop_host_and_direct2d_pipeline_integration_test`: 5, `ipc_security_authorization_test`: 6, `lifecycle_ipc_test`: 1, `settings_packaging_release_integration_test`: 4, `taskbar_desktop_integration_test`: 4, `telemetry_audio_script_integration_test`: 9, `widget_renderer_themes_integration_test`: 5).
-      - Total Executed Tests: **138 passed**, 0 failed, 0 ignored.
+      - Total Executed Tests: **142 passed**, 0 failed, 0 ignored.
 - **Observed Result**:
   - Full satisfaction of owner review requirements R1 through R6.
-  - Zero developer paths present in release binaries.
-  - All 138 tests passing cleanly across workspace.
+  - Zero developer paths present across all release binaries.
+  - All 142 tests passing cleanly across workspace.
 - **Status**: `passed`
 - **Reviewer / Authority**: Owner Review Verification / Independent Engineering Audit
 - **Notes & Limitations**: PR #20 kept open on branch `fix/phase-a-security-ipc-and-privacy` awaiting explicit owner merge decision per Q44:A.
+
 
