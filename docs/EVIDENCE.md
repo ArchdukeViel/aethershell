@@ -190,12 +190,13 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Executed Actions & Verification Suite**:
   - `cargo fmt --all --check` -> Passed (0 formatting violations).
   - `cargo clippy --workspace --all-targets -- -D warnings` -> Passed (0 warnings across all 13 crates).
-  - `cargo test --workspace` -> Passed 105 tests across 13 crates and 5 integration test suites:
-    - `lifecycle_ipc_test.rs`: Multi-process singleton locking, IPC command dispatch, and clean shutdown trigger verified.
-    - `taskbar_desktop_integration_test.rs`: State machine, non-invasive conflict detection yielding, multi-monitor window management, desktop stacking hierarchy, and elimination of topmost stacking defect verified.
-    - `widget_renderer_themes_integration_test.rs`: 6 launch themes, 6 launch skins, minimal profile signature, and DIP coordinate resolution verified.
-    - `telemetry_audio_script_integration_test.rs`: Real Win32 telemetry samplers, WASAPI loopback capture & FFT analysis, Lua 5.4 sandboxing with Job Object quotas, and IPC DACL authorization verified.
-    - `settings_packaging_release_integration_test.rs`: WinUI 3 settings lifecycle and 0 MB RAM exit (G11), active multi-workload benchmark harness (G13), 5-channel packaging validation (G15), and canonical AppData storage resolution (G20) verified.
+  - `cargo test --workspace` -> Passed 105 tests across 13 crates and 6 integration test suites (28 integration tests total):
+    - `desktop_host_and_direct2d_pipeline_integration_test.rs` (5 tests): Desktop host window creation behind icons (`WorkerW`/`Progman`/`SHELLDLL_DefView`), multi-monitor window management, desktop stacking hierarchy, elimination of `WS_EX_TOPMOST` defect, and live Direct2D canvas overlay drawing verified.
+    - `lifecycle_ipc_test.rs` (1 test): Multi-process singleton locking, IPC command dispatch, and clean shutdown trigger verified.
+    - `settings_packaging_release_integration_test.rs` (4 tests): WinUI 3 settings lifecycle and 0 MB RAM exit (G11), active multi-workload benchmark harness (G13), 5-channel packaging validation (G15), and canonical AppData storage resolution (G20) verified.
+    - `taskbar_desktop_integration_test.rs` (4 tests): Taskbar coordinator state machine, non-invasive conflict detection yielding, safe mode precedence, and interaction mode auto-dismiss triggers verified.
+    - `telemetry_audio_script_integration_test.rs` (9 tests): Real Win32 telemetry samplers, WASAPI loopback capture & FFT analysis, Lua 5.4 sandboxing with Job Object quotas, and IPC DACL authorization verified.
+    - `widget_renderer_themes_integration_test.rs` (5 tests): 6 launch themes, 6 launch skins, minimal profile signature, and DIP coordinate resolution verified.
   - **Compiler Path Remapping (`.cargo/config.toml`)**:
     - Added `--remap-path-prefix` flags for developer username/profile paths (`C:\Users\AKMALSAFARIPELLU` and workspace paths) to `rustflags`. Release and debug binaries no longer leak local filesystem developer profile paths or usernames, resolving Defect #17 / Gate G16.
   - **Empirical Subsystem Qualifications**:
