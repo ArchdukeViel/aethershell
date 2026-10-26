@@ -7,6 +7,10 @@ rustflags = [
     "-C", "target-feature=+crt-static",
     "--remap-path-prefix=C:\\Users\\AKMALSAFARIPELLU=~",
     "--remap-path-prefix=c:\\Users\\AKMALSAFARIPELLU=~",
+    "--remap-path-prefix=C:/Users/AKMALSAFARIPELLU=~",
+    "--remap-path-prefix=c:/Users/AKMALSAFARIPELLU=~",
     "--remap-path-prefix=c:\\Akmal\\aethershell=.",
-    "--remap-path-prefix=C:\\Akmal\\aethershell=."
+    "--remap-path-prefix=C:\\Akmal\\aethershell=.",
+    "--remap-path-prefix=c:/Akmal/aethershell=.",
+    "--remap-path-prefix=C:/Akmal/aethershell=."
 ]
