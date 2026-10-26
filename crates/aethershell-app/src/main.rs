@@ -1,13 +1,10 @@
-mod engine;
-mod tray;
-
+use aethershell_app::AppEngine;
 use aethershell_core::LifecycleState;
 use aethershell_diagnostics::{redact_sensitive_info, SubsystemHealth, SystemDiagnosticReport};
 use aethershell_ipc::IpcClient;
 use aethershell_win::{
     probe_desktop_hierarchy, probe_taskbars, SessionSingletonGuard, WindowsVersionInfo,
 };
-use engine::AppEngine;
 use std::env;
 use std::process::ExitCode;
 
