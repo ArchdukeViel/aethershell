@@ -459,3 +459,45 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
 - **Notes & Limitations**: Gate G01, G04, and G06 shell recovery contracts verified against all automated edge cases. Ready to advance to the next stability milestone: Real Telemetry & WASAPI Spectrum Presentation Loop.
 
+---
+
+### EVD-016: Live Telemetry Binding Flow, WASAPI Spectrum Rendering & Adaptive Direct2D Presentation Loop (PR #27)
+- **Requirement / Gate**: Gate G08 (Sensor Honesty & Non-Waking Sampling), Gate G09 (Local Adaptive Audio & Dynamic Framerate Throttling), PRD Section 7.3, Section 15.1, Q36:A
+- **Candidate Commit**: `647d4d3290d6b47175544fb99470bfd6e57ea18f` (PR #27 Head)
+- **Main Merge Commit**: `6af451ec651db3e843bb352697b0a8809989bc19` (Merge pull request #27)
+- **Date & Environment**: 2026-10-27, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
+- **Executed Actions & Verification Suite**:
+  - **1. Pre-Merge Verification on PR #27 (`647d4d3`)**:
+    - `C++/WinUI 3 Mandatory Qualification`: **`success`** in 2m 35s (Run ID `40469160575`, Job `122071774574`).
+    - `Cargo Audit & Advisory Database`: **`success`** in 22s (Run ID `40469160581`, Job `122071774583`).
+    - `Rust Quality Gates & Tests`: **`success`** in 2m 14s (Run ID `40469160575`, Job `122071774817`).
+    - `GitGuardian Security Checks`: **`pass`** in 1s.
+  - **2. Delegated Merge Execution (Section 1 & 3)**:
+    - Merged PR #27 into `main` via `gh pr merge 27 --merge --match-head-commit 647d4d3290d6b47175544fb99470bfd6e57ea18f` at `2026-10-27T07:49:57Z`.
+    - Generated `main` merge commit SHA: `6af451ec651db3e843bb352697b0a8809989bc19`.
+  - **3. Post-Merge Exact-Commit GitHub CI Verification on `main`**:
+    - `CI Pipeline` (Run ID: `40469498758`):
+      - `Rust Quality Gates & Tests` (Job `122072899669`): **`success`** in 2m 40s.
+      - `C++/WinUI 3 Mandatory Qualification` (Job `122072900010`): **`success`** in 2m 27s.
+    - `Security Audit` (Run ID: `40469498800`):
+      - `Cargo Audit & Advisory Database` (Job `122072899806`): **`success`** in 27s.
+  - **4. Live Telemetry & Adaptive Audio Presentation Features**:
+    - Replaced dummy metric constants (`24.5%` CPU, `6.8` GB RAM) in `compile_first_run_scene()` with `compile_live_scene()`, directly consuming dynamic Windows sensor data from `TelemetryRegistry::poll_all()`.
+    - Introduced `BindingValue::FloatArray(Vec<f32>)` to transmit multi-band frequency spectrums into the declarative layout pipeline.
+    - Extended `ResolvedNode` in `aethershell-renderer` with `bands: Option<Vec<f32>>` and updated `SceneGraph::compile()` to render live WASAPI FFT spectrum bands via `RenderCommand::DrawSpectrum`.
+    - Implemented adaptive presentation timing in `AppEngine::run()` conforming to PRD Q36:A: throttles to 15 FPS on battery power (`power.ac_state == "Battery"`), defaults to 30 FPS on AC power, and scales to 60 FPS in Performance mode.
+    - Added Gaming Shield suppression: checks `taskbar.is_any_monitor_fullscreen()` to suppress overlay rendering during active full-screen gaming, preserving frame pacing and preventing GPU contention.
+    - Synchronized dynamic scene repainting across `WM_PAINT`, Explorer restarts (`TaskbarCreated`), and IPC profile reloads via `cached_bindings`.
+  - **5. Automated Test Accounting**:
+    - `aethershell-core`: 9 passed (including `test_binding_value_float_array`).
+    - `aethershell-renderer`: 12 passed (including `test_spectrum_scene_compilation_with_live_bands_and_fallback`, `test_spectrum_visualizer_bands_binding_resolution`).
+    - `aethershell-taskbar`: 4 passed (including `test_taskbar_coordinator_conflict_yielding`, `is_any_monitor_fullscreen`).
+    - `aethershell-app`: 4 unit tests + 8 integration test suites passed (including new `test_live_telemetry_and_spectrum_bindings_flow_into_scene`, `test_adaptive_presentation_loop_power_and_gaming_shield`).
+- **Observed Result**:
+  - PR #27 cleanly merged into `main` at `6af451ec651db3e843bb352697b0a8809989bc19`.
+  - Real Windows telemetry and live WASAPI audio spectrum rendering loop fully operational.
+  - Post-merge CI and security workflows 100% green on `main`.
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
+- **Notes & Limitations**: Ready to advance to the next stability milestone: Authenticated Configuration IPC Endpoints (`get_config` / `set_config`).
+
