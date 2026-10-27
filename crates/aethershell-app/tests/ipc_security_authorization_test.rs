@@ -435,8 +435,13 @@ async fn test_negative_worker_role_boundary_and_process_replacement() {
     for cmd in &[
         "shutdown",
         "enter_interactive_mode",
+        "exit_interactive_mode",
         "pause_audio",
+        "resume_audio",
         "reload_profile",
+        "update_layout",
+        "get_config",
+        "set_config",
     ] {
         let resp = IpcClient::send_command(
             &harness.pipe_name,
