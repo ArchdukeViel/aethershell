@@ -1,12 +1,25 @@
 #include "pch.h"
 #include "IpcClient.h"
+#include <winrt/Windows.Data.Json.h>
 #include <fstream>
 #include <sstream>
 
 namespace AetherShell::Settings
 {
-    std::wstring SettingsIpcClient::ResolvePipeName()
+    std::wstring SettingsIpcClient::ResolvePipeName(const std::wstring& pipeOverride)
     {
+        if (!pipeOverride.empty())
+        {
+            return pipeOverride;
+        }
+
+        wchar_t envPipe[MAX_PATH] = { 0 };
+        DWORD len = GetEnvironmentVariableW(L"AETHERSHELL_TEST_IPC_PIPE", envPipe, MAX_PATH);
+        if (len > 0 && len < MAX_PATH)
+        {
+            return envPipe;
+        }
+
         DWORD sessionId = 1;
         ProcessIdToSessionId(GetCurrentProcessId(), &sessionId);
         std::wstringstream ss;
@@ -70,10 +83,13 @@ namespace AetherShell::Settings
         return "";
     }
 
-    IpcResult SettingsIpcClient::SendCommand(const std::string& command, const std::string& jsonPayload)
+    IpcResult SettingsIpcClient::SendCommand(
+        const std::string& command,
+        const std::string& jsonPayload,
+        const std::wstring& pipeOverride)
     {
         IpcResult result;
-        std::wstring pipePath = ResolvePipeName();
+        std::wstring pipePath = ResolvePipeName(pipeOverride);
 
         HANDLE hPipe = CreateFileW(
             pipePath.c_str(),
@@ -87,6 +103,7 @@ namespace AetherShell::Settings
 
         if (hPipe == INVALID_HANDLE_VALUE)
         {
+            result.transportSuccess = false;
             result.success = false;
             result.error = "AetherShell Core is not running or named pipe inaccessible.";
             return result;
@@ -125,6 +142,7 @@ namespace AetherShell::Settings
             !WriteFile(hPipe, reqBody.data(), lengthPrefix, &written, nullptr))
         {
             CloseHandle(hPipe);
+            result.transportSuccess = false;
             result.success = false;
             result.error = "Failed writing request to IPC pipe.";
             return result;
@@ -136,14 +154,25 @@ namespace AetherShell::Settings
         if (!ReadFile(hPipe, &respLength, sizeof(respLength), &bytesRead, nullptr) || bytesRead != sizeof(respLength))
         {
             CloseHandle(hPipe);
+            result.transportSuccess = false;
             result.success = false;
             result.error = "Failed reading response length from IPC pipe.";
+            return result;
+        }
+
+        if (respLength == 0)
+        {
+            CloseHandle(hPipe);
+            result.transportSuccess = true;
+            result.success = false;
+            result.error = "Malformed IPC response: zero-length response payload.";
             return result;
         }
 
         if (respLength > 1024 * 1024) // 1 MiB safety ceiling
         {
             CloseHandle(hPipe);
+            result.transportSuccess = false;
             result.success = false;
             result.error = "Response length exceeded 1 MiB framing ceiling.";
             return result;
@@ -153,14 +182,81 @@ namespace AetherShell::Settings
         if (!ReadFile(hPipe, buffer.data(), respLength, &bytesRead, nullptr) || bytesRead != respLength)
         {
             CloseHandle(hPipe);
+            result.transportSuccess = false;
             result.success = false;
             result.error = "Failed reading response body from IPC pipe.";
             return result;
         }
 
         CloseHandle(hPipe);
-        result.success = true;
-        result.payload = std::string(buffer.data(), buffer.size());
+        result.transportSuccess = true;
+
+        std::string rawJson(buffer.data(), buffer.size());
+        winrt::Windows::Data::Json::JsonObject root;
+        if (!winrt::Windows::Data::Json::JsonObject::TryParse(winrt::to_hstring(rawJson), root))
+        {
+            result.success = false;
+            result.error = "Malformed IPC response: invalid JSON syntax.";
+            return result;
+        }
+
+        if (!root.HasKey(L"protocol_version"))
+        {
+            result.success = false;
+            result.error = "Malformed IPC response: missing protocol_version.";
+            return result;
+        }
+
+        if (!root.HasKey(L"success"))
+        {
+            result.success = false;
+            result.error = "Malformed IPC response: missing success field.";
+            return result;
+        }
+
+        auto successVal = root.GetNamedValue(L"success");
+        if (successVal.ValueType() != winrt::Windows::Data::Json::JsonValueType::Boolean)
+        {
+            result.success = false;
+            result.error = "Malformed IPC response: success field is not boolean.";
+            return result;
+        }
+
+        bool serverSuccess = successVal.GetBoolean();
+        if (serverSuccess)
+        {
+            result.success = true;
+            if (root.HasKey(L"payload"))
+            {
+                auto payloadVal = root.GetNamedValue(L"payload");
+                result.payload = winrt::to_string(payloadVal.Stringify());
+            }
+            else
+            {
+                result.payload = "{}";
+            }
+        }
+        else
+        {
+            result.success = false;
+            if (root.HasKey(L"error_message"))
+            {
+                auto errVal = root.GetNamedValue(L"error_message");
+                if (errVal.ValueType() == winrt::Windows::Data::Json::JsonValueType::String)
+                {
+                    result.error = winrt::to_string(errVal.GetString());
+                }
+                else
+                {
+                    result.error = "Server rejected command with non-string error_message.";
+                }
+            }
+            else
+            {
+                result.error = "Server rejected command without error_message.";
+            }
+        }
+
         return result;
     }
 }

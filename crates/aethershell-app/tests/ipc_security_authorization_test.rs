@@ -8,6 +8,25 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 
+static ENV_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn find_cpp_settings_binary() -> Option<std::path::PathBuf> {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir.parent()?.parent()?;
+    let candidates = [
+        repo_root.join(r"apps\aethershell-settings\x64\Release\aethershell-settings.exe"),
+        repo_root.join(r"apps/aethershell-settings/x64/Release/aethershell-settings.exe"),
+        std::path::PathBuf::from(r"apps\aethershell-settings\x64\Release\aethershell-settings.exe"),
+        std::path::PathBuf::from(
+            r"..\apps\aethershell-settings\x64\Release\aethershell-settings.exe",
+        ),
+        std::path::PathBuf::from(
+            r"..\..\apps\aethershell-settings\x64\Release\aethershell-settings.exe",
+        ),
+    ];
+    candidates.into_iter().find(|p| p.exists())
+}
+
 /// Helper to spin up a real named pipe server hosting the actual AppEngine production handler.
 struct LiveEnginePipeTestHarness {
     engine: Arc<AppEngine>,
@@ -507,6 +526,7 @@ async fn test_negative_quarantined_supervisor_rejects_worker_actions() {
 
 #[tokio::test]
 async fn test_runtime_token_rotation_through_production_ipc_handler() {
+    let _env_lock = ENV_MUTEX.lock().await;
     let custom_dir = std::env::temp_dir().join(format!("test_rot_live_{}", uuid::Uuid::new_v4()));
     let _ = std::fs::create_dir_all(&custom_dir);
     let token_file = custom_dir.join("session_live.token");
@@ -585,144 +605,438 @@ async fn test_runtime_token_rotation_through_production_ipc_handler() {
     let _ = std::fs::remove_dir_all(custom_dir);
 }
 
+#[tokio::test]
+async fn test_token_rotation_poisoned_lock_fails_closed_without_disk_divergence() {
+    let _env_lock = ENV_MUTEX.lock().await;
+    let custom_dir = std::env::temp_dir().join(format!("test_rot_poison_{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::create_dir_all(&custom_dir);
+    let token_file = custom_dir.join("session_poison.token");
+    std::env::set_var("AETHERSHELL_SESSION_TOKEN_PATH", &token_file);
+
+    let initial_token = "initial_token_before_poison_99".to_string();
+    let mut guard = aethershell_ipc::SessionTokenGuard::with_token(&initial_token)
+        .expect("create initial guard");
+
+    let engine = Arc::new(AppEngine::with_token(&initial_token));
+
+    // Verify initial consistency
+    assert_eq!(engine.session_token(), initial_token);
+    assert_eq!(
+        aethershell_ipc::SessionToken::load().expect("load initial from disk"),
+        initial_token
+    );
+
+    // 1. Poison runtime session token write lock
+    engine.poison_session_token_lock_for_test();
+
+    // 2. Attempt token rotation on engine
+    let rotate_result = engine.rotate_session_token(&mut guard);
+
+    // 3. Must return an error (lock failure reported)
+    assert!(
+        rotate_result.is_err(),
+        "rotate_session_token must fail and report error when lock is poisoned"
+    );
+    let err_msg = rotate_result.err().unwrap().to_string();
+    assert!(
+        err_msg.contains("Failed to acquire session token write lock")
+            || err_msg.contains("poisoned"),
+        "Error message must indicate lock failure: {}",
+        err_msg
+    );
+
+    // 4. Verify disk and runtime states did NOT silently diverge:
+    // Disk MUST still contain the initial token, NOT a newly generated token!
+    let disk_token =
+        aethershell_ipc::SessionToken::load().expect("load from disk after failed rotation");
+    assert_eq!(
+        disk_token, initial_token,
+        "Disk token must remain unchanged when lock acquisition fails"
+    );
+    assert_eq!(
+        guard.token(),
+        initial_token,
+        "Guard token must remain unchanged when lock acquisition fails"
+    );
+
+    drop(guard);
+    std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
+    let _ = std::fs::remove_dir_all(custom_dir);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_cpp_winui_settings_client_authenticates_privileged_command() {
-    let session_id = current_session_id();
-    let pipe_name = format!(r"\\.\pipe\aethershell-ipc-{}", session_id);
-    let token = format!("cpp_winui_token_{}", uuid::Uuid::new_v4());
+async fn test_rust_cli_settings_client_interoperability() {
+    let _env_lock = ENV_MUTEX.lock().await;
+    let custom_dir = std::env::temp_dir().join(format!("test_cli_iso_{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::create_dir_all(&custom_dir);
+    let token_file = custom_dir.join("cli_session.token");
+    std::env::set_var("AETHERSHELL_SESSION_TOKEN_PATH", &token_file);
 
-    let guard = aethershell_ipc::SessionTokenGuard::with_token_and_session(&token, session_id)
-        .expect("persist session token for C++ client");
+    let pipe_name = format!(
+        r"\\.\pipe\aethershell-rust-cli-test-{}",
+        uuid::Uuid::new_v4()
+    );
+    let token = format!("rust_cli_token_{}", uuid::Uuid::new_v4());
 
-    let harness =
-        LiveEnginePipeTestHarness::start_with_pipe_and_session(&token, &pipe_name, session_id)
-            .await;
+    let guard = aethershell_ipc::SessionTokenGuard::with_token(&token)
+        .expect("persist session token for Rust CLI client");
 
-    // Locate compiled C++/WinUI 3 settings client binary
-    let candidates = [
-        "apps\\aethershell-settings\\x64\\Release\\aethershell-settings.exe",
-        "..\\apps\\aethershell-settings\\x64\\Release\\aethershell-settings.exe",
-        "..\\..\\apps\\aethershell-settings\\x64\\Release\\aethershell-settings.exe",
-    ];
-    let force_cli = std::env::var("FORCE_SETTINGS_CLI_TEST").is_ok();
-    let cpp_bin = if force_cli {
-        None
+    let harness = LiveEnginePipeTestHarness::start_with_pipe_and_session(
+        &token,
+        &pipe_name,
+        current_session_id(),
+    )
+    .await;
+
+    // Locate or build cargo-built aethershell-settings binary
+    let target_dir_bin = std::path::Path::new(env!("CARGO_BIN_EXE_aethershell"))
+        .with_file_name("aethershell-settings.exe");
+    let bin_path = if target_dir_bin.exists() {
+        target_dir_bin
     } else {
-        candidates
-            .iter()
-            .map(std::path::PathBuf::from)
-            .find(|p| p.exists())
+        let mut cmd = std::process::Command::new("cargo");
+        cmd.args([
+            "build",
+            "-p",
+            "aethershell-settings",
+            "--bin",
+            "aethershell-settings",
+        ]);
+        let status = cmd.status().expect("cargo build aethershell-settings");
+        assert!(status.success());
+        target_dir_bin
     };
 
-    if let Some(bin_path) = cpp_bin {
-        // 1. Invoke C++/WinUI Settings client binary to execute privileged 'pause_audio'
-        let output_pause = tokio::process::Command::new(&bin_path)
-            .args(["--test-ipc-command", "pause_audio"])
-            .output()
-            .await
-            .expect("execute C++ settings client pause_audio");
+    // 1. Invoke settings client binary to execute privileged 'pause_audio' over isolated test pipe
+    let output_pause = tokio::process::Command::new(&bin_path)
+        .args(["--pipe", &pipe_name, "--pause-audio"])
+        .output()
+        .await
+        .expect("execute settings client pause_audio");
 
-        assert!(
-            output_pause.status.success(),
-            "C++ Settings client pause_audio must succeed: stderr={}",
-            String::from_utf8_lossy(&output_pause.stderr)
-        );
-        let stdout_pause = String::from_utf8_lossy(&output_pause.stdout);
-        assert!(
-            stdout_pause.contains("IPC_TEST_SUCCESS:"),
-            "C++ Settings client must report IPC success: {}",
-            stdout_pause
-        );
+    assert!(
+        output_pause.status.success(),
+        "Settings client pause_audio must succeed: stderr={}",
+        String::from_utf8_lossy(&output_pause.stderr)
+    );
 
-        // Verify live core state changed
-        {
-            let aud = harness.engine.audio().lock().await.is_paused();
-            assert!(aud, "Audio must be paused by C++ settings client");
-        }
+    // Verify live core state changed
+    {
+        let aud = harness.engine.audio().lock().await.is_paused();
+        assert!(aud, "Audio must be paused by settings client");
+    }
 
-        // 2. Invoke C++/WinUI Settings client binary to execute privileged 'resume_audio'
-        let output_resume = tokio::process::Command::new(&bin_path)
-            .args(["--test-ipc-command", "resume_audio"])
-            .output()
-            .await
-            .expect("execute C++ settings client resume_audio");
+    // 2. Invoke settings client binary to execute privileged 'resume_audio' over isolated test pipe
+    let output_resume = tokio::process::Command::new(&bin_path)
+        .args(["--pipe", &pipe_name, "--resume-audio"])
+        .output()
+        .await
+        .expect("execute settings client resume_audio");
 
-        assert!(
-            output_resume.status.success(),
-            "C++ Settings client resume_audio must succeed: stderr={}",
-            String::from_utf8_lossy(&output_resume.stderr)
-        );
-        let stdout_resume = String::from_utf8_lossy(&output_resume.stdout);
-        assert!(
-            stdout_resume.contains("IPC_TEST_SUCCESS:"),
-            "C++ Settings client must report IPC success: {}",
-            stdout_resume
-        );
+    assert!(
+        output_resume.status.success(),
+        "Settings client resume_audio must succeed: stderr={}",
+        String::from_utf8_lossy(&output_resume.stderr)
+    );
 
-        // Verify live core state changed
-        {
-            let aud = harness.engine.audio().lock().await.is_paused();
-            assert!(!aud, "Audio must be resumed by C++ settings client");
-        }
-    } else {
-        println!("Note: C++/WinUI 3 binary not found. Testing settings client via cargo-built aethershell-settings binary.");
-        let target_dir_bin = std::path::Path::new(env!("CARGO_BIN_EXE_aethershell"))
-            .with_file_name("aethershell-settings.exe");
-        let bin_path = if target_dir_bin.exists() {
-            target_dir_bin
-        } else {
-            let mut cmd = std::process::Command::new("cargo");
-            cmd.args([
-                "build",
-                "-p",
-                "aethershell-settings",
-                "--bin",
-                "aethershell-settings",
-            ]);
-            let status = cmd.status().expect("cargo build aethershell-settings");
-            assert!(status.success());
-            target_dir_bin
-        };
-
-        // 1. Invoke settings client binary to execute privileged 'pause_audio'
-        let output_pause = tokio::process::Command::new(&bin_path)
-            .arg("--pause-audio")
-            .output()
-            .await
-            .expect("execute settings client pause_audio");
-
-        assert!(
-            output_pause.status.success(),
-            "Settings client pause_audio must succeed: stderr={}",
-            String::from_utf8_lossy(&output_pause.stderr)
-        );
-
-        // Verify live core state changed
-        {
-            let aud = harness.engine.audio().lock().await.is_paused();
-            assert!(aud, "Audio must be paused by settings client");
-        }
-
-        // 2. Invoke settings client binary to execute privileged 'resume_audio'
-        let output_resume = tokio::process::Command::new(&bin_path)
-            .arg("--resume-audio")
-            .output()
-            .await
-            .expect("execute settings client resume_audio");
-
-        assert!(
-            output_resume.status.success(),
-            "Settings client resume_audio must succeed: stderr={}",
-            String::from_utf8_lossy(&output_resume.stderr)
-        );
-
-        // Verify live core state changed
-        {
-            let aud = harness.engine.audio().lock().await.is_paused();
-            assert!(!aud, "Audio must be resumed by settings client");
-        }
+    // Verify live core state changed
+    {
+        let aud = harness.engine.audio().lock().await.is_paused();
+        assert!(!aud, "Audio must be resumed by settings client");
     }
 
     harness.stop().await;
     drop(guard);
+    std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
+    let _ = std::fs::remove_dir_all(custom_dir);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_cpp_winui_settings_client_authenticates_privileged_command() {
+    let cpp_bin = find_cpp_settings_binary();
+    if cpp_bin.is_none() {
+        if std::env::var("REQUIRE_CPP_SETTINGS_TEST").is_ok() {
+            panic!("REQUIRED_CPP_BIN_MISSING: C++/WinUI 3 settings client binary not found.");
+        } else {
+            eprintln!("STATUS_CPP_BIN_UNAVAILABLE: Real C++ Settings executable not found; skipping C++ verification without falling back to Rust CLI.");
+            return;
+        }
+    }
+    let bin_path = cpp_bin.unwrap();
+
+    let _env_lock = ENV_MUTEX.lock().await;
+    let custom_dir = std::env::temp_dir().join(format!("test_cpp_auth_{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::create_dir_all(&custom_dir);
+    let token_file = custom_dir.join("cpp_session.token");
+    std::env::set_var("AETHERSHELL_SESSION_TOKEN_PATH", &token_file);
+
+    let pipe_name = format!(
+        r"\\.\pipe\aethershell-cpp-auth-test-{}",
+        uuid::Uuid::new_v4()
+    );
+    let token = format!("cpp_winui_token_{}", uuid::Uuid::new_v4());
+
+    let guard = aethershell_ipc::SessionTokenGuard::with_token(&token)
+        .expect("persist session token for C++ client");
+
+    let harness = LiveEnginePipeTestHarness::start_with_pipe_and_session(
+        &token,
+        &pipe_name,
+        current_session_id(),
+    )
+    .await;
+
+    // 1. Invoke C++/WinUI Settings client binary to execute privileged 'pause_audio' over isolated test pipe
+    let output_pause = tokio::process::Command::new(&bin_path)
+        .args([
+            "--test-ipc-pipe",
+            &pipe_name,
+            "--test-ipc-command",
+            "pause_audio",
+        ])
+        .output()
+        .await
+        .expect("execute C++ settings client pause_audio");
+
+    assert!(
+        output_pause.status.success(),
+        "C++ Settings client pause_audio must succeed: stderr={}",
+        String::from_utf8_lossy(&output_pause.stderr)
+    );
+    let stdout_pause = String::from_utf8_lossy(&output_pause.stdout);
+    assert!(
+        stdout_pause.contains("IPC_TEST_SUCCESS:"),
+        "C++ Settings client must report IPC success: {}",
+        stdout_pause
+    );
+
+    // Verify live core state changed
+    {
+        let aud = harness.engine.audio().lock().await.is_paused();
+        assert!(aud, "Audio must be paused by C++ settings client");
+    }
+
+    // 2. Invoke C++/WinUI Settings client binary to execute privileged 'resume_audio' over isolated test pipe
+    let output_resume = tokio::process::Command::new(&bin_path)
+        .args([
+            "--test-ipc-pipe",
+            &pipe_name,
+            "--test-ipc-command",
+            "resume_audio",
+        ])
+        .output()
+        .await
+        .expect("execute C++ settings client resume_audio");
+
+    assert!(
+        output_resume.status.success(),
+        "C++ Settings client resume_audio must succeed: stderr={}",
+        String::from_utf8_lossy(&output_resume.stderr)
+    );
+    let stdout_resume = String::from_utf8_lossy(&output_resume.stdout);
+    assert!(
+        stdout_resume.contains("IPC_TEST_SUCCESS:"),
+        "C++ Settings client must report IPC success: {}",
+        stdout_resume
+    );
+
+    // Verify live core state changed
+    {
+        let aud = harness.engine.audio().lock().await.is_paused();
+        assert!(!aud, "Audio must be resumed by C++ settings client");
+    }
+
+    harness.stop().await;
+    drop(guard);
+    std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
+    let _ = std::fs::remove_dir_all(custom_dir);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_commands() {
+    let cpp_bin = find_cpp_settings_binary();
+    if cpp_bin.is_none() {
+        if std::env::var("REQUIRE_CPP_SETTINGS_TEST").is_ok() {
+            panic!("REQUIRED_CPP_BIN_MISSING: C++/WinUI 3 settings client binary not found.");
+        } else {
+            eprintln!("STATUS_CPP_BIN_UNAVAILABLE: Real C++ Settings executable not found; skipping negative C++ tests.");
+            return;
+        }
+    }
+    let bin_path = cpp_bin.unwrap();
+
+    let _env_lock = ENV_MUTEX.lock().await;
+
+    // Case 1: Valid connection to real server, but with invalid/stale session token
+    // The server reports { "success": false, "error_message": "Security violation: ..." }
+    // The C++ client must parse JSON, respect success=false, propagate error_message, and exit with code 1.
+    {
+        let custom_dir =
+            std::env::temp_dir().join(format!("test_cpp_rej_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&custom_dir);
+        let token_file = custom_dir.join("cpp_bad_session.token");
+        // Write invalid token into isolated token file
+        std::fs::write(&token_file, "INVALID_STALE_TOKEN_XYZ").unwrap();
+        std::env::set_var("AETHERSHELL_SESSION_TOKEN_PATH", &token_file);
+
+        let pipe_name = format!(
+            r"\\.\pipe\aethershell-cpp-rej-test-{}",
+            uuid::Uuid::new_v4()
+        );
+        let server_valid_token = "LEGIT_SERVER_TOKEN_123";
+
+        let harness = LiveEnginePipeTestHarness::start_with_pipe_and_session(
+            server_valid_token,
+            &pipe_name,
+            current_session_id(),
+        )
+        .await;
+
+        let output = tokio::process::Command::new(&bin_path)
+            .args([
+                "--test-ipc-pipe",
+                &pipe_name,
+                "--test-ipc-command",
+                "pause_audio",
+            ])
+            .output()
+            .await
+            .expect("execute C++ settings client pause_audio with bad token");
+
+        // Process must fail (exit code 1)
+        assert!(
+            !output.status.success(),
+            "C++ client must exit with failure when server rejects command"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("IPC_TEST_ERROR:"),
+            "C++ client must report IPC_TEST_ERROR: {}",
+            stdout
+        );
+        assert!(
+            stdout.contains("valid session capability token required"),
+            "C++ client must propagate server error message: {}",
+            stdout
+        );
+
+        // Core engine state must NOT have changed
+        {
+            let aud = harness.engine.audio().lock().await.is_paused();
+            assert!(!aud, "Audio must NOT be paused when command was rejected");
+        }
+
+        harness.stop().await;
+        std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
+        let _ = std::fs::remove_dir_all(custom_dir);
+    }
+
+    // Case 2: Server returns malformed response (invalid JSON)
+    // C++ client must reject it, output IPC_TEST_ERROR with JSON syntax notice, and exit with code 1.
+    {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        let pipe_name = format!(
+            r"\\.\pipe\aethershell-cpp-malformed-{}",
+            uuid::Uuid::new_v4()
+        );
+        let mut pipe_server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&pipe_name)
+            .expect("create mock malformed pipe server");
+
+        let server_task = tokio::spawn(async move {
+            pipe_server.connect().await.expect("client connect");
+            let mut buf = [0u8; 1024];
+            let _ = pipe_server.read(&mut buf).await;
+
+            // Send malformed response: 4-byte length prefix + non-JSON body
+            let malformed_body = b"NOT_A_VALID_JSON_STRING";
+            let len_prefix = (malformed_body.len() as u32).to_le_bytes();
+            let mut resp = Vec::new();
+            resp.extend_from_slice(&len_prefix);
+            resp.extend_from_slice(malformed_body);
+            let _ = pipe_server.write_all(&resp).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        });
+
+        let output = tokio::process::Command::new(&bin_path)
+            .args([
+                "--test-ipc-pipe",
+                &pipe_name,
+                "--test-ipc-command",
+                "test_cmd",
+            ])
+            .output()
+            .await
+            .expect("execute C++ settings client against malformed server");
+
+        assert!(
+            !output.status.success(),
+            "C++ client must fail on malformed JSON response"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("IPC_TEST_ERROR:Malformed IPC response: invalid JSON syntax."),
+            "C++ client must report malformed JSON error: {}",
+            stdout
+        );
+
+        let _ = server_task.await;
+    }
+
+    // Case 3: Server returns response with missing success field
+    {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        let pipe_name = format!(
+            r"\\.\pipe\aethershell-cpp-nosuccess-{}",
+            uuid::Uuid::new_v4()
+        );
+        let mut pipe_server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&pipe_name)
+            .expect("create mock no-success pipe server");
+
+        let server_task = tokio::spawn(async move {
+            pipe_server.connect().await.expect("client connect");
+            let mut buf = [0u8; 1024];
+            let _ = pipe_server.read(&mut buf).await;
+
+            // Missing success field
+            let body = br#"{"protocol_version":1,"correlation_id":"test","payload":{}}"#;
+            let len_prefix = (body.len() as u32).to_le_bytes();
+            let mut resp = Vec::new();
+            resp.extend_from_slice(&len_prefix);
+            resp.extend_from_slice(body);
+            let _ = pipe_server.write_all(&resp).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        });
+
+        let output = tokio::process::Command::new(&bin_path)
+            .args([
+                "--test-ipc-pipe",
+                &pipe_name,
+                "--test-ipc-command",
+                "test_cmd",
+            ])
+            .output()
+            .await
+            .expect("execute C++ settings client against no-success server");
+
+        assert!(
+            !output.status.success(),
+            "C++ client must fail on missing success field"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("IPC_TEST_ERROR:Malformed IPC response: missing success field."),
+            "C++ client must report missing success field: {}",
+            stdout
+        );
+
+        let _ = server_task.await;
+    }
 }

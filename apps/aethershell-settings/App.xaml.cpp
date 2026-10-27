@@ -40,30 +40,48 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv)
     {
+        std::wstring testPipe;
+        std::string testCmd;
+        std::string testPayload = "{}";
+        bool isTest = false;
+
         for (int i = 1; i < argc; ++i)
         {
-            if (wcscmp(argv[i], L"--test-ipc-command") == 0 && i + 1 < argc)
+            if (wcscmp(argv[i], L"--test-ipc-pipe") == 0 && i + 1 < argc)
             {
-                std::string cmd = winrt::to_string(argv[i + 1]);
-                std::string payload = (i + 2 < argc && argv[i + 2][0] != L'-')
-                    ? winrt::to_string(argv[i + 2])
-                    : "{}";
-                auto res = ::AetherShell::Settings::SettingsIpcClient::SendCommand(cmd, payload);
-
-                // Write directly to standard output handle for test capture
-                HANDLE hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
-                std::string out = res.success
-                    ? ("IPC_TEST_SUCCESS:" + res.payload + "\n")
-                    : ("IPC_TEST_ERROR:" + res.error + "\n");
-                DWORD written = 0;
-                if (hStdout != INVALID_HANDLE_VALUE && hStdout != nullptr)
-                {
-                    WriteFile(hStdout, out.data(), static_cast<DWORD>(out.size()), &written, nullptr);
-                }
-
-                LocalFree(argv);
-                return res.success ? 0 : 1;
+                testPipe = argv[i + 1];
+                ++i;
             }
+            else if (wcscmp(argv[i], L"--test-ipc-command") == 0 && i + 1 < argc)
+            {
+                isTest = true;
+                testCmd = winrt::to_string(argv[i + 1]);
+                ++i;
+                if (i + 1 < argc && argv[i + 1][0] != L'-')
+                {
+                    testPayload = winrt::to_string(argv[i + 1]);
+                    ++i;
+                }
+            }
+        }
+
+        if (isTest)
+        {
+            auto res = ::AetherShell::Settings::SettingsIpcClient::SendCommand(testCmd, testPayload, testPipe);
+
+            // Write directly to standard output handle for test capture
+            HANDLE hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
+            std::string out = res.success
+                ? ("IPC_TEST_SUCCESS:" + res.payload + "\n")
+                : ("IPC_TEST_ERROR:" + res.error + "\n");
+            DWORD written = 0;
+            if (hStdout != INVALID_HANDLE_VALUE && hStdout != nullptr)
+            {
+                WriteFile(hStdout, out.data(), static_cast<DWORD>(out.size()), &written, nullptr);
+            }
+
+            LocalFree(argv);
+            return res.success ? 0 : 1;
         }
         LocalFree(argv);
     }

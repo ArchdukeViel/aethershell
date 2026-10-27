@@ -72,12 +72,25 @@ impl AppEngine {
     }
 
     /// Rotates the authoritative runtime session token and updates the persistent token file.
+    ///
+    /// Runtime lock is acquired before disk persistence so lock poisoning or acquisition
+    /// failure is reported immediately and prevents disk and runtime token divergence.
     pub fn rotate_session_token(&self, guard: &mut SessionTokenGuard) -> io::Result<String> {
+        let mut writer = self.session_token.write().map_err(|e| {
+            io::Error::other(format!("Failed to acquire session token write lock: {}", e))
+        })?;
         let new_token = guard.rotate()?;
-        if let Ok(mut writer) = self.session_token.write() {
-            *writer = new_token.clone();
-        }
+        *writer = new_token.clone();
         Ok(new_token)
+    }
+
+    #[doc(hidden)]
+    pub fn poison_session_token_lock_for_test(&self) {
+        let lock = Arc::clone(&self.session_token);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = lock.write().unwrap();
+            panic!("poisoning session token lock for test");
+        }));
     }
 
     #[allow(dead_code)]
