@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU32, Ordering};
 use windows::core::w;
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, FindWindowW};
+use windows::Win32::UI::WindowsAndMessaging::{
+    FindWindowExW, FindWindowW, IsWindow, RegisterWindowMessageW,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DesktopHierarchyProbe {
@@ -9,6 +12,54 @@ pub struct DesktopHierarchyProbe {
     pub shelldll_defview_hwnd: Option<usize>,
     pub syslistview32_hwnd: Option<usize>,
     pub worker_w_hwnd: Option<usize>,
+}
+
+impl DesktopHierarchyProbe {
+    /// Non-invasively probes the Windows desktop shell hierarchy.
+    pub fn probe() -> Self {
+        probe_desktop_hierarchy()
+    }
+
+    /// Returns whether the discovered hierarchy is viable for passive widget layering.
+    pub fn is_layering_viable(&self) -> bool {
+        self.shelldll_defview_hwnd.is_some()
+    }
+
+    /// Verifies whether any previously recorded shell window handle has become stale or invalid.
+    pub fn is_stale(&self) -> bool {
+        unsafe {
+            if let Some(h) = self.progman_hwnd {
+                if !IsWindow(HWND(h as *mut _)).as_bool() {
+                    return true;
+                }
+            }
+            if let Some(h) = self.shelldll_defview_hwnd {
+                if !IsWindow(HWND(h as *mut _)).as_bool() {
+                    return true;
+                }
+            }
+            if let Some(h) = self.worker_w_hwnd {
+                if !IsWindow(HWND(h as *mut _)).as_bool() {
+                    return true;
+                }
+            }
+            false
+        }
+    }
+}
+
+/// Registers or retrieves the dynamic Windows message `TaskbarCreated` broadcast when Explorer starts or restarts.
+pub fn register_taskbar_created_message() -> u32 {
+    static CACHED_MSG: AtomicU32 = AtomicU32::new(0);
+    let cached = CACHED_MSG.load(Ordering::Relaxed);
+    if cached != 0 {
+        return cached;
+    }
+    unsafe {
+        let msg = RegisterWindowMessageW(w!("TaskbarCreated"));
+        CACHED_MSG.store(msg, Ordering::Relaxed);
+        msg
+    }
 }
 
 /// Discovers the Windows desktop shell hierarchy non-invasively.
@@ -88,8 +139,43 @@ mod tests {
 
     #[test]
     fn test_desktop_probing_safe_execution() {
-        let probe = probe_desktop_hierarchy();
+        let probe = DesktopHierarchyProbe::probe();
         println!("Desktop probe: {:?}", probe);
-        // Ensure no crash or undefined behavior occurs
+        // Method matches standalone function
+        assert_eq!(probe, probe_desktop_hierarchy());
+    }
+
+    #[test]
+    fn test_desktop_probe_stale_handle_detection() {
+        // A probe with non-existent fake HWNDs should be detected as stale
+        let stale_probe = DesktopHierarchyProbe {
+            progman_hwnd: Some(0xDEADBEEF),
+            shelldll_defview_hwnd: None,
+            syslistview32_hwnd: None,
+            worker_w_hwnd: None,
+        };
+        assert!(stale_probe.is_stale());
+
+        // An empty probe is not stale (no recorded handles to be invalid)
+        let empty_probe = DesktopHierarchyProbe {
+            progman_hwnd: None,
+            shelldll_defview_hwnd: None,
+            syslistview32_hwnd: None,
+            worker_w_hwnd: None,
+        };
+        assert!(!empty_probe.is_stale());
+    }
+
+    #[test]
+    fn test_taskbar_created_message_registration() {
+        let msg = register_taskbar_created_message();
+        // Dynamic window messages registered via RegisterWindowMessageW are in range 0xC000..=0xFFFF
+        assert!(
+            msg >= 0xC000,
+            "TaskbarCreated message ID must be in dynamic message range >= 0xC000, got: 0x{:04X}",
+            msg
+        );
+        // Subsequent calls return identical cached value
+        assert_eq!(register_taskbar_created_message(), msg);
     }
 }

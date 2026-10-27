@@ -218,6 +218,37 @@ impl AppEngine {
                 }
             });
 
+            // Wire Explorer restart recovery across all desktop overlay windows
+            let win_mgr_restart = Arc::clone(&self.desktop_windows);
+            let renderer_restart = Arc::clone(&self.desktop_renderer);
+            win_mgr.set_on_explorer_restart(move || {
+                info!("Explorer restart notification received: re-probing desktop hierarchy and re-synchronizing surfaces");
+                if let Ok(mut mgr) = win_mgr_restart.try_lock() {
+                    let probe = mgr.handle_explorer_restart();
+                    info!(
+                        "Desktop hierarchy re-probed after Explorer restart (DefView: {:?}, WorkerW: {:?})",
+                        probe.shelldll_defview_hwnd, probe.worker_w_hwnd
+                    );
+                    if let Some(primary) = mgr.primary_window_mut() {
+                        let width = primary.bounds[2].max(100) as u32;
+                        let height = primary.bounds[3].max(100) as u32;
+                        if let Ok(mut r_lock) = renderer_restart.try_lock() {
+                            match D2D1CanvasRenderer::new_for_hwnd(primary.hwnd, width, height) {
+                                Ok(mut new_renderer) => {
+                                    let scene = compile_first_run_scene(width as f32, height as f32);
+                                    let _ = new_renderer.render_scene(&scene);
+                                    *r_lock = Some(new_renderer);
+                                    info!("Direct2D canvas renderer re-synchronized to HWND {:?}", primary.hwnd.0);
+                                }
+                                Err(e) => {
+                                    warn!("Direct2D re-synchronization warning after Explorer restart: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
             // Direct2D / DirectWrite canvas rendering pipeline initialization
             if let Some(primary) = win_mgr.primary_window_mut() {
                 let width = primary.bounds[2].max(100) as u32;

@@ -4,4 +4,4 @@ pub mod engine;
 pub mod tray;
 
 pub use engine::{compile_first_run_scene, AppEngine};
-pub use tray::SystemTray;
+pub use tray::{taskbar_created_msg, SystemTray};
