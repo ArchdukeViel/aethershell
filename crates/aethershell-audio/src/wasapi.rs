@@ -504,101 +504,107 @@ fn run_wasapi_capture_loop(
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
-        // Instantiate MMDeviceEnumerator
-        let enumerator: Result<IMMDeviceEnumerator, _> =
-            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL);
+        {
+            // Instantiate MMDeviceEnumerator within scoped block
+            let enumerator: Result<IMMDeviceEnumerator, _> =
+                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL);
 
-        // Register IMMNotificationClient callback for dynamic default device migration
-        let notification_client = AudioEndpointNotificationClient::new(
-            Arc::clone(&migration_requested),
-            Arc::clone(&migration_counter),
-        );
-        let notification_interface: IMMNotificationClient = notification_client.into();
+            // Register IMMNotificationClient callback for dynamic default device migration
+            let notification_client = AudioEndpointNotificationClient::new(
+                Arc::clone(&migration_requested),
+                Arc::clone(&migration_counter),
+            );
+            let notification_interface: IMMNotificationClient = notification_client.into();
 
-        let callback_registered = if let Ok(ref enum_ref) = enumerator {
-            match enum_ref.RegisterEndpointNotificationCallback(&notification_interface) {
-                Ok(_) => {
-                    info!("IMMNotificationClient registered for audio device migration callbacks.");
-                    true
+            let callback_registered = if let Ok(ref enum_ref) = enumerator {
+                match enum_ref.RegisterEndpointNotificationCallback(&notification_interface) {
+                    Ok(_) => {
+                        info!("IMMNotificationClient registered for audio device migration callbacks.");
+                        true
+                    }
+                    Err(e) => {
+                        warn!("Failed to register IMMNotificationClient callback: {}", e);
+                        false
+                    }
                 }
-                Err(e) => {
-                    warn!("Failed to register IMMNotificationClient callback: {}", e);
-                    false
-                }
-            }
-        } else {
-            false
-        };
-
-        while is_running.load(Ordering::Relaxed) {
-            let stream_init_res = if let Ok(ref enum_ref) = enumerator {
-                init_wasapi_stream_with_enumerator(enum_ref)
             } else {
-                Err("No MMDeviceEnumerator available".to_string())
+                false
             };
 
-            match stream_init_res {
-                Ok(stream) => {
-                    let mode = FpsMode::from_u8(fps_mode_atomic.load(Ordering::Relaxed));
-                    info!(
-                        "WASAPI shared-loopback audio capture stream active (channels: {}, bits: {}, float: {}, target FPS: {})",
-                        stream.channels,
-                        stream.bits_per_sample,
-                        stream.is_float,
-                        mode.target_fps()
-                    );
+            while is_running.load(Ordering::Relaxed) {
+                let stream_init_res = if let Ok(ref enum_ref) = enumerator {
+                    init_wasapi_stream_with_enumerator(enum_ref)
+                } else {
+                    Err("No MMDeviceEnumerator available".to_string())
+                };
 
-                    let res = run_active_stream(
-                        &is_running,
-                        &is_paused,
-                        &migration_requested,
-                        &fps_mode_atomic,
-                        &processor,
-                        &stream,
-                    );
+                match stream_init_res {
+                    Ok(stream) => {
+                        let mode = FpsMode::from_u8(fps_mode_atomic.load(Ordering::Relaxed));
+                        info!(
+                            "WASAPI shared-loopback audio capture stream active (channels: {}, bits: {}, float: {}, target FPS: {})",
+                            stream.channels,
+                            stream.bits_per_sample,
+                            stream.is_float,
+                            mode.target_fps()
+                        );
 
-                    if let Err(e) = res {
-                        if e == "endpoint_migrated" {
-                            info!("Audio endpoint migrated. Immediately refreshing default endpoint...");
-                            std::thread::sleep(Duration::from_millis(50));
-                        } else {
-                            warn!(
-                                "WASAPI stream error or device disconnected: {}. Re-enumerating default endpoint...",
-                                e
-                            );
-                            std::thread::sleep(Duration::from_millis(200));
+                        let res = run_active_stream(
+                            &is_running,
+                            &is_paused,
+                            &migration_requested,
+                            &fps_mode_atomic,
+                            &processor,
+                            &stream,
+                        );
+
+                        if let Err(e) = res {
+                            if e == "endpoint_migrated" {
+                                info!("Audio endpoint migrated. Immediately refreshing default endpoint...");
+                                std::thread::sleep(Duration::from_millis(50));
+                            } else {
+                                warn!(
+                                    "WASAPI stream error or device disconnected: {}. Re-enumerating default endpoint...",
+                                    e
+                                );
+                                std::thread::sleep(Duration::from_millis(200));
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    info!(
-                        "WASAPI: Default audio endpoint not active ({}). Operating in fallback mode.",
-                        e
-                    );
-                    for _ in 0..10 {
-                        if !is_running.load(Ordering::Relaxed) {
-                            break;
-                        }
-                        if migration_requested.swap(false, Ordering::SeqCst) {
-                            info!("Audio endpoint migration signaled during fallback mode; attempting immediate re-enumeration.");
-                            break;
-                        }
-                        std::thread::sleep(Duration::from_millis(100));
-                        if let Ok(mut proc) = processor.lock() {
-                            proc.process_samples(&[]);
+                    Err(e) => {
+                        info!(
+                            "WASAPI: Default audio endpoint not active ({}). Operating in fallback mode.",
+                            e
+                        );
+                        for _ in 0..10 {
+                            if !is_running.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            if migration_requested.swap(false, Ordering::SeqCst) {
+                                info!("Audio endpoint migration signaled during fallback mode; attempting immediate re-enumeration.");
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(100));
+                            if let Ok(mut proc) = processor.lock() {
+                                proc.process_samples(&[]);
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Clean unregistration of notification callback
-        if callback_registered {
-            if let Ok(ref enum_ref) = enumerator {
-                let _ = enum_ref.UnregisterEndpointNotificationCallback(&notification_interface);
-                info!("IMMNotificationClient unregistered cleanly.");
+            // Clean unregistration of notification callback before dropping COM interfaces
+            if callback_registered {
+                if let Ok(ref enum_ref) = enumerator {
+                    let _ =
+                        enum_ref.UnregisterEndpointNotificationCallback(&notification_interface);
+                    info!("IMMNotificationClient unregistered cleanly.");
+                }
             }
-        }
+
+            drop(notification_interface);
+            drop(enumerator);
+        } // All COM objects safely dropped before CoUninitialize
 
         CoUninitialize();
         info!("WASAPI shared-loopback audio capture cleanly shut down.");
@@ -713,35 +719,41 @@ mod tests {
 
     #[test]
     fn test_notification_client_com_interface() {
-        let migration_requested = Arc::new(AtomicBool::new(false));
-        let migration_counter = Arc::new(AtomicUsize::new(0));
-
-        let client: IMMNotificationClient = AudioEndpointNotificationClient::new(
-            Arc::clone(&migration_requested),
-            Arc::clone(&migration_counter),
-        )
-        .into();
-
-        let dummy_id = windows::core::w!("test_device_id");
-
         unsafe {
-            // 1. Device state changed to active (should NOT trigger migration)
-            let _ = client.OnDeviceStateChanged(dummy_id, DEVICE_STATE_ACTIVE);
-            assert!(!migration_requested.load(Ordering::Relaxed));
-            assert_eq!(migration_counter.load(Ordering::Relaxed), 0);
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
-            // 2. Device state changed to unplugged (SHOULD trigger migration)
-            let _ = client.OnDeviceStateChanged(dummy_id, DEVICE_STATE_UNPLUGGED);
-            assert!(migration_requested.load(Ordering::Relaxed));
-            assert_eq!(migration_counter.load(Ordering::Relaxed), 1);
+            let migration_requested = Arc::new(AtomicBool::new(false));
+            let migration_counter = Arc::new(AtomicUsize::new(0));
 
-            // Reset
-            migration_requested.store(false, Ordering::Relaxed);
+            {
+                let client: IMMNotificationClient = AudioEndpointNotificationClient::new(
+                    Arc::clone(&migration_requested),
+                    Arc::clone(&migration_counter),
+                )
+                .into();
 
-            // 3. Default render device changed (SHOULD trigger migration)
-            let _ = client.OnDefaultDeviceChanged(eRender, eConsole, dummy_id);
-            assert!(migration_requested.load(Ordering::Relaxed));
-            assert_eq!(migration_counter.load(Ordering::Relaxed), 2);
+                let dummy_id = windows::core::w!("test_device_id");
+
+                // 1. Device state changed to active (should NOT trigger migration)
+                let _ = client.OnDeviceStateChanged(dummy_id, DEVICE_STATE_ACTIVE);
+                assert!(!migration_requested.load(Ordering::Relaxed));
+                assert_eq!(migration_counter.load(Ordering::Relaxed), 0);
+
+                // 2. Device state changed to unplugged (SHOULD trigger migration)
+                let _ = client.OnDeviceStateChanged(dummy_id, DEVICE_STATE_UNPLUGGED);
+                assert!(migration_requested.load(Ordering::Relaxed));
+                assert_eq!(migration_counter.load(Ordering::Relaxed), 1);
+
+                // Reset
+                migration_requested.store(false, Ordering::Relaxed);
+
+                // 3. Default render device changed (SHOULD trigger migration)
+                let _ = client.OnDefaultDeviceChanged(eRender, eConsole, dummy_id);
+                assert!(migration_requested.load(Ordering::Relaxed));
+                assert_eq!(migration_counter.load(Ordering::Relaxed), 2);
+            }
+
+            CoUninitialize();
         }
     }
 
