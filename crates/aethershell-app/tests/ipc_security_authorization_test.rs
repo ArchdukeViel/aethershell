@@ -962,6 +962,13 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::windows::named_pipe::ServerOptions;
 
+        let (_iso_guard, token_file) = TestIsolationGuard::new(
+            "test_cpp_malformed",
+            "AETHERSHELL_SESSION_TOKEN_PATH",
+            "mock_token_case2.token",
+        );
+        std::fs::write(&token_file, "MOCK_TOKEN_CASE2").unwrap();
+
         let pipe_name = format!(
             r"\\.\pipe\aethershell-cpp-malformed-{}",
             uuid::Uuid::new_v4()
@@ -990,6 +997,8 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
             .args([
                 "--test-ipc-pipe",
                 &pipe_name,
+                "--test-ipc-token",
+                token_file.to_str().unwrap(),
                 "--test-ipc-command",
                 "test_cmd",
             ])
@@ -1015,6 +1024,13 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
     {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::windows::named_pipe::ServerOptions;
+
+        let (_iso_guard, token_file) = TestIsolationGuard::new(
+            "test_cpp_nosuccess",
+            "AETHERSHELL_SESSION_TOKEN_PATH",
+            "mock_token_case3.token",
+        );
+        std::fs::write(&token_file, "MOCK_TOKEN_CASE3").unwrap();
 
         let pipe_name = format!(
             r"\\.\pipe\aethershell-cpp-nosuccess-{}",
@@ -1044,6 +1060,8 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
             .args([
                 "--test-ipc-pipe",
                 &pipe_name,
+                "--test-ipc-token",
+                token_file.to_str().unwrap(),
                 "--test-ipc-command",
                 "test_cmd",
             ])
@@ -1069,6 +1087,13 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
     {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::windows::named_pipe::ServerOptions;
+
+        let (_iso_guard, token_file) = TestIsolationGuard::new(
+            "test_cpp_badproto",
+            "AETHERSHELL_SESSION_TOKEN_PATH",
+            "mock_token_case4.token",
+        );
+        std::fs::write(&token_file, "MOCK_TOKEN_CASE4").unwrap();
 
         let pipe_name = format!(
             r"\\.\pipe\aethershell-cpp-badproto-{}",
@@ -1099,6 +1124,8 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
             .args([
                 "--test-ipc-pipe",
                 &pipe_name,
+                "--test-ipc-token",
+                token_file.to_str().unwrap(),
                 "--test-ipc-command",
                 "test_cmd",
             ])
@@ -1125,6 +1152,13 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::windows::named_pipe::ServerOptions;
 
+        let (_iso_guard, token_file) = TestIsolationGuard::new(
+            "test_cpp_oversized",
+            "AETHERSHELL_SESSION_TOKEN_PATH",
+            "mock_token_case5.token",
+        );
+        std::fs::write(&token_file, "MOCK_TOKEN_CASE5").unwrap();
+
         let pipe_name = format!(
             r"\\.\pipe\aethershell-cpp-oversized-{}",
             uuid::Uuid::new_v4()
@@ -1149,6 +1183,8 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
             .args([
                 "--test-ipc-pipe",
                 &pipe_name,
+                "--test-ipc-token",
+                token_file.to_str().unwrap(),
                 "--test-ipc-command",
                 "test_cmd",
             ])
@@ -1175,6 +1211,13 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::windows::named_pipe::ServerOptions;
 
+        let (_iso_guard, token_file) = TestIsolationGuard::new(
+            "test_cpp_zerolen",
+            "AETHERSHELL_SESSION_TOKEN_PATH",
+            "mock_token_case6.token",
+        );
+        std::fs::write(&token_file, "MOCK_TOKEN_CASE6").unwrap();
+
         let pipe_name = format!(r"\\.\pipe\aethershell-cpp-zerolen-{}", uuid::Uuid::new_v4());
         let mut pipe_server = ServerOptions::new()
             .first_pipe_instance(true)
@@ -1196,6 +1239,8 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
             .args([
                 "--test-ipc-pipe",
                 &pipe_name,
+                "--test-ipc-token",
+                token_file.to_str().unwrap(),
                 "--test-ipc-command",
                 "test_cmd",
             ])
@@ -1215,5 +1260,105 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
         );
 
         let _ = server_task.await;
+    }
+
+    // Case 7: Test mode without explicit --test-ipc-token fails closed before connecting
+    {
+        let pipe_name = format!(
+            r"\\.\pipe\aethershell-cpp-missing-token-{}",
+            uuid::Uuid::new_v4()
+        );
+        let output = tokio::process::Command::new(&bin_path)
+            .args([
+                "--test-ipc-pipe",
+                &pipe_name,
+                "--test-ipc-command",
+                "test_cmd",
+            ])
+            .output()
+            .await
+            .expect("execute C++ settings client with missing test token");
+
+        assert!(
+            !output.status.success(),
+            "C++ client must fail when --test-ipc-token is missing in test mode"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains(
+                "IPC_TEST_ERROR:Test mode requires explicit --test-ipc-pipe and --test-ipc-token."
+            ),
+            "C++ client must report missing token requirement: {}",
+            stdout
+        );
+    }
+
+    // Case 8: Test mode without explicit --test-ipc-pipe fails closed before connecting
+    {
+        let (_iso_guard, token_file) = TestIsolationGuard::new(
+            "test_cpp_nopipe",
+            "AETHERSHELL_SESSION_TOKEN_PATH",
+            "mock_token_case8.token",
+        );
+        std::fs::write(&token_file, "MOCK_TOKEN_CASE8").unwrap();
+
+        let output = tokio::process::Command::new(&bin_path)
+            .args([
+                "--test-ipc-token",
+                token_file.to_str().unwrap(),
+                "--test-ipc-command",
+                "test_cmd",
+            ])
+            .output()
+            .await
+            .expect("execute C++ settings client with missing test pipe");
+
+        assert!(
+            !output.status.success(),
+            "C++ client must fail when --test-ipc-pipe is missing in test mode"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains(
+                "IPC_TEST_ERROR:Test mode requires explicit --test-ipc-pipe and --test-ipc-token."
+            ),
+            "C++ client must report missing pipe requirement: {}",
+            stdout
+        );
+    }
+
+    // Case 9: Explicit test token path is unreadable / non-existent -> fails closed without fallback
+    {
+        let pipe_name = format!(
+            r"\\.\pipe\aethershell-cpp-unreadable-token-{}",
+            uuid::Uuid::new_v4()
+        );
+        let non_existent_token_file = "C:\\AetherShell_NonExistent_Test_Token_File_99999.token";
+
+        let output = tokio::process::Command::new(&bin_path)
+            .args([
+                "--test-ipc-pipe",
+                &pipe_name,
+                "--test-ipc-token",
+                non_existent_token_file,
+                "--test-ipc-command",
+                "test_cmd",
+            ])
+            .output()
+            .await
+            .expect("execute C++ settings client with unreadable test token");
+
+        assert!(
+            !output.status.success(),
+            "C++ client must fail when explicit test token is unreadable"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains(
+                "IPC_TEST_ERROR:Explicit test token override could not be read or is empty."
+            ),
+            "C++ client must report explicit unreadable token error without fallback: {}",
+            stdout
+        );
     }
 }

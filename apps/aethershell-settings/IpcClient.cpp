@@ -38,6 +38,8 @@ namespace AetherShell::Settings
                     if (!tok.empty()) return tok;
                 }
             }
+            // Fail-closed: Never fall back to ambient environment or production paths when override is specified
+            return "";
         }
 
         // 2. Check override environment variable AETHERSHELL_SESSION_TOKEN_PATH
@@ -101,6 +103,69 @@ namespace AetherShell::Settings
         const std::wstring& tokenPathOverride)
     {
         IpcResult result;
+
+        // When test injection is used, pipe and token override must be provided together and cannot fall back
+        bool isTestMode = !pipeOverride.empty() || !tokenPathOverride.empty();
+        if (isTestMode)
+        {
+            if (pipeOverride.empty() || tokenPathOverride.empty())
+            {
+                result.transportSuccess = false;
+                result.success = false;
+                result.error = "Test mode requires explicit test pipe and test token together.";
+                return result;
+            }
+        }
+
+        std::string effectivePayload = jsonPayload;
+        if (isTestMode)
+        {
+            std::string token = LoadSessionToken(tokenPathOverride);
+            if (token.empty())
+            {
+                result.transportSuccess = false;
+                result.success = false;
+                result.error = "Explicit test token override could not be read or is empty.";
+                return result;
+            }
+
+            if (effectivePayload.find("session_token") == std::string::npos)
+            {
+                if (effectivePayload.empty() || effectivePayload == "{}")
+                {
+                    effectivePayload = "{\"session_token\":\"" + token + "\"}";
+                }
+                else
+                {
+                    size_t openBrace = effectivePayload.find('{');
+                    if (openBrace != std::string::npos)
+                    {
+                        effectivePayload.insert(openBrace + 1, "\"session_token\":\"" + token + "\",");
+                    }
+                }
+            }
+        }
+        else
+        {
+            // Ordinary production mode: resolve token from ambient/production path
+            std::string token = LoadSessionToken(L"");
+            if (!token.empty() && effectivePayload.find("session_token") == std::string::npos)
+            {
+                if (effectivePayload.empty() || effectivePayload == "{}")
+                {
+                    effectivePayload = "{\"session_token\":\"" + token + "\"}";
+                }
+                else
+                {
+                    size_t openBrace = effectivePayload.find('{');
+                    if (openBrace != std::string::npos)
+                    {
+                        effectivePayload.insert(openBrace + 1, "\"session_token\":\"" + token + "\",");
+                    }
+                }
+            }
+        }
+
         std::wstring pipePath = ResolvePipeName(pipeOverride);
 
         HANDLE hPipe = CreateFileW(
@@ -119,25 +184,6 @@ namespace AetherShell::Settings
             result.success = false;
             result.error = "AetherShell Core is not running or named pipe inaccessible.";
             return result;
-        }
-
-        // Attach session capability token to payload for privileged management commands
-        std::string effectivePayload = jsonPayload;
-        std::string token = LoadSessionToken(tokenPathOverride);
-        if (!token.empty() && effectivePayload.find("session_token") == std::string::npos)
-        {
-            if (effectivePayload.empty() || effectivePayload == "{}")
-            {
-                effectivePayload = "{\"session_token\":\"" + token + "\"}";
-            }
-            else
-            {
-                size_t openBrace = effectivePayload.find('{');
-                if (openBrace != std::string::npos)
-                {
-                    effectivePayload.insert(openBrace + 1, "\"session_token\":\"" + token + "\",");
-                }
-            }
         }
 
         // Build framed IPC JSON message: {"protocol_version":1,"message_id":"...","command":"...","payload":...}

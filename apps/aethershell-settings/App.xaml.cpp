@@ -73,11 +73,23 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
         if (isTest)
         {
+            HANDLE hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
+            if (testPipe.empty() || testTokenPath.empty())
+            {
+                std::string errOut = "IPC_TEST_ERROR:Test mode requires explicit --test-ipc-pipe and --test-ipc-token.\n";
+                DWORD written = 0;
+                if (hStdout != INVALID_HANDLE_VALUE && hStdout != nullptr)
+                {
+                    WriteFile(hStdout, errOut.data(), static_cast<DWORD>(errOut.size()), &written, nullptr);
+                }
+                LocalFree(argv);
+                return 1;
+            }
+
             auto res = ::AetherShell::Settings::SettingsIpcClient::SendCommand(
                 testCmd, testPayload, testPipe, testTokenPath);
 
             // Write directly to standard output handle for test capture
-            HANDLE hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
             std::string out = res.success
                 ? ("IPC_TEST_SUCCESS:" + res.payload + "\n")
                 : ("IPC_TEST_ERROR:" + res.error + "\n");
