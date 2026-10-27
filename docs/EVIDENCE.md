@@ -32,7 +32,7 @@ This document maintains verifiable test and validation records. Every entry is t
 
 ---
 
-## Post-Campaign Independent Audit Reconciliation Notice (2026-10-27)
+## Post-Campaign Independent Audit Reconciliation Notice (2026-10-27 / 2026-10-28)
 
 > **POST-CAMPAIGN INDEPENDENT AUDIT CORRECTIONS NOTICE**
 >
@@ -40,7 +40,9 @@ This document maintains verifiable test and validation records. Every entry is t
 > 1. **EVD-024 Microbenchmark Reclassification**: The benchmark harness in `crates/aethershell-diagnostics/src/benchmark.rs` measured component-level synthetic operations (in-process 512-sample PCM synthesis, FFT spectrum analysis, AST layout compilation) within `GetCurrentProcess()`. It did not measure real multi-process resource consumption across Rust Core, C++/WinUI 3 Settings, and supervised Lua worker together; it queried `PrivateUsage` (private commit bytes) rather than `WorkingSetSize` (resident physical RAM); it omitted GPU utilization instrumentation; and it ran a 2-second smoke test instead of the 60-second 5-repetition procedure required by PRD Section 14. EVD-024 is reclassified as component-level microbenchmark evidence (`partial`), and unsupported claims of whole-application 0.0% CPU and 0.77 MB RAM are superseded.
 > 2. **Production Lua Worker On-Demand Lifecycle (PR #42 / EVD-025)**: Production profile activation previously lacked on-demand child worker launch, pre-execution SHA-256 digest trust verification, and Direct2D layout integration. PR #42 implemented authentic on-demand child worker spawning under Windows Job Object memory quotas, Explicit Trust verification, and dynamic scene graph rendering, verified with 5 subprocess integration tests.
 > 3. **Genuine Multi-Process Runtime Benchmark Tooling (PR #43 / EVD-026)**: Conforming strictly to PRD Section 14, PR #43 implemented `crates/aethershell-diagnostics/src/runtime_benchmark.rs` measuring Core, Settings, and Lua processes by PID, capturing resident physical RAM (`WorkingSetSize`) and private commit (`PrivateUsage`) independently, normalizing CPU across logical processor cores, reporting GPU status honestly (`GpuMetricStatus::Unavailable` when instrumentation is absent), and evaluating all 8 ratified PRD Section 14.2 workload profiles across 60-second 5-repetition runs.
-> 4. **Automated Test Accounting Reconciliation**: Reconciled workspace test records: the workspace contains **221 passing Rust unit and integration tests** across 12 crates (resolving historical documentation citing 108 integration tests / 207 baseline tests) plus 2 C++ WinUI 3 qualification tests, all executing with 0 failures, 0 warnings, and strict host isolation (0 items in `%LOCALAPPDATA%\AetherShell`).
+> 4. **Hardened Lua Digest-Trust Authorization & Mandatory Consent (PR #45 / EVD-027)**: Remediated Lua trust authorization to require strict SHA-256 digest equality against the approved record, canonical path identity without digest substitution, rejection of modified content under unchanged filenames, directory path collision isolation, and enforcement of mandatory user consent per PRD Section 13.2 / Q32:B.
+> 5. **Runtime Benchmark Fail-Closed Integrity & PRD 14.2 Budgets (PR #46 / EVD-028)**: Enforced validated process identity and liveness, rejected self-attachment fail-closed, mandated required process roles (Settings for `SettingsOpen`, Worker for `LuaWorkerActive`), isolated measurement overhead, aligned concurrent multi-process timestamp samples prior to percentile calculation, classified Minimal Idle as the sole ratified target while designating other profiles provisional diagnostic proposals per PRD Section 14.2, and added `MonitorOffSessionLocked` profile coverage.
+> 6. **Automated Test Accounting Reconciliation**: Reconciled workspace test records: the workspace contains **238 passing Rust unit and integration tests** across 12 crates (resolving historical documentation citing 108 integration tests / 207 baseline tests / 221 intermediate tests) plus 2 C++ WinUI 3 qualification tests (240 tests total), all executing with 0 failures, 0 warnings, and strict host isolation (0 items in `%LOCALAPPDATA%\AetherShell`).
 
 ---
 
@@ -960,6 +962,105 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Status**: `passed`
 - **Reviewer / Authority**: Independent Gate Audit Reviewer / Delegated Autonomous Authority
 - **Notes & Limitations**: Full 60-second 5-repetition empirical runs across physical GPU driver tiers in clean disposable VMs remain an outstanding operational requirement for Gate G13.
+
+---
+
+### EVD-027: Hardened Lua Digest-Trust Authorization, Canonical Path Identity & Mandatory Consent (PR #45)
+- **Requirement / Gate**: Gate G10 (Lua Worker Reliability and Trust), PRD Section 13.2 (Explicit Consent / Trust Model), Owner Decisions Q32:B & PRD 13.2
+- **Candidate Commit**: `2bb99ba64e43bece78d8a5c2d3ca60252875bfa6` (PR #45 Head)
+- **Main Merge Commit**: `19db018900ab1fc18dcc55c3bfe4699ba41d9df7` (Merge pull request #45)
+- **Date & Environment**: 2026-10-27 / 2026-10-28, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
+- **Executed Actions & Verification Suite**:
+  - **1. Pre-Merge Verification on PR #45 (`2bb99ba`)**:
+    - `C++/WinUI 3 Mandatory Qualification`: **`pass`** in 2m 04s (Run ID `40598858718`, Job `122521990425`).
+    - `Cargo Audit & Advisory Database`: **`pass`** in 28s (Run ID `40598858712`, Job `122521990393`).
+    - `GitGuardian Security Checks`: **`pass`** in 1s (Dashboard verified).
+    - `Rust Quality Gates & Tests`: **`pass`** in 3m 48s (Run ID `40598858718`, Job `122521990422`).
+  - **2. Delegated Merge Execution**:
+    - Merged PR #45 into `main` via `gh pr merge 45 --squash` at `2026-10-27T22:38:29Z`.
+    - Generated `main` merge commit SHA: `19db018900ab1fc18dcc55c3bfe4699ba41d9df7`.
+  - **3. Independent Security Audit**:
+    - Conducted by Independent Security Audit Reviewer Subagent (`2a0a7555-d35d-4f28-8dd9-58378101f9fc`).
+    - Audit Verdict: **`PASS`** (10/10 criteria verified across digest equality, canonical path identity without digest substitution, changed content rejection, path collision isolation, mandatory consent enforcement, approved digest propagation, and process containment).
+  - **4. Architectural & Production Implementation**:
+    - **Digest Equality Enforcement**: In `crates/aethershell-app/src/engine.rs` (`sync_script_worker_internal`), requires exact case-insensitive SHA-256 hex digest equality against `trusted_digests` records via `script_config.is_script_trusted(path, actual_digest)`.
+    - **Path Identity without Digest Substitution**: Uses path normalization (`canonicalize` with absolute path fallback) strictly to look up the approved record; never allows a matching path or filename to substitute for content hash verification.
+    - **Rejection of Modified Content**: A modified script with identical filename or path is rejected fail-closed until explicitly re-approved with its new digest.
+    - **Directory Path Collision Isolation**: Distinct filesystem paths sharing identical filenames cannot inherit each other's approval (`test_different_path_same_filename_isolation`).
+    - **Mandatory Consent (PRD Section 13.2)**: `require_explicit_trust_for_imported_scripts` defaults to true and cannot silently bypass mandatory consent checks for executable scripts.
+    - **Approved Digest Passed to Supervisor**: Propagates the verified approved SHA-256 digest directly to `ScriptSupervisor::spawn_worker`.
+    - **Architecture Preservation**: Unrestricted trusted Lua 5.4 runtime preserved in dedicated child process under Windows Job Object memory quotas (128 MB) without arbitrary CPU hard caps.
+  - **5. Automated Test Accounting**:
+    - Expanded subprocess integration tests in `crates/aethershell-app/tests/lua_worker_production_lifecycle_test.rs` to 10 comprehensive tests:
+      - `test_production_script_worker_ondemand_lifecycle_and_bindings`
+      - `test_untrusted_script_rejection_fail_closed`
+      - `test_modified_script_same_filename_rejected`
+      - `test_different_path_same_filename_isolation`
+      - `test_explicit_reauthorization_permits_execution`
+      - `test_trust_rejection_malformed_digest`
+      - `test_trust_rejection_conflicting_digests`
+      - `test_dynamic_script_switching`
+      - `test_safe_mode_terminates_worker_and_purges_bindings`
+      - `test_script_worker_crash_quarantine_without_terminating_core`
+    - Workspace test count: 228 passing Rust tests across 12 crates + 2 C++ qualification tests, with 0 items written to `%LOCALAPPDATA%\AetherShell`.
+- **Observed Result**:
+  - PR #45 cleanly merged into `main` at `19db018900ab1fc18dcc55c3bfe4699ba41d9df7`.
+  - Lua trust verification enforces strict SHA-256 digest equality against the canonical path identity.
+  - Path collisions and file modifications fail closed.
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Security Audit Reviewer / Delegated Autonomous Authority
+- **Notes & Limitations**: Full multi-OS VM fault injection (killing worker under load across differing Windows builds) remains an outstanding operational record for Gate G10.
+
+---
+
+### EVD-028: Runtime Benchmark Fail-Closed Process Selection, Aligned Multi-Process Percentiles & PRD 14.2 Budget Reconciliation (PR #46)
+- **Requirement / Gate**: Gate G13 (Real Measured Performance Budgets), Gate G18 (Strict No-Go & Evidence Governance), PRD Section 14.1, Section 14.2, Section 14.3, Section 18.2
+- **Candidate Commit**: `35a1854cb233da790d039f5410fdca7d2039d546` (PR #46 Head)
+- **Main Merge Commit**: `01822543e3f49ef2bc590680a6b2977465360fd2` (Merge pull request #46)
+- **Date & Environment**: 2026-10-28, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
+- **Executed Actions & Verification Suite**:
+  - **1. Pre-Merge Verification on PR #46 (`35a1854`)**:
+    - `C++/WinUI 3 Mandatory Qualification`: **`pass`** in 2m 03s (Run ID `40601237664`, Job `122529600967`).
+    - `Cargo Audit & Advisory Database`: **`pass`** in 28s (Run ID `40601237644`, Job `122529600559`).
+    - `GitGuardian Security Checks`: **`pass`** in 10s (Dashboard verified).
+    - `Rust Quality Gates & Tests`: **`pass`** in 2m 57s (Run ID `40601237664`, Job `122529600601`).
+  - **2. Delegated Merge Execution**:
+    - Merged PR #46 into `main` via `gh pr merge 46 --squash` at `2026-10-27T23:22:13Z`.
+    - Generated `main` merge commit SHA: `01822543e3f49ef2bc590680a6b2977465360fd2`.
+  - **3. Independent Benchmark Audit**:
+    - Conducted by Independent Benchmark Audit Reviewer Subagent (`10056fee-60e2-4af1-bef0-4534c81565e1`).
+    - Audit Verdict: **`PASS`** (unanimous compliance across process selection, measurement isolation, aligned percentiles, PRD 14.2 budgets, and test isolation).
+  - **4. Architectural & Production Implementation**:
+    - **Process Identity & Liveness Validation**: Implemented `validate_process_identity(pid, role, allow_self)` verifying executable filename matches expected binary (`aethershell.exe`, `aethershell-settings.exe`, `aethershell-script-host.exe`), checking creation time via `GetProcessTimes` to detect PID reuse, verifying liveness via `GetExitCodeProcess == STILL_ACTIVE`, and computing binary SHA-256 digest via RFC 6234.
+    - **Fail-Closed Process Selection**: Explicit Core PID or automated single-instance discovery via `find_running_core_process()` (`K32EnumProcesses`). Rejects self-attachment fail-closed (`SelfAttachmentDisallowed`) unless explicit `--allow-self-pid` override is provided.
+    - **Mandatory Role Presence & Empty Sampler Rejection**: Enforces `WorkloadProfile::required_process_roles()`; requires Settings for `SettingsOpen` and Lua worker for `LuaWorkerActive`. An empty sampler collection returns `Err(RuntimeBenchmarkError::NoProcessesSampled)` fail-closed.
+    - **Measurement Overhead Isolation**: Target process CPU usage sampled independently via `GetProcessTimes` normalized across logical processor cores, isolating measured processes from benchmark runner overhead.
+    - **Concurrent Multi-Process Timestamp Sample Alignment**: Records point-in-time multi-process aggregate samples (`combined_ws_samples`, `combined_private_samples`, `combined_cpu_samples`) at aligned timestamps on every sampling tick before computing aggregate medians and p95 percentiles.
+    - **Honest Instrumentation Status Reporting**: Reports `WakeupMetricStatus::Unavailable` (kernel ETW tracing unavailable in user mode) and `PresentationMetricStatus::Unavailable` (DirectComposition presentation timing unavailable without desktop swapchain hooks). Reports `GpuMetricStatus::Unavailable` when D3DKMT counters are absent.
+    - **Process Exit & Anomaly Tracking**: Records process termination, PID recycling, and sampling failures as `ProcessAnomalyEvent`, immediately setting repetition verdict to `failed`.
+    - **PRD Section 14.2 Budget Classification**: Classifies `MinimalIdle` as `BudgetClassification::RatifiedTarget` (Core WS <= 30 MiB median, steady CPU <= 0.1%). All other profiles tagged as `BudgetClassification::ProvisionalProposal` per PRD Section 14.2.
+    - **Extended Workload Coverage**: Added `WorkloadProfile::MonitorOffSessionLocked` with rendering/capture suspension semantics.
+    - **Environment Capture**: Enriched `EnvironmentMetadata` with active theme, display topologies (resolutions & primary flags), and measured binary SHA-256 hashes.
+  - **5. Automated Test Accounting**:
+    - Implemented 10 integration tests in `crates/aethershell-diagnostics/tests/runtime_benchmark_integration_test.rs`:
+      - `test_minimal_idle_budget_classification_is_ratified_target`
+      - `test_provisional_proposal_budget_classification_for_other_profiles`
+      - `test_honest_instrumentation_statuses_when_unavailable`
+      - `test_self_attachment_rejected_fail_closed`
+      - `test_empty_process_samplers_fails_closed`
+      - `test_missing_required_roles_rejected_fail_closed`
+      - `test_process_identity_executable_mismatch_rejected`
+      - `test_process_anomaly_detected_on_exit`
+      - `test_aligned_multi_process_samples_accumulate_correctly`
+      - `test_percentile_calculation_and_sorting`
+    - Workspace test count: **238 passing Rust tests** across 12 crates + 2 C++ qualification tests (240 tests total), with 0 items written to `%LOCALAPPDATA%\AetherShell`.
+- **Observed Result**:
+  - PR #46 cleanly merged into `main` at `01822543e3f49ef2bc590680a6b2977465360fd2`.
+  - Runtime benchmark procedure enforces fail-closed process selection, honest instrumentation reporting, aligned multi-process percentiles, and PRD 14.2 budget classifications.
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Benchmark Audit Reviewer / Delegated Autonomous Authority
+- **Notes & Limitations**: Full 60-second 5-repetition empirical runs across physical GPU driver tiers in clean disposable VMs remain an outstanding operational requirement for Gate G13.
+
 
 
 
