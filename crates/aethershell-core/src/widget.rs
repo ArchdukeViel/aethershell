@@ -86,6 +86,8 @@ pub enum BindingValue {
     Integer(i64),
     Percent(f32),
     Bytes(u64),
+    /// Array of floating-point values (e.g. audio spectrum bands).
+    FloatArray(Vec<f32>),
     Unavailable(BindingState),
 }
 
@@ -114,7 +116,16 @@ impl BindingValue {
                     _ => format!("{:.1}", gib),
                 }
             }
+            BindingValue::FloatArray(arr) => format!("[{} values]", arr.len()),
             BindingValue::Unavailable(_) => fallback.to_string(),
+        }
+    }
+
+    /// Returns the float array if this is a `FloatArray` variant.
+    pub fn as_float_array(&self) -> Option<&[f32]> {
+        match self {
+            BindingValue::FloatArray(arr) => Some(arr),
+            _ => None,
         }
     }
 
@@ -165,5 +176,19 @@ mod tests {
 
         let unavail = BindingValue::Unavailable(BindingState::TemporarilyUnavailable);
         assert_eq!(unavail.format_with(Some("0.1"), "—"), "—");
+    }
+
+    #[test]
+    fn test_binding_value_float_array() {
+        let arr = vec![0.1f32, 0.4, 0.9, 0.2];
+        let val = BindingValue::FloatArray(arr.clone());
+        assert_eq!(val.as_float_array(), Some(arr.as_slice()));
+        assert_eq!(val.format_with(None, "—"), "[4 values]");
+        assert_eq!(val.as_f32(), None);
+
+        // Serialization & deserialization roundtrip
+        let json = serde_json::to_string(&val).expect("serialize");
+        let deserialized: BindingValue = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(val, deserialized);
     }
 }

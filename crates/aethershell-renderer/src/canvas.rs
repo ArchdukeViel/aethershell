@@ -105,8 +105,11 @@ impl SceneGraph {
                 }
                 NodeType::SpectrumVisualizer => {
                     let color = node.fill_color.unwrap_or(ColorRgba::WHITE);
-                    // Default mock bands if not supplied
-                    let bands = vec![0.2, 0.4, 0.7, 0.9, 0.6, 0.3];
+                    // Use live bands from layout resolution, or fallback to default visualization
+                    let bands = node
+                        .bands
+                        .clone()
+                        .unwrap_or_else(|| vec![0.05, 0.05, 0.05, 0.05, 0.05, 0.05]);
                     commands.push(RenderCommand::DrawSpectrum {
                         x: node.x,
                         y: node.y,
@@ -171,6 +174,7 @@ mod tests {
                 font_size_dip: 12.0,
                 progress: None,
                 fill_color: None,
+                bands: None,
             },
             ResolvedNode {
                 id: "t1".into(),
@@ -187,6 +191,7 @@ mod tests {
                 font_size_dip: 14.0,
                 progress: None,
                 fill_color: None,
+                bands: None,
             },
         ];
 
@@ -197,5 +202,63 @@ mod tests {
         let rendered_count = renderer.render_scene(&scene).unwrap();
         assert_eq!(rendered_count, 2);
         assert_eq!(renderer.executed_commands.len(), 2);
+    }
+
+    #[test]
+    fn test_spectrum_scene_compilation_with_live_bands_and_fallback() {
+        let live_bands = vec![0.25f32, 0.5, 0.75, 1.0];
+        let nodes = vec![
+            ResolvedNode {
+                id: "spec_live".into(),
+                node_type: NodeType::SpectrumVisualizer,
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 20.0,
+                background: None,
+                border_color: None,
+                corner_radius: 0.0,
+                text: None,
+                text_color: None,
+                font_size_dip: 0.0,
+                progress: None,
+                fill_color: Some(ColorRgba::WHITE),
+                bands: Some(live_bands.clone()),
+            },
+            ResolvedNode {
+                id: "spec_fallback".into(),
+                node_type: NodeType::SpectrumVisualizer,
+                x: 0.0,
+                y: 30.0,
+                width: 100.0,
+                height: 20.0,
+                background: None,
+                border_color: None,
+                corner_radius: 0.0,
+                text: None,
+                text_color: None,
+                font_size_dip: 0.0,
+                progress: None,
+                fill_color: Some(ColorRgba::WHITE),
+                bands: None,
+            },
+        ];
+
+        let scene = SceneGraph::compile(&nodes);
+        assert_eq!(scene.commands.len(), 2);
+
+        match &scene.commands[0] {
+            RenderCommand::DrawSpectrum { bands, .. } => {
+                assert_eq!(bands, &live_bands);
+            }
+            other => panic!("Expected DrawSpectrum, got {:?}", other),
+        }
+
+        match &scene.commands[1] {
+            RenderCommand::DrawSpectrum { bands, .. } => {
+                assert_eq!(bands.len(), 6);
+            }
+            other => panic!("Expected DrawSpectrum, got {:?}", other),
+        }
     }
 }

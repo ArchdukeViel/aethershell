@@ -35,6 +35,8 @@ pub struct ResolvedNode {
     pub font_size_dip: f32,
     pub progress: Option<f32>,
     pub fill_color: Option<ColorRgba>,
+    /// Live audio spectrum bands for SpectrumVisualizer nodes.
+    pub bands: Option<Vec<f32>>,
 }
 
 /// Layout engine compiling declarative LayoutDefinitions into resolved spatial trees.
@@ -153,6 +155,18 @@ impl LayoutEngine {
                 None => None,
             };
 
+            // Resolve audio spectrum bands for SpectrumVisualizer nodes
+            let bands = if node.node_type == NodeType::SpectrumVisualizer {
+                // Look for "audio.spectrum" binding, or the node's value_source
+                let source = node.value_source.as_deref().unwrap_or("audio.spectrum");
+                bindings
+                    .get(source)
+                    .and_then(|v| v.as_float_array())
+                    .map(|arr| arr.to_vec())
+            } else {
+                None
+            };
+
             resolved_nodes.push(ResolvedNode {
                 id: node.id.clone(),
                 node_type: node.node_type.clone(),
@@ -168,6 +182,7 @@ impl LayoutEngine {
                 font_size_dip,
                 progress,
                 fill_color,
+                bands,
             });
         }
 
@@ -317,5 +332,43 @@ mod tests {
 
         let res = LayoutEngine::resolve(&layout, &theme, &bindings, 0.0, 0.0, 1.0);
         assert_eq!(res, Err(LayoutError::NodeLimitExceeded(2, 1)));
+    }
+
+    #[test]
+    fn test_spectrum_visualizer_bands_binding_resolution() {
+        let theme = ThemeDefinition::obsidian();
+        let mut bindings = HashMap::new();
+        let test_bands = vec![0.1f32, 0.3, 0.5, 0.7, 0.9];
+        bindings.insert(
+            "audio.spectrum".into(),
+            BindingValue::FloatArray(test_bands.clone()),
+        );
+
+        let layout = LayoutDefinition {
+            schema_version: "1.0.0".into(),
+            node_limit: 10,
+            nodes: vec![LayoutNode {
+                id: "spec".into(),
+                node_type: NodeType::SpectrumVisualizer,
+                parent: None,
+                x: 0.0,
+                y: 0.0,
+                width: Some(120.0),
+                height: Some(30.0),
+                background: None,
+                radius: None,
+                value: None,
+                color: None,
+                font_size_dip: None,
+                value_source: Some("audio.spectrum".into()),
+                min_value: None,
+                max_value: None,
+                fill: Some("@accent.primary".into()),
+            }],
+        };
+
+        let resolved = LayoutEngine::resolve(&layout, &theme, &bindings, 0.0, 0.0, 1.0).unwrap();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].bands, Some(test_bands));
     }
 }
