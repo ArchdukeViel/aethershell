@@ -145,23 +145,25 @@ The proposed sequence of focused, independently reviewable pull requests is:
    - Wired control event handlers to emit `set_config` updates over IPC and persist changes atomically.
    - Wired reactive subsystem triggers (`shutdown`, `reload_profile`, `pause_audio`/`resume_audio`, `enter_interactive_mode`).
    - Implemented native C++ qualification test `test_cpp_winui_settings_client_get_and_set_config` and hardened workspace test isolation (0 items in `%LOCALAPPDATA%\AetherShell`).
-8. **PR #32: Direct2D DXGI Device Loss & GPU Recovery** *(Active Next Workstream)*
+8. **PR #32: Post-Merge Evidence EVD-018 & Roadmap Reconciliation** *(Completed & Documented)*
+   - Recorded EVD-018 evidence in `docs/EVIDENCE.md` and updated Gate G11 ledger in `docs/STATUS.md`.
+9. **PR #33: Direct2D DXGI Device Loss & GPU Recovery** *(Active Next Workstream)*
    - Expand device loss detection to handle `DXGI_ERROR_DEVICE_REMOVED`, `DXGI_ERROR_DEVICE_RESET`, and `DXGI_ERROR_DEVICE_HUNG`.
    - Implement bounded recreation with exponential backoff, preventing infinite recursion on driver crashes.
-9. **PR #33: `IMMNotificationClient` Audio Device Migration & Power-Aware Operation**
-   - Implement `IMMNotificationClient` in Rust to seamlessly migrate capture when default playback device changes.
-   - Dynamically adjust polling intervals based on AC/battery status and audio silence.
-10. **PR #34: Interactive Mode Global Hotkey & Pointer Hit-Testing**
+10. **PR #34: `IMMNotificationClient` Audio Device Migration & Power-Aware Operation**
+    - Implement `IMMNotificationClient` in Rust to seamlessly migrate capture when default playback device changes.
+    - Dynamically adjust polling intervals based on AC/battery status and audio silence.
+11. **PR #35: Interactive Mode Global Hotkey & Pointer Hit-Testing**
     - Register a configurable global hotkey via `RegisterHotKey` for Temporary Interactive Mode.
     - Implement mouse message handling (`WM_LBUTTONDOWN`) in `desktop_host_wnd_proc` to hit-test against interactive widget nodes.
-11. **PR #35: `PerMonitorV2` DPI Awareness & Multi-Monitor Topology Handling**
+12. **PR #36: `PerMonitorV2` DPI Awareness & Multi-Monitor Topology Handling**
     - Declare `PerMonitorV2` DPI awareness in `aethershell-app`.
     - Handle `WM_DPICHANGED` dynamically resizing Direct2D targets and updating layout scale.
     - Handle `WM_DISPLAYCHANGE` refreshing overlay windows across monitor attach/detach events.
-12. **PR #36: Supervised On-Demand Lua Worker Integration & Real Widget Update Flow**
+13. **PR #37: Supervised On-Demand Lua Worker Integration & Real Widget Update Flow**
     - Wire on-demand child worker spawn in `AppEngine` only when an explicitly trusted Lua widget profile is loaded. Standard bundled widgets remain declarative and never require Lua.
     - Expose `aether.set_binding(key, value)` to Lua scripts to push computed state back to Core.
     - Bundle optional example Lua widget scripts under `assets/widgets/` for testing explicitly trusted scripts. Zero CPU hard caps imposed; process containment relies on 128 MB Job Object memory limits, pure-Rust SHA-256 pre-verification, heartbeat watchdog, and crash quarantine.
-13. **PR #37: Whole-Application Stability & Performance Qualification**
+14. **PR #38: Whole-Application Stability & Performance Qualification**
     - Measure live running AetherShell processes under representative widget, audio, and scripting workloads.
     - Compare measured CPU, RAM, GPU, and battery drain against PRD Section 14 budgets.
