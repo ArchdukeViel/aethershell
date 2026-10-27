@@ -741,10 +741,15 @@ impl AppEngine {
                         BindingValue::String(now_local.format("%A, %B %d").to_string()),
                     );
 
-                    // Update cached bindings
-                    if let Ok(mut cache) = self.cached_bindings.write() {
-                        *cache = live_bindings.clone();
-                    }
+                    // Update cached bindings with live telemetry & extract full snapshot for rendering
+                    let bindings_snapshot = if let Ok(mut cache) = self.cached_bindings.write() {
+                        for (k, v) in live_bindings {
+                            cache.insert(k, v);
+                        }
+                        cache.clone()
+                    } else {
+                        live_bindings
+                    };
 
                     // Render scene if renderer is available and desktop host has primary window
                     if let Ok(win_mgr) = self.desktop_windows.try_lock() {
@@ -754,7 +759,7 @@ impl AppEngine {
                             let height = bounds[3].max(100) as f32;
                             let scale = primary.scale_factor();
                             let (scene, _) =
-                                compile_live_scene_with_scale(width, height, &live_bindings, scale);
+                                compile_live_scene_with_scale(width, height, &bindings_snapshot, scale);
 
                             if let Ok(mut r_lock) = self.desktop_renderer.try_lock() {
                                 if let Some(ref mut renderer) = *r_lock {
