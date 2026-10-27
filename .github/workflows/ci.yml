@@ -37,8 +37,13 @@ jobs:
       - name: Clippy Linter
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Build Script Host Binary for Out-of-Process Tests
+        run: cargo build -p aethershell-script-host --bin aethershell-script-host
+
       - name: Run Tests
         run: cargo test --workspace --verbose
+        env:
+          REQUIRE_LUA_WORKER_TEST: "1"
 
       - name: Build Release Binaries
         run: cargo build --workspace --release

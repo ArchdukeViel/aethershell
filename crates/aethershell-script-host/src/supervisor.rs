@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::os::windows::io::AsRawHandle;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::time::Instant;
 use tracing::info;
@@ -188,6 +188,7 @@ pub struct ScriptSupervisor {
     heartbeat_timeout_secs: u32,
     job: Option<JobObjectGuard>,
     child: Option<SupervisedChild>,
+    current_script: Option<PathBuf>,
 }
 
 impl ScriptSupervisor {
@@ -200,6 +201,7 @@ impl ScriptSupervisor {
             heartbeat_timeout_secs: 5,
             job: JobObjectGuard::new().ok(),
             child: None,
+            current_script: None,
         }
     }
 
@@ -223,8 +225,19 @@ impl ScriptSupervisor {
         self.child.as_ref().map(|c| c.is_alive()).unwrap_or(false)
     }
 
+    pub fn is_running(&self) -> bool {
+        matches!(
+            self.state,
+            SupervisorState::Running { .. } | SupervisorState::Spawning
+        ) && self.is_child_alive()
+    }
+
     pub fn active_child_pid(&self) -> Option<u32> {
         self.child.as_ref().map(|c| c.id())
+    }
+
+    pub fn current_script(&self) -> Option<&Path> {
+        self.current_script.as_deref()
     }
 
     pub fn assign_supervised_child(&mut self, child: SupervisedChild) {
@@ -240,6 +253,7 @@ impl ScriptSupervisor {
         }
         self.state = SupervisorState::Terminated;
         self.last_heartbeat = None;
+        self.current_script = None;
     }
 
     pub fn record_start(&mut self, pid: u32) {
@@ -365,6 +379,7 @@ impl ScriptSupervisor {
         self.child = Some(SupervisedChild::new(pi.hProcess, pid));
         self.state = SupervisorState::Spawning;
         self.last_heartbeat = Some(Instant::now());
+        self.current_script = Some(script_path.to_path_buf());
 
         Ok(pid)
     }
@@ -400,6 +415,7 @@ impl ScriptSupervisor {
 
     /// Records an unexpected worker exit/crash and applies quarantine if limit exceeded.
     pub fn record_exit(&mut self, exit_code: i32) {
+        self.current_script = None;
         if exit_code != 0 {
             self.crash_count += 1;
             if self.crash_count >= self.max_crashes {
@@ -426,6 +442,7 @@ impl ScriptSupervisor {
         if let Some(pid) = active_pid {
             if let Some(last) = self.last_heartbeat {
                 if last.elapsed().as_secs() >= self.heartbeat_timeout_secs as u64 {
+                    self.current_script = None;
                     self.state = SupervisorState::Quarantined {
                         reason: format!(
                             "Worker PID {} hung or missed heartbeats for >{}s. Terminated.",
@@ -456,6 +473,7 @@ impl ScriptSupervisor {
     pub fn stop(&mut self) {
         self.state = SupervisorState::Dormant;
         self.last_heartbeat = None;
+        self.current_script = None;
     }
 }
 

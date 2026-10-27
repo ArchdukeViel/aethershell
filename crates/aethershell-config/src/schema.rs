@@ -1,5 +1,6 @@
 use aethershell_core::{TaskbarEffect, TaskbarRule};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use thiserror::Error;
 
 pub const CURRENT_SCHEMA_VERSION: &str = "1.0.0";
@@ -320,6 +321,10 @@ pub struct ScriptingConfig {
     pub restart_after_crash_limit: u32,
     #[serde(default = "default_true")]
     pub require_explicit_trust_for_imported_scripts: bool,
+    #[serde(default)]
+    pub active_script: Option<String>,
+    #[serde(default)]
+    pub trusted_digests: HashMap<String, String>,
 }
 
 impl Default for ScriptingConfig {
@@ -331,6 +336,8 @@ impl Default for ScriptingConfig {
             worker_executable: "aethershell-script-host.exe".into(),
             restart_after_crash_limit: 2,
             require_explicit_trust_for_imported_scripts: true,
+            active_script: None,
+            trusted_digests: HashMap::new(),
         }
     }
 }
