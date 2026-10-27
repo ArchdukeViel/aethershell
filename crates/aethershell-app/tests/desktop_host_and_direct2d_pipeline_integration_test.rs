@@ -259,6 +259,22 @@ fn test_direct2d_canvas_renderer_live_overlay_drawing() {
 
     // Test resize handling
     renderer.resize(800, 600).expect("Direct2D resize failed");
+
+    // Test GPU device loss simulation & recovery (Gate G02 & G06)
+    renderer.simulate_device_loss_for_test();
+    assert!(renderer.is_device_lost());
+    assert_eq!(renderer.total_device_loss_count(), 1);
+
+    renderer
+        .recover_device()
+        .expect("Direct2D device recovery should succeed on active host HWND");
+    assert!(!renderer.is_device_lost());
+    assert_eq!(renderer.total_successful_recoveries(), 1);
+
+    let rendered_after_recovery = renderer
+        .render_scene(&scene)
+        .expect("Direct2D render_scene after recovery");
+    assert_eq!(rendered_after_recovery, 6);
 }
 
 #[test]
