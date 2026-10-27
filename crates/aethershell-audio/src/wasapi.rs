@@ -1,14 +1,15 @@
+use crate::notification::AudioEndpointNotificationClient;
 use crate::spectrum::AudioSpectrumProcessor;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{info, warn};
 use windows::core::GUID;
 use windows::Win32::Media::Audio::{
-    eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator,
-    AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
-    WAVEFORMATEXTENSIBLE,
+    eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator,
+    IMMNotificationClient, MMDeviceEnumerator, AUDCLNT_BUFFERFLAGS_SILENT,
+    AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, WAVEFORMATEXTENSIBLE,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
@@ -22,13 +23,22 @@ const KSDATAFORMAT_SUBTYPE_IEEE_FLOAT: GUID =
 
 /// Adaptive presentation frame rate modes per PRD Section 7.3 and Q36:A.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum FpsMode {
-    Performance,  // 60 FPS
-    AcBalanced,   // 30 FPS (default on AC power)
-    BatterySaver, // 15 FPS (automatic on battery power)
+    Performance = 0,  // 60 FPS
+    AcBalanced = 1,   // 30 FPS (default on AC power)
+    BatterySaver = 2, // 15 FPS (automatic on battery power)
 }
 
 impl FpsMode {
+    pub fn from_u8(val: u8) -> Self {
+        match val {
+            0 => FpsMode::Performance,
+            2 => FpsMode::BatterySaver,
+            _ => FpsMode::AcBalanced,
+        }
+    }
+
     pub fn target_fps(&self) -> u32 {
         match self {
             FpsMode::Performance => 60,
@@ -40,13 +50,42 @@ impl FpsMode {
     pub fn frame_interval(&self) -> Duration {
         Duration::from_millis((1000.0 / self.target_fps() as f64).round() as u64)
     }
+
+    /// Active polling interval when audio packets are actively flowing.
+    pub fn active_poll_interval(&self) -> Duration {
+        match self {
+            FpsMode::Performance => Duration::from_millis(10),
+            FpsMode::AcBalanced => Duration::from_millis(15),
+            FpsMode::BatterySaver => Duration::from_millis(33),
+        }
+    }
+
+    /// Relaxed polling interval during light silence (< 2 seconds).
+    pub fn idle_poll_interval(&self) -> Duration {
+        match self {
+            FpsMode::Performance => Duration::from_millis(33),
+            FpsMode::AcBalanced => Duration::from_millis(50),
+            FpsMode::BatterySaver => Duration::from_millis(100),
+        }
+    }
+
+    /// Non-waking deep silence polling interval (> 2 seconds of silence) to minimize battery drain.
+    pub fn deep_silence_poll_interval(&self) -> Duration {
+        match self {
+            FpsMode::Performance => Duration::from_millis(50),
+            FpsMode::AcBalanced => Duration::from_millis(100),
+            FpsMode::BatterySaver => Duration::from_millis(200),
+        }
+    }
 }
 
-/// WASAPI shared loopback audio capture controller.
+/// WASAPI shared loopback audio capture controller with dynamic `IMMNotificationClient` device migration.
 pub struct WasapiLoopbackCapture {
-    fps_mode: FpsMode,
+    fps_mode: Arc<AtomicU8>,
     is_paused: Arc<AtomicBool>,
     is_running: Arc<AtomicBool>,
+    migration_requested: Arc<AtomicBool>,
+    migration_counter: Arc<AtomicUsize>,
     processor: Arc<Mutex<AudioSpectrumProcessor>>,
     capture_thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -54,20 +93,22 @@ pub struct WasapiLoopbackCapture {
 impl WasapiLoopbackCapture {
     pub fn new(band_count: usize, fps_mode: FpsMode) -> Self {
         Self {
-            fps_mode,
+            fps_mode: Arc::new(AtomicU8::new(fps_mode as u8)),
             is_paused: Arc::new(AtomicBool::new(false)),
             is_running: Arc::new(AtomicBool::new(false)),
+            migration_requested: Arc::new(AtomicBool::new(false)),
+            migration_counter: Arc::new(AtomicUsize::new(0)),
             processor: Arc::new(Mutex::new(AudioSpectrumProcessor::new(band_count))),
             capture_thread: None,
         }
     }
 
     pub fn fps_mode(&self) -> FpsMode {
-        self.fps_mode
+        FpsMode::from_u8(self.fps_mode.load(Ordering::Relaxed))
     }
 
-    pub fn set_fps_mode(&mut self, mode: FpsMode) {
-        self.fps_mode = mode;
+    pub fn set_fps_mode(&self, mode: FpsMode) {
+        self.fps_mode.store(mode as u8, Ordering::SeqCst);
     }
 
     pub fn set_paused(&self, paused: bool) {
@@ -82,6 +123,20 @@ impl WasapiLoopbackCapture {
         self.is_running.load(Ordering::Relaxed)
     }
 
+    pub fn migration_counter(&self) -> usize {
+        self.migration_counter.load(Ordering::Relaxed)
+    }
+
+    pub fn is_migration_requested(&self) -> bool {
+        self.migration_requested.load(Ordering::Relaxed)
+    }
+
+    /// Programmatically signals that the default audio endpoint has changed or been invalidated.
+    pub fn request_migration(&self) {
+        self.migration_requested.store(true, Ordering::SeqCst);
+        self.migration_counter.fetch_add(1, Ordering::SeqCst);
+    }
+
     /// Spawns the genuine Windows WASAPI shared-loopback audio capture background thread.
     ///
     /// If no active audio endpoint exists (e.g. headless CI / VM), gracefully enters fallback mode without panicking.
@@ -93,11 +148,20 @@ impl WasapiLoopbackCapture {
         self.is_running.store(true, Ordering::SeqCst);
         let is_running = Arc::clone(&self.is_running);
         let is_paused = Arc::clone(&self.is_paused);
+        let migration_requested = Arc::clone(&self.migration_requested);
+        let migration_counter = Arc::clone(&self.migration_counter);
+        let fps_mode = Arc::clone(&self.fps_mode);
         let processor = Arc::clone(&self.processor);
-        let fps_mode = self.fps_mode;
 
         let handle = std::thread::spawn(move || {
-            run_wasapi_capture_loop(is_running, is_paused, processor, fps_mode);
+            run_wasapi_capture_loop(
+                is_running,
+                is_paused,
+                migration_requested,
+                migration_counter,
+                fps_mode,
+                processor,
+            );
         });
 
         self.capture_thread = Some(handle);
@@ -228,11 +292,21 @@ struct WasapiStream {
     is_float: bool,
 }
 
-unsafe fn init_wasapi_stream() -> Result<WasapiStream, String> {
-    let enumerator: IMMDeviceEnumerator =
-        CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
-            .map_err(|e| format!("CoCreateInstance(MMDeviceEnumerator) failed: {}", e))?;
+impl Drop for WasapiStream {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = self.audio_client.Stop();
+            if !self.pwfx_ptr.is_null() {
+                CoTaskMemFree(Some(self.pwfx_ptr as *const _ as *const _));
+                self.pwfx_ptr = std::ptr::null_mut();
+            }
+        }
+    }
+}
 
+unsafe fn init_wasapi_stream_with_enumerator(
+    enumerator: &IMMDeviceEnumerator,
+) -> Result<WasapiStream, String> {
     let device = enumerator
         .GetDefaultAudioEndpoint(eRender, eConsole)
         .map_err(|e| format!("No default audio render endpoint available: {}", e))?;
@@ -296,15 +370,43 @@ unsafe fn init_wasapi_stream() -> Result<WasapiStream, String> {
 unsafe fn run_active_stream(
     is_running: &Arc<AtomicBool>,
     is_paused: &Arc<AtomicBool>,
+    migration_requested: &Arc<AtomicBool>,
+    fps_mode_atomic: &Arc<AtomicU8>,
     processor: &Arc<Mutex<AudioSpectrumProcessor>>,
     stream: &WasapiStream,
 ) -> Result<(), String> {
-    let sleep_interval = Duration::from_millis(15);
+    let mut consecutive_silent_ticks = 0usize;
 
     while is_running.load(Ordering::Relaxed) {
-        std::thread::sleep(sleep_interval);
+        // 1. Check for audio endpoint migration request from IMMNotificationClient
+        if migration_requested.swap(false, Ordering::SeqCst) {
+            info!("IMMNotificationClient signaled default audio device migration. Restarting capture on new endpoint.");
+            return Err("endpoint_migrated".to_string());
+        }
 
+        // 2. Compute dynamic power-aware polling interval based on silence and power profile
+        let mode = FpsMode::from_u8(fps_mode_atomic.load(Ordering::Relaxed));
+        let poll_interval = if consecutive_silent_ticks > 60 {
+            mode.deep_silence_poll_interval()
+        } else if consecutive_silent_ticks > 10 {
+            mode.idle_poll_interval()
+        } else {
+            mode.active_poll_interval()
+        };
+
+        std::thread::sleep(poll_interval);
+
+        if !is_running.load(Ordering::Relaxed) {
+            break;
+        }
+        if migration_requested.swap(false, Ordering::SeqCst) {
+            info!("IMMNotificationClient signaled default audio device migration during sleep. Restarting capture.");
+            return Err("endpoint_migrated".to_string());
+        }
+
+        // 3. Handle pause state
         if is_paused.load(Ordering::Relaxed) {
+            consecutive_silent_ticks = consecutive_silent_ticks.saturating_add(1);
             while let Ok(packet_size) = stream.capture_client.GetNextPacketSize() {
                 if packet_size == 0 {
                     break;
@@ -326,11 +428,15 @@ unsafe fn run_active_stream(
             continue;
         }
 
+        // 4. Drain available audio packets from loopback buffer
         let mut got_packets = false;
         loop {
             let packet_size = match stream.capture_client.GetNextPacketSize() {
                 Ok(size) => size,
-                Err(e) => return Err(format!("GetNextPacketSize failed: {}", e)),
+                Err(e) => {
+                    // Endpoint error, device might have been unplugged or reset
+                    return Err(format!("GetNextPacketSize failed: {}", e));
+                }
             };
 
             if packet_size == 0 {
@@ -374,7 +480,10 @@ unsafe fn run_active_stream(
 
         // When no audio is playing on Windows, loopback produces 0 packets.
         // Feed empty samples to tick band decay and silence auto-hide.
-        if !got_packets {
+        if got_packets {
+            consecutive_silent_ticks = 0;
+        } else {
+            consecutive_silent_ticks = consecutive_silent_ticks.saturating_add(1);
             if let Ok(mut proc) = processor.lock() {
                 proc.process_samples(&[]);
             }
@@ -387,53 +496,115 @@ unsafe fn run_active_stream(
 fn run_wasapi_capture_loop(
     is_running: Arc<AtomicBool>,
     is_paused: Arc<AtomicBool>,
+    migration_requested: Arc<AtomicBool>,
+    migration_counter: Arc<AtomicUsize>,
+    fps_mode_atomic: Arc<AtomicU8>,
     processor: Arc<Mutex<AudioSpectrumProcessor>>,
-    fps_mode: FpsMode,
 ) {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
-        while is_running.load(Ordering::Relaxed) {
-            match init_wasapi_stream() {
-                Ok(stream) => {
-                    info!(
-                        "WASAPI shared-loopback audio capture thread started (channels: {}, bits: {}, float: {}, target FPS: {})",
-                        stream.channels,
-                        stream.bits_per_sample,
-                        stream.is_float,
-                        fps_mode.target_fps()
-                    );
+        {
+            // Instantiate MMDeviceEnumerator within scoped block
+            let enumerator: Result<IMMDeviceEnumerator, _> =
+                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL);
 
-                    let res = run_active_stream(&is_running, &is_paused, &processor, &stream);
+            // Register IMMNotificationClient callback for dynamic default device migration
+            let notification_client = AudioEndpointNotificationClient::new(
+                Arc::clone(&migration_requested),
+                Arc::clone(&migration_counter),
+            );
+            let notification_interface: IMMNotificationClient = notification_client.into();
 
-                    let _ = stream.audio_client.Stop();
-                    CoTaskMemFree(Some(stream.pwfx_ptr as *const _ as *const _));
-
-                    if let Err(e) = res {
-                        warn!(
-                            "WASAPI stream disconnected or invalidated: {}. Re-enumerating default endpoint...",
-                            e
-                        );
-                        std::thread::sleep(Duration::from_millis(300));
+            let callback_registered = if let Ok(ref enum_ref) = enumerator {
+                match enum_ref.RegisterEndpointNotificationCallback(&notification_interface) {
+                    Ok(_) => {
+                        info!("IMMNotificationClient registered for audio device migration callbacks.");
+                        true
+                    }
+                    Err(e) => {
+                        warn!("Failed to register IMMNotificationClient callback: {}", e);
+                        false
                     }
                 }
-                Err(e) => {
-                    info!(
-                        "WASAPI: Default audio endpoint not active ({}). Operating in fallback mode.",
-                        e
-                    );
-                    for _ in 0..10 {
-                        if !is_running.load(Ordering::Relaxed) {
-                            break;
+            } else {
+                false
+            };
+
+            while is_running.load(Ordering::Relaxed) {
+                let stream_init_res = if let Ok(ref enum_ref) = enumerator {
+                    init_wasapi_stream_with_enumerator(enum_ref)
+                } else {
+                    Err("No MMDeviceEnumerator available".to_string())
+                };
+
+                match stream_init_res {
+                    Ok(stream) => {
+                        let mode = FpsMode::from_u8(fps_mode_atomic.load(Ordering::Relaxed));
+                        info!(
+                            "WASAPI shared-loopback audio capture stream active (channels: {}, bits: {}, float: {}, target FPS: {})",
+                            stream.channels,
+                            stream.bits_per_sample,
+                            stream.is_float,
+                            mode.target_fps()
+                        );
+
+                        let res = run_active_stream(
+                            &is_running,
+                            &is_paused,
+                            &migration_requested,
+                            &fps_mode_atomic,
+                            &processor,
+                            &stream,
+                        );
+
+                        if let Err(e) = res {
+                            if e == "endpoint_migrated" {
+                                info!("Audio endpoint migrated. Immediately refreshing default endpoint...");
+                                std::thread::sleep(Duration::from_millis(50));
+                            } else {
+                                warn!(
+                                    "WASAPI stream error or device disconnected: {}. Re-enumerating default endpoint...",
+                                    e
+                                );
+                                std::thread::sleep(Duration::from_millis(200));
+                            }
                         }
-                        std::thread::sleep(Duration::from_millis(100));
-                        if let Ok(mut proc) = processor.lock() {
-                            proc.process_samples(&[]);
+                    }
+                    Err(e) => {
+                        info!(
+                            "WASAPI: Default audio endpoint not active ({}). Operating in fallback mode.",
+                            e
+                        );
+                        for _ in 0..10 {
+                            if !is_running.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            if migration_requested.swap(false, Ordering::SeqCst) {
+                                info!("Audio endpoint migration signaled during fallback mode; attempting immediate re-enumeration.");
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(100));
+                            if let Ok(mut proc) = processor.lock() {
+                                proc.process_samples(&[]);
+                            }
                         }
                     }
                 }
             }
-        }
+
+            // Clean unregistration of notification callback before dropping COM interfaces
+            if callback_registered {
+                if let Ok(ref enum_ref) = enumerator {
+                    let _ =
+                        enum_ref.UnregisterEndpointNotificationCallback(&notification_interface);
+                    info!("IMMNotificationClient unregistered cleanly.");
+                }
+            }
+
+            drop(notification_interface);
+            drop(enumerator);
+        } // All COM objects safely dropped before CoUninitialize
 
         CoUninitialize();
         info!("WASAPI shared-loopback audio capture cleanly shut down.");
@@ -443,15 +614,70 @@ fn run_wasapi_capture_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::Media::Audio::{
+        eConsole, eRender, DEVICE_STATE_ACTIVE, DEVICE_STATE_UNPLUGGED,
+    };
 
     #[test]
-    fn test_adaptive_fps_intervals() {
+    fn test_adaptive_fps_intervals_and_power_aware_polling() {
         assert_eq!(FpsMode::Performance.target_fps(), 60);
         assert_eq!(FpsMode::AcBalanced.target_fps(), 30);
         assert_eq!(FpsMode::BatterySaver.target_fps(), 15);
 
         assert!(FpsMode::Performance.frame_interval() < FpsMode::AcBalanced.frame_interval());
         assert!(FpsMode::AcBalanced.frame_interval() < FpsMode::BatterySaver.frame_interval());
+
+        // Active intervals
+        assert_eq!(
+            FpsMode::Performance.active_poll_interval(),
+            Duration::from_millis(10)
+        );
+        assert_eq!(
+            FpsMode::AcBalanced.active_poll_interval(),
+            Duration::from_millis(15)
+        );
+        assert_eq!(
+            FpsMode::BatterySaver.active_poll_interval(),
+            Duration::from_millis(33)
+        );
+
+        // Idle / light silence intervals
+        assert_eq!(
+            FpsMode::Performance.idle_poll_interval(),
+            Duration::from_millis(33)
+        );
+        assert_eq!(
+            FpsMode::AcBalanced.idle_poll_interval(),
+            Duration::from_millis(50)
+        );
+        assert_eq!(
+            FpsMode::BatterySaver.idle_poll_interval(),
+            Duration::from_millis(100)
+        );
+
+        // Deep silence non-waking intervals
+        assert_eq!(
+            FpsMode::Performance.deep_silence_poll_interval(),
+            Duration::from_millis(50)
+        );
+        assert_eq!(
+            FpsMode::AcBalanced.deep_silence_poll_interval(),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            FpsMode::BatterySaver.deep_silence_poll_interval(),
+            Duration::from_millis(200)
+        );
+
+        // Ensure deep silence backs off significantly compared to active
+        assert!(
+            FpsMode::BatterySaver.deep_silence_poll_interval()
+                > FpsMode::BatterySaver.active_poll_interval() * 5
+        );
+        assert!(
+            FpsMode::AcBalanced.deep_silence_poll_interval()
+                > FpsMode::AcBalanced.active_poll_interval() * 5
+        );
     }
 
     #[test]
@@ -470,6 +696,65 @@ mod tests {
 
         let muted = capture.feed_samples(&samples);
         assert_eq!(muted, vec![0.0; 32]);
+    }
+
+    #[test]
+    fn test_wasapi_endpoint_migration_signaling() {
+        let capture = WasapiLoopbackCapture::new(32, FpsMode::AcBalanced);
+        assert_eq!(capture.migration_counter(), 0);
+        assert!(!capture.is_migration_requested());
+
+        // Simulate endpoint migration request
+        capture.request_migration();
+        assert_eq!(capture.migration_counter(), 1);
+        assert!(capture.is_migration_requested());
+
+        // Test dynamic thread-safe fps_mode switching
+        capture.set_fps_mode(FpsMode::BatterySaver);
+        assert_eq!(capture.fps_mode(), FpsMode::BatterySaver);
+
+        capture.set_fps_mode(FpsMode::Performance);
+        assert_eq!(capture.fps_mode(), FpsMode::Performance);
+    }
+
+    #[test]
+    fn test_notification_client_com_interface() {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+
+            let migration_requested = Arc::new(AtomicBool::new(false));
+            let migration_counter = Arc::new(AtomicUsize::new(0));
+
+            {
+                let client: IMMNotificationClient = AudioEndpointNotificationClient::new(
+                    Arc::clone(&migration_requested),
+                    Arc::clone(&migration_counter),
+                )
+                .into();
+
+                let dummy_id = windows::core::w!("test_device_id");
+
+                // 1. Device state changed to active (should NOT trigger migration)
+                let _ = client.OnDeviceStateChanged(dummy_id, DEVICE_STATE_ACTIVE);
+                assert!(!migration_requested.load(Ordering::Relaxed));
+                assert_eq!(migration_counter.load(Ordering::Relaxed), 0);
+
+                // 2. Device state changed to unplugged (SHOULD trigger migration)
+                let _ = client.OnDeviceStateChanged(dummy_id, DEVICE_STATE_UNPLUGGED);
+                assert!(migration_requested.load(Ordering::Relaxed));
+                assert_eq!(migration_counter.load(Ordering::Relaxed), 1);
+
+                // Reset
+                migration_requested.store(false, Ordering::Relaxed);
+
+                // 3. Default render device changed (SHOULD trigger migration)
+                let _ = client.OnDefaultDeviceChanged(eRender, eConsole, dummy_id);
+                assert!(migration_requested.load(Ordering::Relaxed));
+                assert_eq!(migration_counter.load(Ordering::Relaxed), 2);
+            }
+
+            CoUninitialize();
+        }
     }
 
     #[test]

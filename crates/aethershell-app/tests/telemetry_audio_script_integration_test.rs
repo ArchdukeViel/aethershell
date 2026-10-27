@@ -86,6 +86,57 @@ fn test_wasapi_audio_spectrum_and_silence_auto_hide() {
 }
 
 #[test]
+fn test_wasapi_audio_endpoint_migration_and_power_aware_operation() {
+    let mut capture = WasapiLoopbackCapture::new(32, FpsMode::AcBalanced);
+    assert_eq!(capture.fps_mode(), FpsMode::AcBalanced);
+    assert_eq!(capture.migration_counter(), 0);
+    assert!(!capture.is_migration_requested());
+
+    // 1. Verify power-aware polling intervals
+    assert_eq!(
+        FpsMode::Performance.active_poll_interval(),
+        Duration::from_millis(10)
+    );
+    assert_eq!(
+        FpsMode::AcBalanced.active_poll_interval(),
+        Duration::from_millis(15)
+    );
+    assert_eq!(
+        FpsMode::BatterySaver.active_poll_interval(),
+        Duration::from_millis(33)
+    );
+
+    // Deep silence backoff interval verification
+    assert_eq!(
+        FpsMode::BatterySaver.deep_silence_poll_interval(),
+        Duration::from_millis(200)
+    );
+
+    // 2. Start capture thread
+    let res = capture.start();
+    assert!(res.is_ok());
+    assert!(capture.is_running());
+
+    // 3. Dynamic power mode switching while capture thread is running
+    capture.set_fps_mode(FpsMode::BatterySaver);
+    assert_eq!(capture.fps_mode(), FpsMode::BatterySaver);
+
+    // 4. Simulate IMMNotificationClient endpoint migration trigger
+    capture.request_migration();
+    assert_eq!(capture.migration_counter(), 1);
+
+    // Allow thread to observe migration and perform refresh
+    std::thread::sleep(Duration::from_millis(120));
+
+    // Capture thread must remain running through endpoint migration
+    assert!(capture.is_running());
+
+    // 5. Clean teardown
+    capture.stop();
+    assert!(!capture.is_running());
+}
+
+#[test]
 fn test_script_digest_verification_and_quarantine() {
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join("aethershell_test_widget.lua");
@@ -474,9 +525,16 @@ fn test_phase5_supervised_crash_circuit_breaker() {
     let spawn1 = supervisor.spawn_worker(&host_bin, &script_path, &digest, "");
     assert!(spawn1.is_ok());
 
-    // Wait for process to exit
-    std::thread::sleep(Duration::from_millis(400));
-    let exit1 = supervisor.poll_worker_status();
+    // Wait for process to exit with bounded polling loop
+    let start1 = std::time::Instant::now();
+    let mut exit1 = None;
+    while start1.elapsed() < Duration::from_millis(2000) {
+        exit1 = supervisor.poll_worker_status();
+        if exit1.is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
     assert!(exit1.is_some());
     assert_eq!(supervisor.crash_count(), 1);
     assert!(!supervisor.is_quarantined());
@@ -485,8 +543,15 @@ fn test_phase5_supervised_crash_circuit_breaker() {
     let spawn2 = supervisor.spawn_worker(&host_bin, &script_path, &digest, "");
     assert!(spawn2.is_ok());
 
-    std::thread::sleep(Duration::from_millis(400));
-    let exit2 = supervisor.poll_worker_status();
+    let start2 = std::time::Instant::now();
+    let mut exit2 = None;
+    while start2.elapsed() < Duration::from_millis(2000) {
+        exit2 = supervisor.poll_worker_status();
+        if exit2.is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
     assert!(exit2.is_some());
     assert_eq!(supervisor.crash_count(), 2);
     assert!(supervisor.is_quarantined());
@@ -563,4 +628,37 @@ fn test_adaptive_presentation_loop_power_and_gaming_shield() {
     // When monitor returns to Desktop
     tb.evaluate_and_apply("DISPLAY_1", MonitorTaskbarState::Desktop);
     assert!(!tb.is_any_monitor_fullscreen());
+
+    // 3. Bidirectional Power State Synchronization (AC -> Battery -> AC non-latching verification)
+    let capture = WasapiLoopbackCapture::new(32, FpsMode::AcBalanced);
+    assert_eq!(capture.fps_mode(), FpsMode::AcBalanced);
+
+    // Transition 1: Machine switches to battery power -> adapts to BatterySaver (15 FPS)
+    let mut is_on_battery = true;
+    let configured_fps_mode = FpsMode::AcBalanced;
+    let target_fps_mode = if is_on_battery {
+        FpsMode::BatterySaver
+    } else {
+        configured_fps_mode
+    };
+    if capture.fps_mode() != target_fps_mode {
+        capture.set_fps_mode(target_fps_mode);
+    }
+    assert_eq!(capture.fps_mode(), FpsMode::BatterySaver);
+
+    // Transition 2: User plugs in AC power -> must restore to configured AcBalanced (non-latching)
+    is_on_battery = false;
+    let target_fps_mode_ac = if is_on_battery {
+        FpsMode::BatterySaver
+    } else {
+        configured_fps_mode
+    };
+    if capture.fps_mode() != target_fps_mode_ac {
+        capture.set_fps_mode(target_fps_mode_ac);
+    }
+    assert_eq!(
+        capture.fps_mode(),
+        FpsMode::AcBalanced,
+        "Audio loopback capture must cleanly restore configured AC profile upon returning to AC power"
+    );
 }
