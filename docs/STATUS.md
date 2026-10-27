@@ -122,10 +122,11 @@ The proposed sequence of focused, independently reviewable pull requests is:
    - Update `docs/STATUS.md`, `docs/EVIDENCE.md`, and `README.md` with verified PR #20 merge evidence, truthful gate statuses, and the session-token historical record.
 2. **PR #22: Post-Merge Verification & Architecture Decision Record (ADR) Index** *(Completed & Merged into main at `1e25f30` — see [EVD-013](EVIDENCE.md#evd-013-pr-21-merge-completion-post-merge-ci-verification--documentation-architecture-reconciliation))*
    - Establish formal ADR directory (`docs/adr/README.md`) indexing ADR-001 through ADR-009 resolving root `README.md` link.
-3. **PR #23: Explorer Restart Recovery & Notification Tray Restoration** *(Completed & Merged into main at `d3a0b40` — see [EVD-014](EVIDENCE.md#evd-014-explorer-restart-recovery-dynamic-tray-re-registration--stacking-order-resilience-pr-23))*
+3. **PR #23 / PR #25: Explorer Restart Recovery, Tray Restoration & Edge-Case Hardening** *(Completed & Merged into main at `d3a0b40` and hardened in PR #25 at `07efb0a` — see [EVD-014](EVIDENCE.md#evd-014-explorer-restart-recovery-dynamic-tray-re-registration--stacking-order-resilience-pr-23) & [EVD-015](EVIDENCE.md#evd-015-explorer-restart-edge-case-hardening-callback-preservation--stacking-fallback-pr-25))*
    - Register dynamic Windows message `TaskbarCreated` in `tray.rs`, `desktop_probe.rs`, and `DesktopHostWindow`.
-   - Re-register notification tray icon via `Shell_NotifyIconW(NIM_ADD, ...)` with duplicate prevention and debounce loop protection.
-   - Re-probe desktop hierarchy (`WorkerW`/`Progman`/`SHELLDLL_DefView`), safely invalidate stale shell handles, and restore passive stacking order.
+   - Re-register notification tray icon via `Shell_NotifyIconW(NIM_ADD, ...)` with duplicate prevention, bounded startup retry loops, and debounce protection.
+   - Re-probe desktop hierarchy (`WorkerW`/`Progman`/`SHELLDLL_DefView`), safely invalidate stale shell handles, and restore passive stacking order with `safe_stacking_target()` fallback.
+   - Retain and reattach `on_dismiss`, `on_paint`, and `on_explorer_restart` callbacks across window handle invalidation and recreation.
    - Re-synchronize Direct2D canvas renderer on recreated HWND.
 4. **PR #24: Real-Time Telemetry & WASAPI Spectrum Presentation Loop** *(Active Next Workstream)*
    - Wire an adaptive presentation timer loop in `AppEngine` (15/30/60 FPS based on power/audio state).
