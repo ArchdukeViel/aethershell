@@ -679,8 +679,8 @@ mod tests {
             "handle_taskbar_created within debounce interval must not double-increment reconnect count"
         );
 
-        // 3. Explicit handle_taskbar_created invocation after debounce expiry
-        std::thread::sleep(std::time::Duration::from_millis(310));
+        // 3. Explicit handle_taskbar_created invocation after debounce expiry (>300ms + VM timer quantum margin)
+        std::thread::sleep(std::time::Duration::from_millis(450));
         let added = tray.handle_taskbar_created();
         println!("Explicit handle_taskbar_created added: {}", added);
         assert_eq!(tray.reconnect_count(), 2);

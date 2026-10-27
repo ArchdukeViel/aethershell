@@ -1017,8 +1017,8 @@ mod tests {
             "Immediate handle_explorer_restart within debounce interval must not double-increment count"
         );
 
-        // 3. Test handle_explorer_restart after debounce interval elapses
-        std::thread::sleep(std::time::Duration::from_millis(310));
+        // 3. Test handle_explorer_restart after debounce interval elapses (>300ms + VM timer quantum margin)
+        std::thread::sleep(std::time::Duration::from_millis(450));
         let probe = win.handle_explorer_restart();
         assert_eq!(win.explorer_restart_count(), 2);
         println!(
