@@ -275,9 +275,9 @@ impl AppEngine {
                     }
                 }
 
-                // Wire on_paint callback to automatically repaint scene on WM_PAINT
+                // Wire on_paint callback across all desktop overlay windows to automatically repaint scene on WM_PAINT
                 let r_paint = Arc::clone(&self.desktop_renderer);
-                primary.set_on_paint(move |_hwnd| {
+                win_mgr.set_on_paint(move |_hwnd| {
                     let w = bounds[2].max(100) as f32;
                     let h = bounds[3].max(100) as f32;
                     let scene = compile_first_run_scene(w, h);

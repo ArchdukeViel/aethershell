@@ -159,16 +159,38 @@ impl SystemTray {
     /// then registers the notification icon into the fresh taskbar.
     pub fn handle_taskbar_created(&mut self) -> bool {
         unsafe {
+            let now_tick = GetTickCount64();
+            if !self.state_ptr.is_null() {
+                let prev_tick = (*self.state_ptr)
+                    .last_reconnect_tick
+                    .load(Ordering::Relaxed);
+                if now_tick >= prev_tick && now_tick - prev_tick < 300 {
+                    return self.is_active();
+                }
+                (*self.state_ptr)
+                    .last_reconnect_tick
+                    .store(now_tick, Ordering::Relaxed);
+            }
+
             let _ = Shell_NotifyIconW(NIM_DELETE, &self.nid);
-            let added = Shell_NotifyIconW(NIM_ADD, &self.nid).as_bool();
+            let mut added = Shell_NotifyIconW(NIM_ADD, &self.nid).as_bool();
+            if !added {
+                // Taskbar notification area might still be initializing during Explorer startup;
+                // perform bounded retry (up to 3 attempts with 50ms interval)
+                for _ in 0..3 {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    let _ = Shell_NotifyIconW(NIM_DELETE, &self.nid);
+                    added = Shell_NotifyIconW(NIM_ADD, &self.nid).as_bool();
+                    if added {
+                        break;
+                    }
+                }
+            }
             self.is_active.store(added, Ordering::SeqCst);
             self.reconnect_count.fetch_add(1, Ordering::SeqCst);
 
             if !self.state_ptr.is_null() {
                 (*self.state_ptr).is_active.store(added, Ordering::SeqCst);
-                (*self.state_ptr)
-                    .last_reconnect_tick
-                    .store(GetTickCount64(), Ordering::Relaxed);
             }
             added
         }
@@ -421,8 +443,20 @@ unsafe extern "system" fn tray_window_proc(
 
             // Clean up stale registration first to eliminate duplicate icons
             let _ = Shell_NotifyIconW(NIM_DELETE, &state.nid);
-            // Re-add icon to newly created taskbar notification area
-            let added = Shell_NotifyIconW(NIM_ADD, &state.nid).as_bool();
+            // Re-add icon to newly created taskbar notification area with bounded retries
+            let mut added = Shell_NotifyIconW(NIM_ADD, &state.nid).as_bool();
+            if !added {
+                // Taskbar notification area might still be initializing during Explorer startup;
+                // perform bounded retry (up to 3 attempts with 50ms interval)
+                for _ in 0..3 {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    let _ = Shell_NotifyIconW(NIM_DELETE, &state.nid);
+                    added = Shell_NotifyIconW(NIM_ADD, &state.nid).as_bool();
+                    if added {
+                        break;
+                    }
+                }
+            }
             state.is_active.store(added, Ordering::SeqCst);
             state.reconnect_count.fetch_add(1, Ordering::SeqCst);
 
@@ -637,7 +671,16 @@ mod tests {
         // Count remains 1 due to debounce loop prevention
         assert_eq!(tray.reconnect_count(), 1);
 
-        // 3. Explicit handle_taskbar_created invocation
+        // Immediate explicit handle_taskbar_created within 300ms must also be debounced
+        let _ = tray.handle_taskbar_created();
+        assert_eq!(
+            tray.reconnect_count(),
+            1,
+            "handle_taskbar_created within debounce interval must not double-increment reconnect count"
+        );
+
+        // 3. Explicit handle_taskbar_created invocation after debounce expiry
+        std::thread::sleep(std::time::Duration::from_millis(310));
         let added = tray.handle_taskbar_created();
         println!("Explicit handle_taskbar_created added: {}", added);
         assert_eq!(tray.reconnect_count(), 2);
