@@ -5,7 +5,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%20Windows%2011%20x64-0078D6.svg)](https://learn.microsoft.com/windows/)
-[![Development Status](https://img.shields.io/badge/Status-0.1.0--dev%20(20%2F20%20Gates%20Verified)-brightgreen.svg)](docs/STATUS.md)
+[![Development Status](https://img.shields.io/badge/Status-0.1.0--dev%20(Reconciled%20Stability%20Baseline)-blue.svg)](docs/STATUS.md)
 
 ---
 
@@ -14,7 +14,7 @@
 > **AUTHORITATIVE NOTICE — OWNER DECISIONS Q42:A, Q43:A, Q44:A, Q45:B, Q46:B**
 >
 > - **Release v1.0.0 Withdrawn (Q42:A & Q45:B)**: On 2026-10-26, the prematurely tagged GitHub release `v1.0.0` and Git tag `refs/tags/v1.0.0` were formally withdrawn and deleted following an independent audit that identified missing subsystems (Direct2D rendering, Core Audio WASAPI, Lua runtime, WinUI 3 settings), unreviewed merges, and unexecuted CI workflows.
-> - **Remediation Campaign Complete (Phases 0–7)**: Across PRs #14 through #18, all 17 audit defects have been systematically resolved, and all 20 acceptance gates in PRD Section 18.2 have been empirically qualified against live Windows subsystems with 105 automated unit and integration tests passing cleanly.
+> - **Phase A Integration & Stability Priority (PR #20)**: On 2026-10-27, PR #20 was merged into `main` at commit `10c4205` with explicit owner approval, establishing secure Named Pipe creation, capability authorization, atomic config replacement, and C++/WinUI 3 response validation. Active engineering prioritizes core application functionality and stability over public packaging and distribution.
 > - **v1.0.0 Reserved (Q46:B)**: Tag `v1.0.0` is strictly reserved for the future verified stable production release after final owner sign-off. Active development proceeds under verified baseline `0.1.0-dev`.
 > - **Evidence Preserved**: Complete historical metadata, installer asset SHA-256 hashes, and CI error logs are archived in `local-test-artifacts/v1.0.0_release_preservation_record.json` and documented in [docs/EVIDENCE.md](docs/EVIDENCE.md). Git commit history remains intact without force-pushing per Q45:B.
 > - **Owner Approval Required (Q44:A)**: All pull request merges into `main` require explicit, documented owner approval or authorized session delegation.
@@ -46,15 +46,16 @@ AetherShell is developed under an evidence-led iterative engineering model. Prog
 - [Evidence Ledger](docs/EVIDENCE.md) — Test logs and historical preservation records
 - [Architecture Decision Records (ADRs)](docs/adr/)
 
-### Qualified 20-Gate Acceptance Matrix Summary (PRD Section 18.2)
+### Reconciled 20-Gate Acceptance Matrix Summary (PRD Section 18.2)
 
 | Disposition | Count | Acceptance Gates |
 |:---|:---:|:---|
-| `VERIFIED` | 20 | **G01** (Core Lifecycle), **G02** (OS Detection & Direct2D/WinUI 3 Compatibility), **G03** (Shell Isolation), **G04** (Taskbar Recovery & Coordination), **G05** (Experimental VM Qualification), **G06** (Desktop Layering & Direct2D Renderer), **G07** (Temporary Interactive Mode Stacking & Dismissal), **G08** (Win32 Sensor Honesty), **G09** (WASAPI Loopback Capture & FFT), **G10** (Supervised Lua 5.4 & Job Object Quotas), **G11** (WinUI 3 Settings & 0 MB Exit), **G12** (TOML Schemas & Backup), **G13** (Active Performance Budgets), **G14** (WCAG AA & Accessibility), **G15** (5-Channel Packaging), **G16** (Apache 2.0 & Path Privacy), **G17** (Safe Mode & Crash Recovery), **G18** (Evidence Ledger & Green CI), **G19** (Coexistence Yielding), **G20** (Q38:B Canonical AppData) |
-| `PARTIALLY_VERIFIED` | 0 | None |
+| `VERIFIED` | 0 | None (Full release sign-off across all gates required prior to stable v1.0.0) |
+| `PARTIALLY_VERIFIED` | 18 | **G01** (Core Startup), **G02** (Windows Compatibility), **G03** (Shell Isolation), **G04** (Taskbar Recovery), **G06** (Desktop Layering), **G07** (Temporary Interactive Mode), **G08** (Sensor Honesty), **G09** (Local Adaptive Audio), **G10** (Lua Worker Reliability & Trust), **G11** (WinUI Settings Independence), **G12** (Schema/Backup), **G13** (Performance), **G14** (Accessibility), **G16** (License/Privacy), **G17** (Safe Mode & Recovery), **G18** (Strict No-Go & Evidence), **G19** (Coexistence), **G20** (Packaging Identity) |
+| `NOT_APPLICABLE` | 1 | **G05** (Experimental Qualification — Absent in Stable Core) |
+| `DEFERRED` | 1 | **G15** (Five-Channel Release — Public Distribution Deferred) |
 | `NOT_IMPLEMENTED` | 0 | None |
-| `NOT_STARTED` | 0 | None |
-| `FAILED` | 0 | None |
+| `BLOCKED` | 0 | None |
 
 For complete per-gate findings and technical evidence, see [docs/STATUS.md](docs/STATUS.md).
 

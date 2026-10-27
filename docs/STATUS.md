@@ -1,8 +1,8 @@
 # AetherShell Implementation & Verification Ledger
 
-**Document Revision:** 0.1.0-dev (Fully Reconciled & Qualified Baseline)  
-**Last Updated:** 2026-10-26  
-**Current Status:** Phase 7 Complete — Full 20-Gate Acceptance Qualification & Release Reconciliation
+**Document Revision:** 0.1.0-dev (Reconciled Application Stability Baseline)  
+**Last Updated:** 2026-10-27  
+**Current Status:** Phase A Integrated — Transition to Application Stability & Truthful Acceptance Baseline
 
 ---
 
@@ -14,57 +14,62 @@
 >    On 2026-10-26, GitHub Release `v1.0.0` (ID: `423768197`, Node ID: `RE_kwDOVW-nKs4ZQjCF`) and remote Git tag `refs/tags/v1.0.0` pointing to commit `1da34dc14bfc16d162edc34af9e7cdbe6813b313` were **formally withdrawn and deleted** from GitHub. The release had been published prematurely based on in-memory mocks, stubs, unreviewed self-merges (PRs #7–#12), and failing CI pipelines.
 >
 > 2. **Version Reservation (Q46:B)**:  
->    Version tag `v1.0.0` is strictly **reserved for the future genuinely verified stable production release** after all 20 acceptance gates pass empirical qualification and owner sign-off. Active development proceeds under verified baseline version `0.1.0-dev`.
+>    Version tag `v1.0.0` is strictly **reserved for the future genuinely verified stable production release** after all applicable acceptance gates pass empirical qualification and owner sign-off. Active development proceeds under verified baseline version `0.1.0-dev`.
 >
 > 3. **Evidence Preservation & Git Immutability (Q45:B)**:  
->    Commit history on `main` (including commit `1da34dc14bfc16d162edc34af9e7cdbe6813b313`) is preserved without destructive force-pushes or history rewriting. Full metadata, asset digests, CI error logs, and audit records are permanently preserved in `local-test-artifacts/v1.0.0_release_preservation_record.json` and logged under [EVD-008](EVIDENCE.md#evd-008-premature-release-v100-withdrawal--governance-reconciliation-audit).
+>    Commit history on `main` (including commit `1da34dc14bfc16d162edc34af9e7cdbe6813b313`) is preserved without destructive force-pushes or history rewriting. Full metadata, asset digests, CI error logs, and audit records are permanently preserved in `local-test-artifacts/v1.0.0_release_preservation_record.json` and logged under [EVD-008](EVIDENCE.md#evd-008-premature-release-v100-withdrawal-evidence-preservation--governance-audit).
 >
 > 4. **Public Repository (Q43:A)**:  
 >    The `ArchdukeViel/aethershell` repository remains strictly public. Public source code availability does not imply stable product readiness until formal release qualification.
 >
 > 5. **Mandatory Owner Approval for Merges (Q44:A)**:  
 >    No pull request may be merged into `main` without explicit, documented owner approval or authorized session delegation. AI subagent reviews provide technical verification.
+>
+> 6. **Phase A Integration (PR #20)**:  
+>    On 2026-10-27, PR #20 was merged into `main` at commit `10c4205e573a7d5b7a06ae83859dee8d2a30d2b6` with explicit owner approval. It established fail-closed Named Pipe DACLs, caller SID validation, capability token authorization, atomic config replacement, suspended-process Job Object memory quotas, C++/WinUI 3 Settings JSON response validation, and test isolation.
 
 ---
 
 ## Reconciled 20-Gate Acceptance Matrix (PRD Section 18.2)
 
-Following the remediation engineering campaign (Phases 1–7; PRs #14–#18), all 20 acceptance gates have been empirically implemented, verified with automated tests, and qualified against live Windows subsystems:
+Following the Phase A remediation and independent adversarial audit, the project acceptance matrix has been reconciled against the authoritative requirements in **PRD Section 18.2**. The previous claim that 20/20 gates were `VERIFIED` reflected component-level unit test passes rather than complete operating system integration.
 
-- **`VERIFIED`**: 20 Gates (G01–G20)
-- **`PARTIALLY_VERIFIED`**: 0 Gates
+In accordance with owner guidance, gates are classified using the truthful vocabulary:
+- **`VERIFIED`**: 0 Gates
+- **`PARTIALLY_VERIFIED`**: 18 Gates (G01, G02, G03, G04, G06, G07, G08, G09, G10, G11, G12, G13, G14, G16, G17, G18, G19, G20)
+- **`NOT_APPLICABLE`**: 1 Gate (G05 — No experimental Explorer extension in stable v1)
+- **`DEFERRED`**: 1 Gate (G15 — Five-channel public distribution deferred per owner instruction)
 - **`NOT_IMPLEMENTED`**: 0 Gates
-- **`NOT_STARTED`**: 0 Gates
-- **`FAILED`**: 0 Gates
+- **`BLOCKED`**: 0 Gates
 
-| Gate | Description | Former Claim | Truthful Status | Audit Finding & Empirical Verification Evidence |
-|:---|:---|:---:|:---:|:---|
-| **G01** | Core startup & clean shutdown | `VERIFIED` | `VERIFIED` | Session-scoped singleton mutex (`Local\AetherShell_Singleton_{SessionId}`), dedicated tray message pump, desktop host window lifecycle, and clean process exit. WinUI 3 settings terminates with `Application::Current().Exit()`, dropping resident memory to 0 MB. Verified in `lifecycle_ipc_test.rs` and `settings_packaging_release_integration_test.rs`. |
-| **G02** | Windows compatibility | `VERIFIED` | `VERIFIED` | OS build family and UBR detection via Windows registry (Windows 10 22H2 19045+ through Windows 11 24H2/26H2), Direct2D 1.1 / DirectWrite / DirectComposition hardware renderer, and Windows App SDK 1.5 C++/WinRT unpackaged desktop execution. Verified in `aethershell-win` and `aethershell-renderer`. |
-| **G03** | Shell isolation | `VERIFIED` | `VERIFIED` | **Genuinely verified**. Workspace contains zero Explorer injection hooks, API detours, or injected DLL modules. Stable builds strictly follow PRD Section 4. Zero injection into or termination of `explorer.exe`. Verified in `taskbar_desktop_integration_test.rs`. |
-| **G04** | Taskbar recovery | `VERIFIED` | `VERIFIED` | Taskbar state machine, multi-monitor synchronization, non-invasive conflict detection yielding (`detect_taskbar_conflicts`), safe mode precedence, and native appearance coordination. Verified in `aethershell-taskbar`. |
-| **G05** | Experimental qualification | `VERIFIED` | `VERIFIED` | Non-invasive shell boundary maintained. Disruptive shell tests quarantined to isolated VM harnesses per PRD Section 4 & Q37:A safety constraints; physical host Explorer stability strictly protected. Verified in architectural safety boundaries. |
-| **G06** | Desktop layering | `VERIFIED` | `VERIFIED` | Win32 desktop host window created behind icons (`WorkerW`/`Progman`/`SHELLDLL_DefView` hierarchy), Direct2D hardware rendering pipeline with DirectComposition integration, and passive desktop canvas layer beneath icons. Verified in `desktop_host_and_direct2d_pipeline_integration_test.rs`, `taskbar_desktop_integration_test.rs`, and `aethershell-desktop`. |
-| **G07** | Temporary Interactive Mode | `VERIFIED` | `VERIFIED` | Real interaction controller with 4 auto-dismiss triggers: Escape key, timeout (default 8s), focus loss, and Windows desktop lock (`WM_WTSSESSION_CHANGE`). Layered without `WS_EX_TOPMOST` defect, eliminating Defect #4. Verified in `desktop_host_and_direct2d_pipeline_integration_test.rs`, `taskbar_desktop_integration_test.rs`, and `aethershell-desktop`. |
-| **G08** | Sensor honesty | `VERIFIED` | `VERIFIED` | Real Win32 telemetry providers (CPU via `PdhGetFormattedCounterValue`, RAM via `GlobalMemoryStatusEx`, disk via `GetDiskFreeSpaceExW`, battery via `GetSystemPowerStatus`, network via `GetIfTable2`), honest reporting of `Unavailable(Unsupported)` and warmup states, real AST template bindings in declarative renderer and Lua host API. Verified in `aethershell-telemetry` and `telemetry_audio_script_integration_test.rs`. |
-| **G09** | Local adaptive audio | `VERIFIED` | `VERIFIED` | Real Windows Core Audio WASAPI shared-loopback capture thread (`IAudioClient`, `IAudioCaptureClient`), real-time 512-point FFT spectrum analysis, 32 logarithmic frequency bands, temporal smoothing, volatile in-memory processing with zero disk persistence or audio recording. Verified in `aethershell-audio` and `telemetry_audio_script_integration_test.rs`. |
-| **G10** | Lua worker reliability & trust | `VERIFIED` | `VERIFIED` | Supervised child worker process (`aethershell-script-host.exe`), authentic Lua 5.4 interpreter (`mlua`), strict Windows Job Object CPU & RAM quotas, SHA-256 digest trust verification before script execution, crash limit and quarantine state machine. Verified in `aethershell-script-host` and `telemetry_audio_script_integration_test.rs`. |
-| **G11** | WinUI Settings independence | `VERIFIED` | `VERIFIED` | Native C++/WinRT WinUI 3 desktop settings application (`apps/aethershell-settings`), full 6-view XAML interface, session-bound authenticated Named Pipe IPC client, clean exit on window close with 0 MB resident RAM. Verified in MSBuild release build and `settings_packaging_release_integration_test.rs`. |
-| **G12** | Schema/backup | `VERIFIED` | `VERIFIED` | Strict TOML configuration parsing, draft-07 JSON schemas in `schemas/`, atomic write mechanism (`.tmp` -> replace), automatic corrupted file `.bak` rotation and self-healing. Verified in `aethershell-config`. |
-| **G13** | Performance budgets | `VERIFIED` | `VERIFIED` | Active benchmark harness in `aethershell-diagnostics` measuring live 512-sample PCM multi-tone harmonic synthesis, real-time FFT spectrum processing, AST layout evaluation, scene graph compilation, and true Windows private working set (`PROCESS_MEMORY_COUNTERS_EX.PrivateUsage`). Confirmed meeting PRD Table 17-1 limits (idle <0.5% CPU / <40 MiB RAM, active <2.0% CPU / <65 MiB RAM). Verified in `aethershell-diagnostics`. |
-| **G14** | Accessibility | `VERIFIED` | `VERIFIED` | High-contrast theme compliance across 6 launch themes, keyboard focus and navigation in WinUI 3 settings, screen reader support tokens, WCAG AA color contrast ratios. Verified in `aethershell-renderer` and `apps/aethershell-settings`. |
-| **G15** | Five-channel release | `VERIFIED` | `VERIFIED` | Five packaging channels qualified: WiX v4 MSI (per-machine scope, complete runtime DLLs/PRIs/XBFs, assets, themes, skins, schemas), MSIX (authentic multi-scale PNG assets, semantic validation, Authenticode SHA-256 test signed), Portable ZIP (canonical AppData per Q38:B, all runtime dependencies), WinGet (automated manifest SHA-256 computation script matching MSI), Microsoft Store Preflight (complete audit matrix and asset qualification). Verified in `settings_packaging_release_integration_test.rs`. |
-| **G16** | License/privacy | `VERIFIED` | `VERIFIED` | Apache-2.0 license compliance, strict local-first privacy (zero telemetry uploads, volatile audio analysis), compiler path remapping (`--remap-path-prefix`) in `.cargo/config.toml` eliminating absolute developer username / profile paths from compiled binaries (Defect #17). Verified in `.cargo/config.toml` and binary inspections. |
-| **G17** | Safe Mode & recovery | `VERIFIED` | `VERIFIED` | Safe Mode core switch (`--safe-mode`) suppressing taskbar hooks and desktop hooks, configuration corruption auto-healing with `.bak` recovery, script supervisor crash quarantine state machine with isolated Job Object containment. Verified in `aethershell-app` and `aethershell-script-host`. |
-| **G18** | Strict evidence ledger | `VERIFIED` | `VERIFIED` | Systematic evidence documentation in `docs/EVIDENCE.md` (EVD-001 through EVD-009) tied to specific Git commits, automated CI testing passing on GitHub Actions (`Rust Quality Gates & Tests`, `Cargo Audit & Advisory Database`, `GitGuardian Security Checks`), independent verification audits. Verified in repository history and CI ledgers. |
-| **G19** | Coexistence | `VERIFIED` | `VERIFIED` | Non-invasive detection of competing taskbar utilities (`TranslucentTB`, `StartAllBack`, `ExplorerPatcher`, `RetroBar`), deterministic yielding in `TaskbarCoordinator`, multi-monitor taskbar sync. Verified in `aethershell-taskbar` and `aethershell-win`. |
-| **G20** | Packaging identity | `VERIFIED` | `VERIFIED` | Strict compliance with PRD Q38:B: canonical configuration path resolution to `%LOCALAPPDATA%\AetherShell` across all distribution formats (MSI, MSIX, Portable ZIP, WinGet), removal of portable `<exe_dir>\data` redirection. Verified in `aethershell-config` and `settings_packaging_release_integration_test.rs`. |
+| Gate | PRD Pass Condition | Current Status | Concrete Reason & Evidence References | Outstanding Acceptance Requirements |
+|:---|:---|:---:|:---|:---|
+| **G01 Core startup** | Non-elevated core without mandatory driver/service/Explorer injection, session-scoped singleton, safe shutdown | `PARTIALLY_VERIFIED` | Session-scoped singleton mutex (`Local\AetherShell_Singleton_{SessionId}`), dedicated tray message pump, desktop host window lifecycle, and clean process exit work. Verified in `lifecycle_ipc_test.rs` and EVD-001/EVD-012. However, Explorer restart recovery is missing (`TaskbarCreated` is not registered), and system shutdown/logoff session handling requires verification. | Register and handle `TaskbarCreated` message to recreate tray icon and re-discover shell handles on Explorer restart; test clean shutdown under `WM_ENDSESSION`. |
+| **G02 Windows compatibility** | Required Windows 10/11 x64 matrix; honest fallback on unsupported effects | `PARTIALLY_VERIFIED` | OS build and UBR detection via registry is implemented and tested for Win10 19045+ through Win11 26H2. Direct2D 1.1 / DirectWrite runtime functions on target platforms (`crates/aethershell-win/src/os_version.rs`, EVD-002). However, execution has only been validated on GitHub CI runners (Windows Server 2022) and a single local Windows 11 host. Full multi-build OS matrix testing across differing GPU drivers has not been executed. | Execute automated matrix tests across clean VMs representing each target Windows build family (Win10 22H2, Win11 22H2/23H2/24H2/26H2) and GPU driver tier. |
+| **G03 Shell isolation** | All stable binaries and packages contain no Explorer extension; no hooks into critical protected processes | `PARTIALLY_VERIFIED` | Source-level non-injection architecture is implemented (zero DLL injection hooks, detours, or Explorer extensions across workspace crates), and compiled binary inspection confirms no external injection modules (`crates/aethershell-app/tests/taskbar_desktop_integration_test.rs`, EVD-003, EVD-012). However, because packaging and distribution channels (MSI, MSIX, Store, WinGet, portable) are deferred, a full package artifact audit and module scan across all qualified distribution packages remains an outstanding requirement. | Perform module and artifact audits on all five final distribution packages (MSI, MSIX, Store, WinGet, portable ZIP) to verify zero injected extensions. |
+| **G04 Taskbar recovery** | External effects gated; native fallback; no repeated fighting or Explorer loop | `PARTIALLY_VERIFIED` | Non-invasive conflict detection (`detect_taskbar_conflicts`) yields cleanly to competing customizers (TranslucentTB, StartAllBack, RetroBar). Safe mode enforces `NativeNoopBackend`. `ExternalAppearanceBackend` gates on verified capabilities and falls back safely to no-op on Windows 11 XAML taskbars (`crates/aethershell-taskbar/src/coordinator.rs`, EVD-004). However, dynamic recovery when Explorer crashes/restarts is not yet wired. | Dynamic recovery upon `TaskbarCreated` notification; VM pixel capture proving clean fallback without visual stutter or loops. |
+| **G05 Experimental qualification** | Any opt-in Explorer extension: disposable-VM tests, then dedicated recoverable hardware qualification before limited experimental distribution (not stable gate if absent) | `NOT_APPLICABLE` | No experimental Explorer extension, XAML bridge DLL, or in-process injection module is included in the codebase or built by default. Per PRD Section 18.2 note ("not stable gate if absent") and owner decisions Q02:C / Q35:B, this gate is N/A until an experimental Explorer extension is developed and qualified. | None for stable core. If an opt-in experimental bridge is created in the future, disposable VM and recoverable hardware qualification reports will be required. |
+| **G06 Desktop layering** | Wallpaper below passive widgets below desktop icons on qualifying builds; otherwise visibly unsupported/disabled | `PARTIALLY_VERIFIED` | `DesktopHostWindow` discovers `SHELLDLL_DefView` / `WorkerW` / `Progman` and positions the overlay surface behind desktop icons (`WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_LAYERED`). Clicks pass through to desktop icons (`crates/aethershell-desktop/src/window.rs`, EVD-005). However, pressing `Win+D` (Show Desktop) causes unowned `WS_POPUP` windows to lose Z-order or minimize, and there is no active shell event listener re-asserting bottom stacking. Recovery must rely exclusively on non-invasive shell monitoring (e.g. `RegisterShellHookWindow` or `EVENT_SYSTEM_FOREGROUND`), never Explorer injection. | Handle `Win+D` stacking re-assertion via approved non-invasive shell hooks / foreground event monitoring; verify layering across live wallpaper and desktop icon lasso selection in VM tests. |
+| **G07 Temporary Interactive Mode** | Tray/hotkey opens bounded overlay, user action works; Escape/timeout/focus change restores passive icon input | `PARTIALLY_VERIFIED` | Dismissal triggers (Escape key, 8-second inactivity timeout, focus change, session lock) are implemented in `InteractionController`. Tray menu item "Unlock Layout" can trigger interactive mode (`crates/aethershell-desktop/src/interaction.rs`, EVD-005). However, no global hotkey (`RegisterHotKey`) is implemented, `desktop_host_wnd_proc` lacks mouse hit-testing (`WM_LBUTTONDOWN`) to interact with widget controls, and the mode toggles styles on the full-screen window rather than a bounded overlay. | Register configurable global hotkey; implement spatial pointer hit-testing for interactive widget controls; record VM focus/hit-test video demonstrating interactive control clicks and automatic return to passive icon selection. |
+| **G08 Sensor honesty** | Missing counters collapse/show unknown; optional external providers; tested non-waking sampling | `PARTIALLY_VERIFIED` | Native Win32 telemetry providers exist for CPU (`GetSystemTimes`), RAM (`GlobalMemoryStatusEx`), storage (`GetDiskFreeSpaceExW`), battery (`GetSystemPowerStatus`), and network (`GetIfTable2`), with honest reporting of unsupported states (GPU is omitted honestly per PRD [F22]). However, in `engine.rs`, polled metrics are discarded during the runtime loop, and the desktop scene renders hardcoded dummy values (24.5% CPU, 6.8 GB RAM). | Wire live telemetry poll results into dynamic layout bindings dictionary and feed to renderer; verify non-waking sampling intervals on battery power. |
+| **G09 Local adaptive audio** | Default-on local WASAPI, endpoint recovery, battery 15 FPS default, AC 30 FPS, configurable 60 FPS, no persistent samples | `PARTIALLY_VERIFIED` | Real WASAPI shared-loopback capture thread initializes `IAudioClient`/`IAudioCaptureClient`, runs Cooley-Tukey 512-point FFT, computes logarithmic frequency bands, and operates strictly in-memory without disk persistence (PRD [S08]). However: (1) `IMMNotificationClient` is not implemented, so switching default audio devices leaves capture attached to dead endpoints; (2) polling loop runs at 66 Hz regardless of battery mode or audio silence; (3) `canvas.rs` hardcodes dummy spectrum bands `[0.2, 0.4, ...]` because no presentation loop pushes live bands to the renderer. | Implement `IMMNotificationClient` for endpoint migration; adapt capture polling based on AC/battery status and audio silence; feed real spectrum bands to `D2D1CanvasRenderer` in a continuous render loop. |
+| **G10 Lua worker reliability and trust** | Script host separate and lazy; explicit digest-bound consent; crash/hang detected without core-blocking; IPC invalid payload rejected | `PARTIALLY_VERIFIED` | Child worker process (`aethershell-script-host.exe`) integrates authentic Lua 5.4 (`mlua`), runs in a Windows Job Object with 128 MB memory limit, uses `CREATE_SUSPENDED` containment, enforces pure-Rust SHA-256 script digest trust verification before execution, and implements a crash quarantine circuit breaker. IPC server enforces peer authorization tokens (`crates/aethershell-script-host/src/supervisor.rs`, EVD-006, EVD-010). Per owner architecture (PRD Section 1.3, 13.2, Q07:B, Q32:B): standard bundled widgets are strictly declarative and do not require Lua; Lua 5.4 is reserved for optional explicitly trusted scripts in an on-demand worker process without arbitrary CPU hard caps. However: (1) worker is never auto-spawned by `AppEngine` during normal runtime; (2) zero `.lua` widget scripts exist in `assets/`; (3) no binding-mutation API (`aether.set_binding`) is exposed to Lua scripts to push computed state back to Core. | Wire on-demand worker spawning to engine profile loader; expose `aether.set_binding` for state updates; bundle optional example Lua widgets; test crash/hang recovery in VM without blocking Core tray. |
+| **G11 WinUI Settings independence** | C++/WinRT process on-demand, exits on close, survives lost IPC, core survives crash | `PARTIALLY_VERIFIED` | Native C++/WinRT MSBuild project compiles a genuine 64-bit executable (`aethershell-settings.exe`, 515 KB) with zero Rust runtime markers. Employs authenticated Named Pipe IPC client with strict WinRT JSON response parsing, framing limits (1 MB), and fail-closed test token overrides. Exits with 0 MB resident RAM on close (`Application::Current().Exit()`). Verified in MSBuild and CI run `40447657280`. However, all XAML controls (switches, sliders, combo boxes) are non-functional placeholders not wired to configuration fields; Settings does not deserialize `config.toml` or invoke configuration save/load IPC endpoints. | Wire WinUI 3 XAML controls to Core `get_config`/`set_config` IPC endpoints; implement configuration state synchronization and persistence; test Settings crash isolation from running Core. |
+| **G12 Schema/backup** | All TOML samples parse; migrations reversible; installed and portable share intended AppData store with conflict protection | `PARTIALLY_VERIFIED` | TOML configuration schema parsing (`AppConfig`), JSON draft-07 schemas, atomic write replacement (`ReplaceFileW` / `MoveFileExW`), and corrupted file `.bak` rotation are fully implemented and unit-tested in `crates/aethershell-config`. Canonical configuration identity resolves to `%LOCALAPPDATA%\AetherShell` per Q38:B. However, configuration schema migrations (v1 -> v2 versioning) and concurrent instance file-locking conflict protection across multiple running processes are not yet fully implemented or tested. | Implement versioned reversible schema migrations; test concurrent instance file-collision handling and locking semantics in multi-instance VM tests. |
+| **G13 Performance** | Real measured workloads meet ratified budgets on baseline matrix; no false exact-zero claims | `PARTIALLY_VERIFIED` | `crates/aethershell-diagnostics/src/benchmark.rs` implements active benchmarking of 512-sample PCM synthesis, FFT processing, layout evaluation, and true private working set measurement via Win32 `K32GetProcessMemoryInfo`. Confirms synthetic tests meet limits (<0.5% CPU / <40 MB idle; <2.0% CPU / <65 MB active). However, because the engine does not yet run a continuous active Direct2D presentation loop or live telemetry/audio update pipeline, whole-application runtime performance on actual hardware across five representative runs remains unmeasured. | Wire real-time presentation loop and measure genuine five-run traces on target hardware under idle and active media visualization workloads. |
+| **G14 Accessibility** | Keyboard, Narrator/UIA, high contrast, scaling, reduced motion, localized truncation rules | `PARTIALLY_VERIFIED` | High-contrast themes and palette definitions exist in `aethershell-renderer`. WinUI 3 XAML controls inherit standard Windows UI Automation (UIA) and keyboard navigation primitives. However, desktop widgets are rendered via direct Win32 Direct2D without UIA provider implementation, and keyboard navigation across desktop widgets requires completion of Interactive Mode hit-testing. | Implement UIA accessibility providers or accessible alternative representation for desktop widgets; audit Narrator and keyboard navigation in WinUI 3 Settings. |
+| **G15 Five-channel release** | MSI, MSIX, Microsoft Store approved listing, WinGet, self-contained portable fully qualified; no partial stable release (Q40:A) | `DEFERRED` | Packaging scripts (WiX v4 MSI, MSIX packaging layout, WinGet manifest generation, self-contained portable staging) exist in `packaging/`. However, in accordance with explicit owner decisions (Q40:A, Q42:A, Q46:B) and current owner instructions, public distribution, code signing, Store submission, and WinGet publication are **intentionally deferred** until application stability and functionality are achieved. Release v1.0.0 was formally withdrawn. | Code signing certificate procurement; clean-VM installation/upgrade/uninstall testing for all 5 channels; Microsoft Store submission and accepted listing; WinGet package validation. |
+| **G16 License/privacy** | Apache-2.0 LICENSE and dependency notices; no unsolicited analytics or raw audio upload | `PARTIALLY_VERIFIED` | Apache-2.0 `LICENSE` and complete `NOTICE` are present. WASAPI loopback capture processes audio strictly in volatile memory without disk persistence or upload. Compiler path remapping is applied dynamically in CI via `--remap-path-prefix` and in MSVC build configuration via `/pathmap`, successfully eliminating developer usernames and workstation paths from release binaries (verified in EVD-010, EVD-011). However, complete third-party dependency notice generation (SBOM), automated license compliance scanning, and dynamic runtime network traffic capture auditing (proving zero unsolicited network traffic) have not been executed. | Generate third-party dependency attribution notice / SBOM; execute dynamic network capture audit during active runtime to prove zero outbound traffic. |
+| **G17 Safe Mode and recovery** | Restart safe mode, widget/worker quarantine, Explorer cleanup, rollback, IPC errors, update recovery | `PARTIALLY_VERIFIED` | `--safe-mode` command line switch cleanly bypasses hooks and forces `NativeNoopBackend`. Lua worker crash quarantine transitions to `SupervisorState::Quarantined` after repeated failures. Configuration self-healing recovers from corrupted TOML via `.bak` rotation (`crates/aethershell-app/src/engine.rs`, `crates/aethershell-config/src/storage.rs`). However, dynamic Explorer crash recovery (re-registering upon Explorer restart) and update rollback mechanisms are not yet implemented. | Wire dynamic Explorer restart recovery (`TaskbarCreated`); test complete failure-injection scenarios in disposable VMs. |
+| **G18 Strict no-go and evidence** | No unverified critical behavior represented as supported; no physical-host disruptive tests; all gates signed off | `PARTIALLY_VERIFIED` | Premature release v1.0.0 was formally withdrawn (Q42:A, Q45:B). The project strictly adheres to Q37:A safety constraints (disruptive shell tests restricted to disposable VMs; zero injection into host Explorer). All 20 gates are honestly classified with concrete empirical status, and PR #20 merge required explicit owner authorization (Q44:A) and passing CI. Verified in `docs/EVIDENCE.md` and commit history. However, because release sign-off requires all stable gates to pass and final release artifact hashes to be verified, G18 cannot be fully verified until all applicable gates reach qualified sign-off. | Complete qualification and sign-off across all applicable gates; generate reproducible final release ledger with signed artifact hashes before stable v1.0.0. |
+| **G19 Coexistence** | Detected competing taskbar style controller yields; does not terminate or modify third-party process | `PARTIALLY_VERIFIED` | `detect_taskbar_conflicts()` inspects running processes for known customization tools (`TranslucentTB`, `StartAllBack`, `ExplorerPatcher`, `RetroBar`). If detected, `TaskbarCoordinator` deterministically yields and selects `NativeNoopBackend` per PRD Q21:A without terminating, injecting into, or modifying third-party processes (`crates/aethershell-taskbar/src/coordinator.rs`, EVD-009). However, live coexistence qualification alongside actively running competing customization tools has only been verified via mock process tables, not through empirical VM observation on target Windows operating systems. | Execute live coexistence testing in disposable Windows VMs with competing utilities running concurrently, confirming clean yielding without process termination, window visual artifacts, or hook interference. |
+| **G20 Packaging identity** | Same user data semantics across MSI/MSIX/Store/portable, startup toggles, signed migrators and rollback | `PARTIALLY_VERIFIED` | Canonical data path resolution is implemented in `crates/aethershell-config/src/storage.rs` targeting `%LOCALAPPDATA%\AetherShell` across all deployment types, adhering strictly to PRD Q38:B. However, cross-channel data migration, startup toggle coordination across packaged MSIX and unpackaged portable instances, and migration rollback have not been tested in a clean-OS VM migration suite. | Execute clean-OS VM migration suite validating identical configuration access across MSI, MSIX, and Portable unpackaged executions. |
 
 ---
 
 ## Technical Audit Findings & Verified Remediation Summary
 
-An adversarial audit conducted on 2026-10-26 originally revealed 17 specific defects across the codebase. All 17 defects have been systematically remediated and verified:
+An adversarial audit conducted originally revealed 17 specific defects across the codebase. Across Phases 1–7 and Phase A (PR #20), these foundational issues were addressed:
 
 1. **Workspace Package Version Mismatch**: Reconciled workspace versions to `0.1.0-dev`. Hardcoded version strings removed.
 2. **Missing DirectX & DirectComposition Renderer**: Remediated in PR #15 (`crates/aethershell-renderer/src/d2d.rs`) with Direct2D 1.1 factory, render target creation, DirectWrite text layouts, and DirectComposition visual tree integration.
@@ -73,63 +78,77 @@ An adversarial audit conducted on 2026-10-26 originally revealed 17 specific def
 5. **No-Op Taskbar Backend**: Remediated with coordinator integration, conflict yielding, and safe fallback.
 6. **Synthetic WASAPI Audio**: Remediated in PR #16 (`crates/aethershell-audio/src/wasapi.rs`) with real COM-initialized `IAudioClient`/`IAudioCaptureClient` loopback capture thread and 512-point FFT analysis.
 7. **Missing Lua 5.4 Interpreter**: Remediated in PR #16 (`crates/aethershell-script-host`) with native `mlua` 5.4 runtime integration and `aether` host API bindings.
-8. **In-Memory Script Supervisor**: Remediated in PR #16 (`crates/aethershell-script-host/src/supervisor.rs`) with Windows Job Object quotas (CPU and RAM limits) and process lifecycle supervision.
-9. **WinUI 3 Stub Substitution**: Remediated in PR #17 (`apps/aethershell-settings`) with complete 6-view C++/WinRT MSBuild solution, Named Pipe IPC client, and 0 MB resident RAM on close.
-10. **Incomplete WiX MSI**: Remediated in PR #17 (`packaging/wix`) with `perMachine` installation, staging all 36 Windows App SDK runtime files, themes, skins, and schemas.
-11. **Invalid MSIX Packaging**: Remediated in PR #17 (`packaging/msix`) with authentic 32-bpp PNG assets, strict semantic validation (eliminated `/nv`), and Authenticode test signing.
-12. **WinGet Scope & Checksum Mismatch**: Remediated in PR #17 (`packaging/winget`) with automated SHA-256 calculation script (`compute-manifest-sha256.ps1`) and aligned `Scope: machine`.
-13. **Store Preflight Only**: Remediated in PR #17 (`packaging/store/StorePreflight.md`) with verified asset dimensions and complete 5-channel packaging audit matrix.
+8. **In-Memory Script Supervisor**: Remediated in PR #16 (`crates/aethershell-script-host/src/supervisor.rs`) with Windows Job Object memory quotas (128 MB) and process lifecycle supervision.
+9. **WinUI 3 Stub Substitution**: Remediated in PR #17 & PR #20 (`apps/aethershell-settings`) with complete 6-view C++/WinRT MSBuild solution, Named Pipe IPC client, and 0 MB resident RAM on close.
+10. **Incomplete WiX MSI**: Staged in `packaging/wix` with `perMachine` installation, staging runtime DLLs, themes, skins, and schemas (distribution deferred).
+11. **Invalid MSIX Packaging**: Staged in `packaging/msix` with authentic 32-bpp PNG assets, strict semantic validation, and test signing (distribution deferred).
+12. **WinGet Scope & Checksum Mismatch**: Configured in `packaging/winget` with automated SHA-256 calculation script (distribution deferred).
+13. **Store Preflight Only**: Documented in `packaging/store/StorePreflight.md` (submission deferred).
 14. **Portable Storage PRD Q38:B Violation**: Remediated in PR #17 (`crates/aethershell-config/src/storage.rs`) with canonical `%LOCALAPPDATA%\AetherShell` resolution across all packaging modes.
-15. **Insecure IPC Named Pipes**: Remediated in PR #16 (`crates/aethershell-ipc/src/server.rs`) with Windows DACLs, client SID verification, and PID checking.
+15. **Insecure IPC Named Pipes**: Remediated in PR #16 & PR #20 (`crates/aethershell-ipc/src/server.rs`) with upfront Windows DACLs at creation, client SID verification, and peer PID authorization.
 16. **Synthetic Performance Benchmark**: Remediated in PR #17 (`crates/aethershell-diagnostics/src/benchmark.rs`) with active 512-sample harmonic PCM synthesis, real-time FFT spectrum analysis, layout engine evaluation, and true private working set measurement.
 17. **Committed Binaries in Git History & Developer Path Leaks**: Cleaned tracked binaries from layout; configured compiler path remapping in build tooling (`--remap-path-prefix` and MSVC `/pathmap`) eliminating developer usernames and local machine paths from compiled binaries.
 
 ---
 
-## Remediation Roadmap Tracking
+## Historical Session-Token Investigation Record
 
-- [x] **Phase 0: Baseline Audit & Evidence Preservation**
-  - Full technical codebase audit and defect verification
-  - Evidence preservation in `local-test-artifacts/v1.0.0_release_preservation_record.json`
-  - Audit logging in `docs/EVIDENCE.md` under EVD-008
-- [x] **Phase 1: Release Withdrawal & Status Reconciliation**
-  - Remote release `v1.0.0` deleted via `gh release delete`
-  - Remote tag `v1.0.0` deleted via `git push origin :refs/tags/v1.0.0`
-  - Reconciled 20-gate matrix published in `docs/STATUS.md`
-  - `README.md` updated with transparent withdrawal and status notice
-  - Dedicated reviewable PR #13 opened and merged per Q44:A
-- [x] **Phase 2: CI Pipeline & Governance Remediation** (PR #14)
-  - GitHub Actions CI workflows restored and verified green
-  - Branch protection rules on `main`
-  - Quality gates for Rust, Cargo Audit, and GitGuardian
-- [x] **Phase 3: Desktop Host & Direct2D Rendering Pipeline** (PR #15 - Phase 4)
-  - Win32 desktop host window creation behind icons
-  - Direct2D / DirectWrite / DirectComposition hardware rendering pipeline
-  - Real Temporary Interactive Mode overlay with Escape/focus auto-dismissal
-- [x] **Phase 4: Native Telemetry, WASAPI Audio & Supervised Lua Host** (PR #16 - Phase 5)
-  - Real Windows Core Audio WASAPI shared-loopback capture thread
-  - Real Lua 5.4 runtime integration in child worker with Job Object containment
-  - Secure Named Pipe IPC with Windows DACLs, SID validation, and client PID verification
-- [x] **Phase 5: WinUI 3 Settings, Q38:B AppData & Packaging Qualification** (PR #17 - Phase 6)
-  - Complete C++/WinRT WinUI 3 settings application navigation & IPC integration
-  - Correct portable mode AppData storage contract per PRD Q38:B
-  - Genuine WiX MSI with complete assets and correct scope
-  - Valid MSIX with genuine assets and test signing
-- [x] **Phase 6: Active Performance Benchmarking & Hardening** (PR #17 - Phase 6)
-  - Genuine benchmark harness measuring live rendering, audio FFT, and telemetry polling
-  - Multi-monitor, gaming shield, and power transition stress testing
-- [x] **Phase 7: Production Qualification & Release Baseline Reconciliation** (PR #18 - Phase 7)
-  - Full qualification across all 20 acceptance gates G01–G20
-  - Compiler path remapping configured in `.cargo/config.toml`
-  - Formal evidence ledger EVD-009 logged and verified
-  - Final campaign audit reconciliation and clean master merge
-- [x] **Phase A: Security, IPC Hardening & Data Integrity** (PR #20)
-  - Named pipe atomic security descriptor construction at creation (`create_with_security_attributes_raw`)
-  - Elimination of worker registration and heartbeat bypasses in `engine.rs`
-  - Privileged management command authorization with session capability tokens (`session_{session_id}.token`) across all IPC clients (Rust core, Tray, Rust settings CLI, C++/WinUI Settings)
-  - Supervised worker process role containment (prohibiting management command execution)
-  - Win32 `ReplaceFileW` and `MoveFileExW` genuinely atomic configuration saving with `REPLACE_FILE_FLAGS(0)`, backup self-healing, and lock failure protection
-  - Pre-execution worker Job Object containment via `CREATE_SUSPENDED`, 128 MiB memory limit enforcement (`0x800705AF` tested on child process), and zero-uncontained-execution guarantee
-  - Binary path privacy verified: 0 developer-specific paths across all 4 release binaries via `--remap-path-prefix` and MSVC `/pathmap`
-  - Formal evidence ledgers EVD-010 and EVD-011 logged and verified across 142 workspace tests (108 unit tests + 34 integration tests)
+During Phase A remediation testing, the security properties of the session token located at `%LOCALAPPDATA%\AetherShell\session_{id}.token` were investigated.
 
+To ensure strict evidentiary honesty:
+- **Verified Current State**: The directory `%LOCALAPPDATA%\AetherShell` currently exists and contains **0 items**.
+- **Historical Testing Record**: During initial automated tests in commit `53e5c3e`, a temporary dummy credential was written and subsequently cleaned up by `SessionTokenGuard::drop()`. However, because no prior host filesystem snapshot was recorded before that execution, the current absence of files does not conclusively establish whether any artifact existed prior to that invocation.
+- **Permanent Test Isolation Guardrail**: Commit `6ff97e75bbebc2b621c86397b8eb89612038910c` (merged in PR #20) implemented `TestIsolationGuard` rooted in `%TEMP%`. The C++ Settings client `LoadSessionToken` fails closed immediately if an explicit test token override cannot be read, never falling back to `%LOCALAPPDATA%`. Normal tests are strictly prohibited from touching `%LOCALAPPDATA%\AetherShell`.
+
+---
+
+## Authoritative Lua Architecture Preservation
+
+Per **PRD Section 1.3, 13.2** and owner decision **Q32:B**:
+- **Declarative Bundled Widgets**: Standard bundled widgets are strictly declarative and do not require Lua. No core application feature depends on script execution.
+- **Unrestricted Trusted Code**: Lua 5.4 executes only in a distinct, explicitly trusted, on-demand child worker process (`aethershell-script-host.exe`). The worker process is not designed as a hostile-code security sandbox; rather, it isolates accidental faults from the core tray process.
+- **No Arbitrary CPU Hard Cap**: In accordance with owner directives, no 20% hard CPU cap is assumed or imposed. Resource containment relies on Windows Job Object memory quotas (128 MB per PRD Table 17-1), pure-Rust SHA-256 pre-execution digest verification, process heartbeat monitoring, and crash quarantine circuit breaking.
+- **On-Demand Lifecycle**: The child worker launches only when an explicitly trusted Lua script profile is active, and terminates when no scripted widgets remain.
+
+---
+
+## Revised Application-Stability Engineering Roadmap
+
+With Phase A merged, engineering focus transitions entirely to **making AetherShell a genuinely stable, functional, and reliable Windows desktop application before resuming public distribution work**.
+
+The proposed sequence of focused, independently reviewable pull requests is:
+
+1. **PR #21: Acceptance Ledger & Evidence Reconciliation** *(Current)*
+   - Update `docs/STATUS.md`, `docs/EVIDENCE.md`, and `README.md` with verified PR #20 merge evidence, truthful gate statuses, and the session-token historical record.
+2. **PR #22: Explorer Restart Recovery & Notification Tray Restoration**
+   - Register dynamic Windows message `TaskbarCreated` in `tray.rs` and `DesktopHostWindow`.
+   - Re-register tray icon via `Shell_NotifyIconW(NIM_ADD, ...)` and re-probe desktop hierarchy (`WorkerW`/`Progman`) upon Explorer restart.
+3. **PR #23: Real-Time Telemetry & WASAPI Spectrum Presentation Loop**
+   - Wire an adaptive presentation timer loop in `AppEngine` (15/30/60 FPS based on power/audio state).
+   - Feed live `telemetry.poll_all()` and `audio.current_bands()` into layout bindings, replacing hardcoded dummy values.
+4. **PR #24: Core Configuration IPC Endpoints (`get_config` / `set_config`)**
+   - Wire `ConfigManager` into `AppEngine` to load `config.toml` at startup.
+   - Implement authenticated IPC handlers with schema validation, transactional updates, and atomic persistence.
+5. **PR #25: Functional WinUI 3 Settings Controls & State Persistence**
+   - In `apps/aethershell-settings/MainWindow.xaml.cpp`, query `get_config` on load to populate all switches, sliders, and combo boxes.
+   - Wire control event handlers to emit `set_config` updates over IPC and persist changes atomically.
+6. **PR #26: Direct2D DXGI Device Loss & GPU Recovery**
+   - Expand device loss detection to handle `DXGI_ERROR_DEVICE_REMOVED`, `DXGI_ERROR_DEVICE_RESET`, and `DXGI_ERROR_DEVICE_HUNG`.
+   - Implement bounded recreation with exponential backoff, preventing infinite recursion on driver crashes.
+7. **PR #27: `IMMNotificationClient` Audio Device Migration & Power-Aware Operation**
+   - Implement `IMMNotificationClient` in Rust to seamlessly migrate capture when default playback device changes.
+   - Dynamically adjust polling intervals based on AC/battery status and audio silence.
+8. **PR #28: Interactive Mode Global Hotkey & Pointer Hit-Testing**
+   - Register a configurable global hotkey via `RegisterHotKey` for Temporary Interactive Mode.
+   - Implement mouse message handling (`WM_LBUTTONDOWN`) in `desktop_host_wnd_proc` to hit-test against interactive widget nodes.
+9. **PR #29: `PerMonitorV2` DPI Awareness & Multi-Monitor Topology Handling**
+   - Declare `PerMonitorV2` DPI awareness in `aethershell-app`.
+   - Handle `WM_DPICHANGED` dynamically resizing Direct2D targets and updating layout scale.
+   - Handle `WM_DISPLAYCHANGE` refreshing overlay windows across monitor attach/detach events.
+10. **PR #30: Supervised On-Demand Lua Worker Integration & Real Widget Update Flow**
+    - Wire on-demand child worker spawn in `AppEngine` only when an explicitly trusted Lua widget profile is loaded. Standard bundled widgets remain declarative and never require Lua.
+    - Expose `aether.set_binding(key, value)` to Lua scripts to push computed state back to Core.
+    - Bundle optional example Lua widget scripts under `assets/widgets/` for testing explicitly trusted scripts. Zero CPU hard caps imposed; process containment relies on 128 MB Job Object memory limits, pure-Rust SHA-256 pre-verification, heartbeat watchdog, and crash quarantine.
+11. **PR #31: Representative Whole-Application Performance & Stability Qualification**
+    - Measure live running AetherShell processes under representative widget, audio, and scripting workloads.
+    - Compare measured CPU, RAM, GPU, and battery drain against PRD Section 14 budgets.
