@@ -731,6 +731,50 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
 - **Notes & Limitations**: Ready to advance to the next stability milestone: PR #39 (`PerMonitorV2` DPI Awareness & Multi-Monitor Topology Handling).
 
+---
+
+### EVD-022: PerMonitorV2 DPI Awareness, Multi-Monitor Topology Handling & Render Target Dynamic Resizing (PR #39)
+- **Requirement / Gate**: Gate G02 (Multi-Monitor Topology & Coordinate Space), Gate G08 (Sensor Honesty & Rendering Adaptation), PRD Section 5.4, Section 7.3, Owner Decision Q01:B, Section 18.2
+- **Candidate Commit**: `e76532c55d4321a0fb4267a514eb086f2a91daa5` (PR #39 Head)
+- **Main Merge Commit**: `015a590d7bfbbc303fea6d0458e3de8bfd1833e1` (Merge pull request #39)
+- **Date & Environment**: 2026-10-27, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
+- **Executed Actions & Verification Suite**:
+  - **1. Pre-Merge Verification on PR #39 (`e76532c`)**:
+    - `C++/WinUI 3 Mandatory Qualification`: **`pass`** in 2m 59s (Run ID `40500165688`, Job `122175567938`).
+    - `Cargo Audit & Advisory Database`: **`pass`** in 30s (Run ID `40500165392`, Job `122175567027`).
+    - `GitGuardian Security Checks`: **`pass`** in 1s (Dashboard verified).
+    - `Rust Quality Gates & Tests`: **`pass`** in 4m 07s (Run ID `40500165688`, Job `122175567534`).
+  - **2. Delegated Merge Execution**:
+    - Merged PR #39 into `main` via `gh pr merge 39 --squash` at `2026-10-27T12:03:47Z`.
+    - Generated `main` merge commit SHA: `015a590d7bfbbc303fea6d0458e3de8bfd1833e1`.
+  - **3. Post-Merge Exact-Commit GitHub CI Verification on `main`**:
+    - `CI Pipeline` (Run ID `40500837264`):
+      - `C++/WinUI 3 Mandatory Qualification` (Job `122177817955`): **`pass`** in 2m 27s.
+      - `Rust Quality Gates & Tests` (Job `122177818206`): **`pass`** in 4m 01s.
+    - `Security Audit` (Run ID `40500837395`):
+      - `Cargo Audit & Advisory Database` (Job `122177818320`): **`pass`** in 33s.
+  - **4. Independent Adversarial Audit**:
+    - Conducted by Independent Verification Reviewer Subagent (`6d8e4ccc-a181-4bc8-87d4-548fb02bc33e`).
+    - Audit Verdict: **`PASS`** (`VERIFIED`) across PRD Section 5.4 & Q01:B compliance, startup PerMonitorV2 awareness context, dynamic DPI scaling, `WM_DPICHANGED` suggested RECT window repositioning without focus activation (`SWP_NOZORDER | SWP_NOACTIVATE`), Direct2D render target dynamic resizing & `SetDpi`, layout scale compilation (`compile_live_scene_with_scale`), `WM_DISPLAYCHANGE` dynamic topology refresh, and host test isolation (0 items in `%LOCALAPPDATA%\AetherShell`).
+  - **5. Architectural & Technical Implementation**:
+    - **Startup DPI Awareness Declaration**: In `crates/aethershell-app/src/main.rs`, invoked `aethershell_win::set_per_monitor_v2_dpi_awareness()` on the first line of `main()`, establishing `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2` prior to creating any window or invoking DPI-dependent graphics subsystems.
+    - **Win32 DPI Primitives**: Created `crates/aethershell-win/src/dpi.rs` with `dpi_to_scale_factor()`, `scale_dip_to_pixels()`, `scale_pixels_to_dip()`, `get_window_dpi()`, and `is_window_per_monitor_v2_aware()`.
+    - **`WM_DPICHANGED` Handling**: `desktop_host_wnd_proc` extracts new DPI from LOWORD of `wparam`, parses suggested `RECT` from `lparam`, repositions the overlay via `SetWindowPos` (`SWP_NOZORDER | SWP_NOACTIVATE`), atomically records `current_dpi` and `current_bounds`, and dispatches `on_dpi_changed` callback.
+    - **Direct2D Hardware Surface Dynamic DPI & Resize**: Added `dpi()` and `set_dpi()` to `D2D1CanvasRenderer`, allowing dynamic synchronization of Direct2D hardware render targets on DPI change.
+    - **Dynamic Layout Scaling**: Extended layout compilation pipeline with `compile_live_scene_with_scale()`, scaling AST element geometry, font metrics, and pointer hit-test bounds in exact proportion to monitor DPI.
+    - **`WM_DISPLAYCHANGE` Topology Reconciliation**: Handled display resolution and topology changes across multi-monitor setups, dynamically updating window bounds and re-synchronizing layout scene graphs.
+  - **6. Automated Test Accounting**:
+    - `crates/aethershell-win`: 18 tests passed (including `test_dpi_scale_factor_calculations`, `test_scale_dip_and_pixels_roundtrip`, `test_set_per_monitor_v2_dpi_awareness_safe_execution`).
+    - `crates/aethershell-app/tests/per_monitor_dpi_and_multimonitor_test.rs`: 7 integration tests passed (`test_set_per_monitor_v2_dpi_awareness_and_scaling_helpers`, `test_window_dpi_and_bounds_queries`, `test_wm_dpichanged_message_handling_and_callback`, `test_wm_displaychange_message_handling_and_callback`, `test_window_manager_dpi_and_topology_refresh`, `test_compile_live_scene_with_scale_and_layout_scaling`, `test_d2d1_renderer_set_dpi_and_resize`).
+    - Entire workspace: 106 automated tests passed with 0 failures, 0 warnings, and 0 items written to `%LOCALAPPDATA%\AetherShell`.
+- **Observed Result**:
+  - PR #39 cleanly merged into `main` at `015a590d7bfbbc303fea6d0458e3de8bfd1833e1`.
+  - PerMonitorV2 DPI awareness, dynamic DPI scaling, and multi-monitor topology reconciliation fully operational.
+  - Post-merge CI and security workflows 100% green on `main`.
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
+- **Notes & Limitations**: Ready to advance to PR #40: Supervised On-Demand Lua Worker Integration & Real Widget Update Flow.
+
 
 
 
