@@ -50,8 +50,8 @@ AetherShell is developed under an evidence-led iterative engineering model. Prog
 
 | Disposition | Count | Acceptance Gates |
 |:---|:---:|:---|
-| `VERIFIED` | 4 | **G03** (Shell Isolation), **G16** (License/Privacy), **G18** (Strict No-Go & Evidence), **G19** (Coexistence) |
-| `PARTIALLY_VERIFIED` | 14 | **G01** (Core Startup & Lifecycle), **G02** (Windows Compatibility), **G04** (Taskbar Recovery), **G06** (Desktop Layering), **G07** (Temporary Interactive Mode), **G08** (Sensor Honesty), **G09** (Local Adaptive Audio), **G10** (Lua Worker Reliability & Trust), **G11** (WinUI Settings Independence), **G12** (Schema/Backup), **G13** (Performance Budgets), **G14** (Accessibility), **G17** (Safe Mode & Recovery), **G20** (Packaging Identity) |
+| `VERIFIED` | 0 | None (Full release sign-off across all gates required prior to stable v1.0.0) |
+| `PARTIALLY_VERIFIED` | 18 | **G01** (Core Startup), **G02** (Windows Compatibility), **G03** (Shell Isolation), **G04** (Taskbar Recovery), **G06** (Desktop Layering), **G07** (Temporary Interactive Mode), **G08** (Sensor Honesty), **G09** (Local Adaptive Audio), **G10** (Lua Worker Reliability & Trust), **G11** (WinUI Settings Independence), **G12** (Schema/Backup), **G13** (Performance), **G14** (Accessibility), **G16** (License/Privacy), **G17** (Safe Mode & Recovery), **G18** (Strict No-Go & Evidence), **G19** (Coexistence), **G20** (Packaging Identity) |
 | `NOT_APPLICABLE` | 1 | **G05** (Experimental Qualification — Absent in Stable Core) |
 | `DEFERRED` | 1 | **G15** (Five-Channel Release — Public Distribution Deferred) |
 | `NOT_IMPLEMENTED` | 0 | None |

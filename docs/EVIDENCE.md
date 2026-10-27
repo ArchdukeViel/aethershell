@@ -327,9 +327,11 @@ This document maintains verifiable test and validation records. Every entry is t
   - **4. Native C++/WinUI 3 Settings Binary & Test Qualification**:
     - Compiled native MSVC 64-bit executable `apps/aethershell-settings/x64/Release/aethershell-settings.exe` (515,072 bytes, SHA256: `369EE8DE26308F34A115DDD1A3EA6731208447898CE184D3D11E70CF17666584`).
     - Inspected binary symbols: contains `AetherShell.Settings` and `Microsoft.UI.Xaml` WinUI 3 symbols; zero Rust runtime markers.
-    - Executed dedicated C++ qualification suite under `REQUIRE_CPP_SETTINGS_TEST=1`: 11 passed, 0 failed, 0 ignored.
-    - Verified positive authentication and all 9 negative rejection/fail-closed scenarios (missing test token, missing test pipe, unreadable token file, server rejection, non-JSON malformed response, missing success field, protocol version mismatch, payload overflow >1 MB, zero-length payload).
-    - Entire workspace test baseline: **148 passed across 22 non-documentation test targets**, 0 failed, 0 ignored.
+    - C++ Qualification Job Accounting: The GitHub CI `C++/WinUI 3 Mandatory Qualification` job executed two dedicated test functions in `crates/aethershell-app/tests/ipc_security_authorization_test.rs` under strict gating `REQUIRE_CPP_SETTINGS_TEST=1`:
+      1. `test_cpp_winui_settings_client_authenticates_privileged_command` (positive command authentication).
+      2. `test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_commands` (exercising 9 distinct sub-scenarios: missing test token, missing test pipe, unreadable token file, server rejection, non-JSON malformed response, missing success field, protocol version mismatch, payload overflow >1 MB, and zero-length payload).
+      Both dedicated test functions passed cleanly (`2 passed; 0 failed; 0 ignored`).
+    - Rust Workspace Test Accounting: The separate `Rust Quality Gates & Tests` workflow job executed the entire workspace test suite, reporting **148 passed across 22 non-documentation test targets** (including the full 11-test suite of `ipc_security_authorization_test.rs` covering both Rust IPC harnesses and C++ client wrappers), 0 failed, 0 ignored.
   - **5. Historical Session-Token Investigation Record**:
     - Confirmed `%LOCALAPPDATA%\AetherShell` directory currently contains 0 items.
     - Reconciled that historical absence of files does not prove pre-test state; permanent guardrail implemented via `TestIsolationGuard` rooted in `%TEMP%`.
