@@ -86,6 +86,7 @@ dependencies = [
  "aethershell-audio",
  "aethershell-core",
  "aethershell-renderer",
+ "aethershell-win",
  "chrono",
  "serde",
  "serde_json",

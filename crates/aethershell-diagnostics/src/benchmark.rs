@@ -26,7 +26,8 @@ impl Default for PerformanceBudgets {
     }
 }
 
-/// Truthful, evidence-backed benchmark report (PRD Section 17 / Gate G13).
+/// Component-level microbenchmark report (in-process layout resolver & synthetic PCM smoke test;
+/// superseded for full multi-process application qualification by `runtime_benchmark::RuntimeBenchmarkLedger` per PRD Section 14).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BenchmarkReport {
     pub duration_seconds: u32,
@@ -41,7 +42,8 @@ pub struct BenchmarkReport {
     pub verdict: String,
 }
 
-/// Queries current process private working set RAM in megabytes (Gate G13).
+/// Queries current process private commit memory in megabytes (`PrivateUsage` commit charge;
+/// superseded by `runtime_benchmark` which measures resident `WorkingSetSize` and `PrivateUsage` across all application processes).
 pub fn query_process_memory_mb() -> f64 {
     unsafe {
         let mut counters: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
@@ -55,6 +57,26 @@ pub fn query_process_memory_mb() -> f64 {
         .as_bool()
         {
             counters.PrivateUsage as f64 / (1024.0 * 1024.0)
+        } else {
+            0.0
+        }
+    }
+}
+
+/// Queries current process physical resident working set RAM in megabytes (`WorkingSetSize`).
+pub fn query_process_working_set_mb() -> f64 {
+    unsafe {
+        let mut counters: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
+        counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+        let handle = GetCurrentProcess();
+        if K32GetProcessMemoryInfo(
+            handle,
+            &mut counters as *mut _ as *mut PROCESS_MEMORY_COUNTERS,
+            std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32,
+        )
+        .as_bool()
+        {
+            counters.WorkingSetSize as f64 / (1024.0 * 1024.0)
         } else {
             0.0
         }
