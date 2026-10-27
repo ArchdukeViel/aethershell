@@ -69,16 +69,33 @@ async fn main() -> ExitCode {
             .map(|s| s.as_str())
             .unwrap_or("minimal_idle");
         let profile = match profile_str {
-            "minimal_idle" => aethershell_diagnostics::WorkloadProfile::MinimalIdle,
-            "default_widgets" => aethershell_diagnostics::WorkloadProfile::DefaultWidgets,
-            "active_media" | "active_media_visualization" => {
+            "minimal_idle" | "minimal-idle" => {
+                aethershell_diagnostics::WorkloadProfile::MinimalIdle
+            }
+            "default_widgets" | "default-widgets" => {
+                aethershell_diagnostics::WorkloadProfile::DefaultWidgets
+            }
+            "active_media" | "active-media" | "active_media_visualization" => {
                 aethershell_diagnostics::WorkloadProfile::ActiveMediaVisualization
             }
-            "battery" | "battery_mode" => aethershell_diagnostics::WorkloadProfile::BatteryMode,
-            "gaming" | "gaming_shield" => aethershell_diagnostics::WorkloadProfile::GamingShield,
-            "settings_open" => aethershell_diagnostics::WorkloadProfile::SettingsOpen,
-            "lua_worker_active" => aethershell_diagnostics::WorkloadProfile::LuaWorkerActive,
-            "mixed_monitors" => aethershell_diagnostics::WorkloadProfile::MixedMonitors,
+            "battery" | "battery_mode" | "battery-mode" => {
+                aethershell_diagnostics::WorkloadProfile::BatteryMode
+            }
+            "gaming" | "gaming_shield" | "gaming-shield" => {
+                aethershell_diagnostics::WorkloadProfile::GamingShield
+            }
+            "settings_open" | "settings-open" | "settings" => {
+                aethershell_diagnostics::WorkloadProfile::SettingsOpen
+            }
+            "lua_worker_active" | "lua-worker-active" | "lua" => {
+                aethershell_diagnostics::WorkloadProfile::LuaWorkerActive
+            }
+            "mixed_monitors" | "mixed-monitors" => {
+                aethershell_diagnostics::WorkloadProfile::MixedMonitors
+            }
+            "monitor_off" | "monitor_off_session_locked" | "session_locked" => {
+                aethershell_diagnostics::WorkloadProfile::MonitorOffSessionLocked
+            }
             _ => aethershell_diagnostics::WorkloadProfile::MinimalIdle,
         };
 
@@ -103,40 +120,133 @@ async fn main() -> ExitCode {
             .and_then(|s| s.parse().ok())
             .unwrap_or(5);
 
+        let allow_self_pid = args.iter().any(|a| a == "--allow-self-pid");
+
         println!(
             "Running genuine multi-process runtime benchmark (Profile: {:?}, Repetitions: {}, Duration: {}s, Warmup: {}s)...",
             profile, repetitions, duration_secs, warmup_secs
         );
 
         let mut session = aethershell_diagnostics::RuntimeBenchmarkSession::new(profile);
+        session.set_allow_self_pid(allow_self_pid);
 
-        let core_pid = args
+        let core_pid: u32 = match args
             .iter()
             .position(|a| a == "--pid-core")
             .and_then(|p| args.get(p + 1))
             .and_then(|s| s.parse().ok())
-            .unwrap_or_else(std::process::id);
+        {
+            Some(pid) => pid,
+            None => match aethershell_diagnostics::find_running_core_process() {
+                Ok(pid) => {
+                    println!(
+                        "Discovered running Core 'aethershell.exe' process (PID: {})",
+                        pid
+                    );
+                    pid
+                }
+                Err(err) => {
+                    eprintln!(
+                        "Error: Cannot resolve Core process: {}. A genuine runtime benchmark requires an explicit or running Core PID.",
+                        err
+                    );
+                    return ExitCode::FAILURE;
+                }
+            },
+        };
 
-        let _ = session.track_process(core_pid, aethershell_diagnostics::ProcessRole::Core);
+        if let Err(e) = session.track_process(core_pid, aethershell_diagnostics::ProcessRole::Core)
+        {
+            eprintln!(
+                "Error: Failed to validate Core process PID {}: {}",
+                core_pid, e
+            );
+            return ExitCode::FAILURE;
+        }
 
-        if let Some(settings_pid) = args
+        if profile == aethershell_diagnostics::WorkloadProfile::SettingsOpen {
+            let settings_pid = args
+                .iter()
+                .position(|a| a == "--pid-settings")
+                .and_then(|p| args.get(p + 1))
+                .and_then(|s| s.parse().ok());
+
+            match settings_pid {
+                Some(pid) => {
+                    if let Err(e) =
+                        session.track_process(pid, aethershell_diagnostics::ProcessRole::Settings)
+                    {
+                        eprintln!(
+                            "Error: Failed to validate Settings process PID {}: {}",
+                            pid, e
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                }
+                None => {
+                    eprintln!("Error: WorkloadProfile::SettingsOpen requires a running 'aethershell-settings.exe' via --pid-settings <PID>.");
+                    return ExitCode::FAILURE;
+                }
+            }
+        } else if let Some(settings_pid) = args
             .iter()
             .position(|a| a == "--pid-settings")
             .and_then(|p| args.get(p + 1))
             .and_then(|s| s.parse().ok())
         {
-            let _ =
-                session.track_process(settings_pid, aethershell_diagnostics::ProcessRole::Settings);
+            if let Err(e) =
+                session.track_process(settings_pid, aethershell_diagnostics::ProcessRole::Settings)
+            {
+                eprintln!(
+                    "Warning: Optional Settings process PID {} rejected: {}",
+                    settings_pid, e
+                );
+            }
         }
 
-        if let Some(worker_pid) = args
+        if profile == aethershell_diagnostics::WorkloadProfile::LuaWorkerActive {
+            let worker_pid = args
+                .iter()
+                .position(|a| a == "--pid-worker")
+                .and_then(|p| args.get(p + 1))
+                .and_then(|s| s.parse().ok());
+
+            match worker_pid {
+                Some(pid) => {
+                    if let Err(e) =
+                        session.track_process(pid, aethershell_diagnostics::ProcessRole::LuaWorker)
+                    {
+                        eprintln!(
+                            "Error: Failed to validate Lua worker process PID {}: {}",
+                            pid, e
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                }
+                None => {
+                    eprintln!("Error: WorkloadProfile::LuaWorkerActive requires a running 'aethershell-script-host.exe' via --pid-worker <PID>.");
+                    return ExitCode::FAILURE;
+                }
+            }
+        } else if let Some(worker_pid) = args
             .iter()
             .position(|a| a == "--pid-worker")
             .and_then(|p| args.get(p + 1))
             .and_then(|s| s.parse().ok())
         {
-            let _ =
-                session.track_process(worker_pid, aethershell_diagnostics::ProcessRole::LuaWorker);
+            if let Err(e) =
+                session.track_process(worker_pid, aethershell_diagnostics::ProcessRole::LuaWorker)
+            {
+                eprintln!(
+                    "Warning: Optional Lua worker process PID {} rejected: {}",
+                    worker_pid, e
+                );
+            }
+        }
+
+        if let Err(e) = session.validate_required_processes() {
+            eprintln!("Runtime benchmark process validation failed: {}", e);
+            return ExitCode::FAILURE;
         }
 
         let ledger = match session.execute_full_procedure(

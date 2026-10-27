@@ -12,7 +12,10 @@ pub use benchmark::{
 pub use health::{SubsystemHealth, SystemDiagnosticReport};
 pub use redaction::redact_sensitive_info;
 pub use runtime_benchmark::{
-    calculate_percentile, BenchmarkVerdict, EnvironmentMetadata, GpuMetricStatus,
-    ProcessAggregateMetrics, ProcessMetricsSample, ProcessRole, ProcessSampler, RepetitionRecord,
-    ResourceBudget, RuntimeBenchmarkLedger, RuntimeBenchmarkSession, WorkloadProfile,
+    calculate_percentile, find_running_core_process, validate_process_identity, BenchmarkVerdict,
+    BudgetClassification, DisplayTopologyInfo, EnvironmentMetadata, GpuMetricStatus,
+    PresentationMetricStatus, ProcessAggregateMetrics, ProcessAnomalyEvent, ProcessIdentityInfo,
+    ProcessMetricsSample, ProcessRole, ProcessSampler, ProcessValidationError, RepetitionRecord,
+    ResourceBudget, RuntimeBenchmarkLedger, RuntimeBenchmarkSession, WakeupMetricStatus,
+    WorkloadProfile,
 };
