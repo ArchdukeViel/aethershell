@@ -1822,12 +1822,11 @@ pub async fn sync_script_worker_internal(
     pipe_name: &str,
     is_safe_mode: bool,
 ) -> Result<Option<u32>, Box<dyn std::error::Error>> {
-    let (scripting_enabled, worker_exe_name, require_trust, active_script, trusted_digests) = {
+    let (scripting_enabled, worker_exe_name, active_script, trusted_digests) = {
         if let Ok(cfg) = active_config.read() {
             (
                 cfg.scripting.enabled,
                 cfg.scripting.worker_executable.clone(),
-                cfg.scripting.require_explicit_trust_for_imported_scripts,
                 cfg.scripting.active_script.clone(),
                 cfg.scripting.trusted_digests.clone(),
             )
@@ -1835,7 +1834,6 @@ pub async fn sync_script_worker_internal(
             (
                 true,
                 "aethershell-script-host.exe".into(),
-                true,
                 None,
                 HashMap::new(),
             )
@@ -1918,33 +1916,24 @@ pub async fn sync_script_worker_internal(
         return Ok(None);
     }
 
-    // 4. Read script and compute SHA-256 digest
-    let script_bytes = std::fs::read(&script_path)?;
-    let actual_digest = aethershell_script_host::sha256_hex(&script_bytes);
-
-    // 5. Enforce explicit user trust grant (PRD Section 13.2 / Q32:B / Gate G10)
-    if require_trust {
-        let file_name = script_path
-            .file_name()
-            .and_then(|f| f.to_str())
-            .unwrap_or("");
-        let is_trusted = trusted_digests.iter().any(|(k, v)| {
-            v.eq_ignore_ascii_case(&actual_digest)
-                || k.eq_ignore_ascii_case(&actual_digest)
-                || k == &script_path_str
-                || k == file_name
-        });
-
-        if !is_trusted {
+    // 4. Enforce mandatory explicit user trust grant (PRD Section 13.2 / Q32:B / Gate G10)
+    // Mandatory consent for imported executable scripts is strictly enforced and cannot be bypassed.
+    let approved_digest = match aethershell_script_host::authorize_script_trust(
+        &script_path,
+        &script_path_str,
+        &trusted_digests,
+    ) {
+        Ok(digest) => digest,
+        Err(e) => {
             warn!(
-                "Security violation: script '{:?}' with digest {} lacks explicit user trust grant. Worker launch blocked per PRD Section 13.2.",
-                script_path, actual_digest
+                "Security violation: Script '{:?}' rejected by trust authorization: {}. Worker launch blocked per PRD Section 13.2.",
+                script_path, e
             );
             return Ok(None);
         }
-    }
+    };
 
-    // 6. Supervisor checks
+    // 5. Supervisor checks
     let mut sup = supervisor.lock().await;
     if sup.is_quarantined() {
         warn!(
@@ -1975,13 +1964,13 @@ pub async fn sync_script_worker_internal(
         }
     }
 
-    // 7. Locate worker executable binary
+    // 6. Locate worker executable binary
     let host_bin = find_script_host_binary(&worker_exe_name)
         .ok_or_else(|| format!("Could not locate script host binary '{}'", worker_exe_name))?;
 
-    // 8. Spawn worker with Job Object containment
+    // 7. Spawn worker with Job Object containment and verified approved digest
     let pid = sup
-        .spawn_worker(&host_bin, &script_path, &actual_digest, pipe_name)
+        .spawn_worker(&host_bin, &script_path, &approved_digest, pipe_name)
         .map_err(|e| format!("Supervisor spawn_worker error: {}", e))?;
 
     info!(

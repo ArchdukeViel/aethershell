@@ -224,6 +224,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         err
                     );
                 }
+                TrustError::InvalidPath(p) => {
+                    error!(
+                        "Security violation: Script path '{}' is invalid or does not exist. Terminating.",
+                        p
+                    );
+                }
+                TrustError::ConflictingTrustRecords(p) => {
+                    error!(
+                        "Security violation: Conflicting trust records discovered for script '{}'. Terminating.",
+                        p
+                    );
+                }
+                TrustError::MalformedTrustEntry(p, reason) => {
+                    error!(
+                        "Security violation: Malformed trust entry for script '{}': {}. Terminating.",
+                        p, reason
+                    );
+                }
             }
             std::process::exit(1);
         }

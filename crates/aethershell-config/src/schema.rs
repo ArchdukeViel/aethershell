@@ -487,6 +487,10 @@ pub enum ConfigValidationError {
     InvalidSnapGrid(f32),
     #[error("Scripting crash restart limit cannot exceed 10 (got {0})")]
     InvalidCrashLimit(u32),
+    #[error("Mandatory explicit trust consent for imported scripts cannot be disabled per PRD Section 13.2")]
+    MandatoryTrustCannotBeDisabled,
+    #[error("Malformed trusted digest for script '{0}': {1}")]
+    MalformedTrustedDigest(String, String),
 }
 
 impl AppConfig {
@@ -558,6 +562,35 @@ impl AppConfig {
             return Err(ConfigValidationError::InvalidCrashLimit(
                 self.scripting.restart_after_crash_limit,
             ));
+        }
+
+        if !self.scripting.require_explicit_trust_for_imported_scripts {
+            return Err(ConfigValidationError::MandatoryTrustCannotBeDisabled);
+        }
+
+        for (path, digest) in &self.scripting.trusted_digests {
+            if path.trim().is_empty() {
+                return Err(ConfigValidationError::MalformedTrustedDigest(
+                    "<empty path>".into(),
+                    "Script path cannot be empty".into(),
+                ));
+            }
+            if path.contains('\0') {
+                return Err(ConfigValidationError::MalformedTrustedDigest(
+                    path.clone(),
+                    "Script path contains invalid null characters".into(),
+                ));
+            }
+            let d = digest.trim();
+            if d.len() != 64 || !d.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(ConfigValidationError::MalformedTrustedDigest(
+                    path.clone(),
+                    format!(
+                        "Digest must be a 64-character hexadecimal SHA-256 string (got length {})",
+                        d.len()
+                    ),
+                ));
+            }
         }
 
         Ok(())
@@ -680,5 +713,53 @@ mod tests {
             config_battery.validate(),
             Err(ConfigValidationError::InvalidBatterySampleInterval(200))
         );
+    }
+
+    #[test]
+    fn test_mandatory_trust_cannot_be_disabled() {
+        let config_disabled = AppConfig {
+            scripting: ScriptingConfig {
+                require_explicit_trust_for_imported_scripts: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            config_disabled.validate(),
+            Err(ConfigValidationError::MandatoryTrustCannotBeDisabled)
+        );
+    }
+
+    #[test]
+    fn test_trusted_digests_validation() {
+        // Valid 64-character hex digest succeeds
+        let mut config_valid = AppConfig::default();
+        config_valid.scripting.trusted_digests.insert(
+            "assets/scripts/sample.lua".into(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into(),
+        );
+        assert!(config_valid.validate().is_ok());
+
+        // Empty path rejected
+        let mut config_empty_path = AppConfig::default();
+        config_empty_path.scripting.trusted_digests.insert(
+            "".into(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into(),
+        );
+        assert!(matches!(
+            config_empty_path.validate(),
+            Err(ConfigValidationError::MalformedTrustedDigest(..))
+        ));
+
+        // Short / non-hex digest rejected
+        let mut config_bad_digest = AppConfig::default();
+        config_bad_digest.scripting.trusted_digests.insert(
+            "assets/scripts/sample.lua".into(),
+            "invalid_non_hex_digest".into(),
+        );
+        assert!(matches!(
+            config_bad_digest.validate(),
+            Err(ConfigValidationError::MalformedTrustedDigest(..))
+        ));
     }
 }
