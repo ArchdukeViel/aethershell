@@ -130,6 +130,16 @@ impl SceneGraph {
 /// Abstract rendering interface for hardware Direct2D and software test harnesses.
 pub trait CanvasRenderer {
     fn render_scene(&mut self, scene: &SceneGraph) -> Result<usize, String>;
+
+    /// Indicates whether the underlying graphics device or target is in a lost state.
+    fn is_device_lost(&self) -> bool {
+        false
+    }
+
+    /// Attempts to recover or recreate the graphics device or target following device loss.
+    fn recover_device(&mut self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// In-memory mock canvas capturing draw calls for 100% deterministic testing.

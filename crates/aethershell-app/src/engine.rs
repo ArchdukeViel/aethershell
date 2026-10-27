@@ -573,7 +573,18 @@ impl AppEngine {
 
                             if let Ok(mut r_lock) = self.desktop_renderer.try_lock() {
                                 if let Some(ref mut renderer) = *r_lock {
-                                    let _ = renderer.render_scene(&scene);
+                                    if renderer.is_device_lost() {
+                                        if let Err(e) = renderer.recover_device() {
+                                            tracing::debug!(
+                                                "Direct2D renderer waiting for GPU recovery: {}",
+                                                e
+                                            );
+                                            continue;
+                                        }
+                                    }
+                                    if let Err(e) = renderer.render_scene(&scene) {
+                                        tracing::warn!("Direct2D scene render failed: {}", e);
+                                    }
                                 }
                             }
                         }
