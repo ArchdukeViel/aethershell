@@ -44,3 +44,36 @@ jobs:
         run: cargo build --workspace --release
         env:
           RUSTFLAGS: "-C target-feature=+crt-static --remap-path-prefix=${{ github.workspace }}=. --remap-path-prefix=${{ runner.temp }}=~"
+
+  cpp-winui-qualification:
+    name: C++/WinUI 3 Mandatory Qualification
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: nuget/setup-nuget@v2
+
+      - name: Restore NuGet Packages
+        run: nuget restore apps/aethershell-settings/packages.config -PackagesDirectory packages
+
+      - name: Build C++/WinUI 3 Settings Application
+        run: msbuild apps/aethershell-settings/aethershell-settings.vcxproj /p:Configuration=Release /p:Platform=x64
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Dedicated C++ Qualification Tests (Strict Gating)
+        run: cargo test -p aethershell-app --test ipc_security_authorization_test -- test_cpp_winui_settings_client --nocapture
+        env:
+          REQUIRE_CPP_SETTINGS_TEST: "1"
