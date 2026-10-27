@@ -2,15 +2,19 @@ use crate::tray::SystemTray;
 use aethershell_audio::{FpsMode, WasapiLoopbackCapture};
 use aethershell_config::{AppConfig, ConfigManager};
 use aethershell_core::{
-    BindingValue, LayoutDefinition, LifecycleState, ProfileDefinition, ThemeDefinition,
+    BindingValue, LayoutDefinition, LifecycleState, NodeType, ProfileDefinition, ThemeDefinition,
     VerificationStatus,
 };
-use aethershell_desktop::{DesktopHost, DesktopWindowManager, InteractionController};
+use aethershell_desktop::{
+    DesktopHost, DesktopWindowManager, InteractionController, InteractiveRegion,
+};
 use aethershell_diagnostics::{SubsystemHealth, SystemDiagnosticReport};
 use aethershell_ipc::{
     IpcClient, IpcClientIdentity, IpcRequest, IpcResponse, IpcServer, SessionTokenGuard,
 };
-use aethershell_renderer::{CanvasRenderer, D2D1CanvasRenderer, LayoutEngine, SceneGraph};
+use aethershell_renderer::{
+    CanvasRenderer, D2D1CanvasRenderer, LayoutEngine, ResolvedNode, SceneGraph,
+};
 use aethershell_script_host::ScriptSupervisor;
 use aethershell_taskbar::TaskbarCoordinator;
 use aethershell_telemetry::TelemetryRegistry;
@@ -27,6 +31,7 @@ use std::sync::{Arc, RwLock};
 use tokio::sync::{watch, Mutex};
 use tracing::{info, warn};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::Input::KeyboardAndMouse::{MOD_CONTROL, MOD_WIN};
 
 /// Core application engine orchestrating services, IPC, and Windows lifecycle.
 pub struct AppEngine {
@@ -277,6 +282,17 @@ impl AppEngine {
                 Err(e) => warn!("Desktop host window initialization warning: {}", e),
             }
 
+            // Register system-wide global hotkey for Interactive Mode (Win+Ctrl+A per PRD Section 5.3 & Q31:A)
+            match win_mgr.register_global_hotkey(MOD_WIN | MOD_CONTROL, 0x41) {
+                Ok(()) => {
+                    info!("Registered global hotkey Win+Ctrl+A for Temporary Interactive Mode")
+                }
+                Err(e) => warn!(
+                    "Failed to register global hotkey for Interactive Mode: {}",
+                    e
+                ),
+            }
+
             // Wire auto-dismissal on Escape key / focus loss / session lock across all windows
             let ctrl_dismiss = Arc::clone(&self.interaction);
             let win_mgr_dismiss = Arc::clone(&self.desktop_windows);
@@ -286,6 +302,55 @@ impl AppEngine {
                 }
                 if let Ok(mut mgr) = win_mgr_dismiss.try_lock() {
                     mgr.exit_interactive_mode();
+                }
+            });
+
+            // Wire hotkey toggle callback across all windows
+            let ctrl_hotkey = Arc::clone(&self.interaction);
+            let active_cfg_hotkey = Arc::clone(&self.active_config);
+            win_mgr.set_on_hotkey(move |active| {
+                if let Ok(mut ctrl) = ctrl_hotkey.try_lock() {
+                    if active {
+                        let timeout = active_cfg_hotkey
+                            .read()
+                            .map(|c| c.desktop.interactive_timeout_seconds)
+                            .unwrap_or(8);
+                        ctrl.enter_temporary_mode(timeout);
+                    } else {
+                        ctrl.dismiss_to_passive();
+                    }
+                }
+            });
+
+            // Wire action callback when user clicks interactive regions in interactive mode
+            let ctrl_action = Arc::clone(&self.interaction);
+            let audio_action = Arc::clone(&self.audio);
+            win_mgr.set_on_action(move |region, _px, _py| {
+                if let Ok(mut ctrl) = ctrl_action.try_lock() {
+                    ctrl.reset_activity();
+                }
+                if let Some(ref action) = region.action {
+                    match action.as_str() {
+                        "media.play_pause" | "play_pause" => {
+                            if let Ok(aud) = audio_action.try_lock() {
+                                let currently_paused = aud.is_paused();
+                                aud.set_paused(!currently_paused);
+                            }
+                        }
+                        "media.pause" | "pause" | "pause_audio" => {
+                            if let Ok(aud) = audio_action.try_lock() {
+                                aud.set_paused(true);
+                            }
+                        }
+                        "media.resume" | "resume" | "resume_audio" => {
+                            if let Ok(aud) = audio_action.try_lock() {
+                                aud.set_paused(false);
+                            }
+                        }
+                        other => {
+                            info!("Interactive action invoked: {}", other);
+                        }
+                    }
                 }
             });
 
@@ -301,27 +366,35 @@ impl AppEngine {
                         "Desktop hierarchy re-probed after Explorer restart (DefView: {:?}, WorkerW: {:?})",
                         probe.shelldll_defview_hwnd, probe.worker_w_hwnd
                     );
-                    if let Some(primary) = mgr.primary_window_mut() {
-                        let width = primary.bounds[2].max(100) as u32;
-                        let height = primary.bounds[3].max(100) as u32;
+                    let primary_info = mgr
+                        .primary_window()
+                        .map(|p| (p.hwnd, p.bounds[2].max(100) as u32, p.bounds[3].max(100) as u32));
+                    if let Some((primary_hwnd, width, height)) = primary_info {
                         if let Ok(mut r_lock) = renderer_restart.try_lock() {
-                            match D2D1CanvasRenderer::new_for_hwnd(primary.hwnd, width, height) {
+                            match D2D1CanvasRenderer::new_for_hwnd(primary_hwnd, width, height) {
                                 Ok(mut new_renderer) => {
                                     let bindings = cached_restart
                                         .read()
                                         .map(|b| b.clone())
                                         .unwrap_or_default();
-                                    let scene = compile_live_scene(
+                                    let (scene, regions) = compile_live_scene_and_regions(
                                         width as f32,
                                         height as f32,
                                         &bindings,
                                     );
+                                    mgr.set_interactive_regions(regions);
                                     let _ = new_renderer.render_scene(&scene);
                                     *r_lock = Some(new_renderer);
-                                    info!("Direct2D canvas renderer re-synchronized to HWND {:?}", primary.hwnd.0);
+                                    info!(
+                                        "Direct2D canvas renderer re-synchronized to HWND {:?}",
+                                        primary_hwnd.0
+                                    );
                                 }
                                 Err(e) => {
-                                    warn!("Direct2D re-synchronization warning after Explorer restart: {}", e);
+                                    warn!(
+                                        "Direct2D re-synchronization warning after Explorer restart: {}",
+                                        e
+                                    );
                                 }
                             }
                         }
@@ -341,8 +414,12 @@ impl AppEngine {
                             .read()
                             .map(|b| b.clone())
                             .unwrap_or_default();
-                        let scene =
-                            compile_live_scene(width as f32, height as f32, &initial_bindings);
+                        let (scene, regions) = compile_live_scene_and_regions(
+                            width as f32,
+                            height as f32,
+                            &initial_bindings,
+                        );
+                        win_mgr.set_interactive_regions(regions);
                         match renderer.render_scene(&scene) {
                             Ok(cmd_count) => info!(
                                 "Direct2D 1.1 / DirectWrite rendered {} commands live on desktop host",
@@ -1001,7 +1078,7 @@ impl AppEngine {
                         IpcResponse::ok(req.message_id, serde_json::json!({ "active": false }))
                     }
                     "update_layout" | "reload_profile" => {
-                        let win_mgr = desktop_windows.lock().await;
+                        let mut win_mgr = desktop_windows.lock().await;
                         let mut rendered_commands = 0;
                         if let Some(primary) = win_mgr.primary_window() {
                             let width = primary.bounds[2].max(100) as f32;
@@ -1010,7 +1087,9 @@ impl AppEngine {
                                 .read()
                                 .map(|b| b.clone())
                                 .unwrap_or_default();
-                            let scene = compile_live_scene(width, height, &bindings);
+                            let (scene, regions) =
+                                compile_live_scene_and_regions(width, height, &bindings);
+                            win_mgr.set_interactive_regions(regions);
                             let mut r_lock = desktop_renderer.lock().await;
                             if let Some(ref mut renderer) = *r_lock {
                                 if let Ok(count) = renderer.render_scene(&scene) {
@@ -1169,7 +1248,7 @@ impl AppEngine {
 
                         {
                             // 2. Trigger live scene re-render with updated configuration
-                            let win_mgr = desktop_windows.lock().await;
+                            let mut win_mgr = desktop_windows.lock().await;
                             if let Some(primary) = win_mgr.primary_window() {
                                 let width = primary.bounds[2].max(100) as f32;
                                 let height = primary.bounds[3].max(100) as f32;
@@ -1177,7 +1256,9 @@ impl AppEngine {
                                     .read()
                                     .map(|b| b.clone())
                                     .unwrap_or_default();
-                                let scene = compile_live_scene(width, height, &bindings);
+                                let (scene, regions) =
+                                    compile_live_scene_and_regions(width, height, &bindings);
+                                win_mgr.set_interactive_regions(regions);
                                 let mut r_lock = desktop_renderer.lock().await;
                                 if let Some(ref mut renderer) = *r_lock {
                                     let _ = renderer.render_scene(&scene);
@@ -1242,12 +1323,31 @@ pub fn compile_first_run_scene(screen_width: f32, _screen_height: f32) -> SceneG
     compile_live_scene(screen_width, _screen_height, &bindings)
 }
 
-/// Compiles the scene with live telemetry, audio spectrum, and time bindings.
-pub fn compile_live_scene(
+/// Extracts interactive regions from resolved layout nodes for pointer hit-testing.
+pub fn extract_interactive_regions(resolved: &[ResolvedNode]) -> Vec<InteractiveRegion> {
+    resolved
+        .iter()
+        .filter(|node| node.node_type == NodeType::Button || node.action.is_some())
+        .map(|node| {
+            InteractiveRegion::new(
+                node.id.clone(),
+                node.x,
+                node.y,
+                node.width,
+                node.height,
+                node.action.clone(),
+            )
+        })
+        .collect()
+}
+
+/// Compiles the scene with live telemetry, audio spectrum, and time bindings,
+/// returning both the rendered `SceneGraph` and extracted `InteractiveRegion` list.
+pub fn compile_live_scene_and_regions(
     screen_width: f32,
     _screen_height: f32,
     bindings: &HashMap<String, BindingValue>,
-) -> SceneGraph {
+) -> (SceneGraph, Vec<InteractiveRegion>) {
     let profile_path = find_asset_file("assets/profiles/signature_minimal.toml");
     let profile: ProfileDefinition = profile_path
         .and_then(|p| std::fs::read_to_string(p).ok())
@@ -1286,6 +1386,17 @@ pub fn compile_live_scene(
                 value = "${time.date:EEEE, MMMM d}"
                 color = "@text.secondary"
                 font_size_dip = 14.0
+                [[nodes]]
+                id = "play_pause_btn"
+                type = "button"
+                x = 0.0
+                y = 80.0
+                width = 110.0
+                height = 28.0
+                value = "Play / Pause"
+                color = "@text.primary"
+                background = "@surface.raised"
+                action = "media.play_pause"
             "#,
             )
             .unwrap()
@@ -1307,7 +1418,17 @@ pub fn compile_live_scene(
     let resolved = LayoutEngine::resolve(&layout, &theme, &merged, origin_x, origin_y, 1.0)
         .unwrap_or_default();
 
-    SceneGraph::compile(&resolved)
+    let regions = extract_interactive_regions(&resolved);
+    (SceneGraph::compile(&resolved), regions)
+}
+
+/// Compiles the scene with live telemetry, audio spectrum, and time bindings.
+pub fn compile_live_scene(
+    screen_width: f32,
+    screen_height: f32,
+    bindings: &HashMap<String, BindingValue>,
+) -> SceneGraph {
+    compile_live_scene_and_regions(screen_width, screen_height, bindings).0
 }
 
 fn find_asset_file(rel_path: &str) -> Option<PathBuf> {

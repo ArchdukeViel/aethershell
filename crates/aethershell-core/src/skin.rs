@@ -79,6 +79,8 @@ pub struct LayoutNode {
     pub min_value: Option<f32>,
     pub max_value: Option<f32>,
     pub fill: Option<String>,
+    #[serde(default)]
+    pub action: Option<String>,
 }
 
 /// Declarative layout definition (layout.toml).

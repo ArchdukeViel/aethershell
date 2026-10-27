@@ -119,6 +119,41 @@ impl SceneGraph {
                         color,
                     });
                 }
+                NodeType::Button => {
+                    let bg = node.background.unwrap_or(ColorRgba::new(40, 40, 40, 200));
+                    let border = node
+                        .border_color
+                        .or(Some(ColorRgba::new(255, 255, 255, 50)));
+                    commands.push(RenderCommand::DrawRect {
+                        x: node.x,
+                        y: node.y,
+                        width: node.width,
+                        height: node.height,
+                        color: bg,
+                        radius: if node.corner_radius > 0.0 {
+                            node.corner_radius
+                        } else {
+                            4.0
+                        },
+                        border_color: border,
+                    });
+                    if let Some(text) = &node.text {
+                        let color = node.text_color.unwrap_or(ColorRgba::WHITE);
+                        let text_x = node.x + (node.width * 0.15).max(4.0);
+                        let text_y = node.y + (node.height * 0.15).max(2.0);
+                        commands.push(RenderCommand::DrawText {
+                            text: text.clone(),
+                            x: text_x,
+                            y: text_y,
+                            font_size_dip: if node.font_size_dip > 0.0 {
+                                node.font_size_dip
+                            } else {
+                                12.0
+                            },
+                            color,
+                        });
+                    }
+                }
                 _ => {}
             }
         }
@@ -185,6 +220,7 @@ mod tests {
                 progress: None,
                 fill_color: None,
                 bands: None,
+                action: None,
             },
             ResolvedNode {
                 id: "t1".into(),
@@ -202,6 +238,7 @@ mod tests {
                 progress: None,
                 fill_color: None,
                 bands: None,
+                action: None,
             },
         ];
 
@@ -234,6 +271,7 @@ mod tests {
                 progress: None,
                 fill_color: Some(ColorRgba::WHITE),
                 bands: Some(live_bands.clone()),
+                action: None,
             },
             ResolvedNode {
                 id: "spec_fallback".into(),
@@ -251,6 +289,7 @@ mod tests {
                 progress: None,
                 fill_color: Some(ColorRgba::WHITE),
                 bands: None,
+                action: None,
             },
         ];
 
@@ -269,6 +308,55 @@ mod tests {
                 assert_eq!(bands.len(), 6);
             }
             other => panic!("Expected DrawSpectrum, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_button_node_scene_compilation() {
+        let nodes = vec![ResolvedNode {
+            id: "btn_action".into(),
+            node_type: NodeType::Button,
+            x: 20.0,
+            y: 40.0,
+            width: 80.0,
+            height: 30.0,
+            background: Some(ColorRgba::new(50, 50, 50, 255)),
+            border_color: Some(ColorRgba::WHITE),
+            corner_radius: 6.0,
+            text: Some("Play".into()),
+            text_color: Some(ColorRgba::WHITE),
+            font_size_dip: 12.0,
+            progress: None,
+            fill_color: None,
+            bands: None,
+            action: Some("play_pause".into()),
+        }];
+
+        let scene = SceneGraph::compile(&nodes);
+        assert_eq!(scene.commands.len(), 2);
+        match &scene.commands[0] {
+            RenderCommand::DrawRect {
+                width,
+                height,
+                radius,
+                ..
+            } => {
+                assert_eq!(*width, 80.0);
+                assert_eq!(*height, 30.0);
+                assert_eq!(*radius, 6.0);
+            }
+            other => panic!("Expected DrawRect, got {:?}", other),
+        }
+        match &scene.commands[1] {
+            RenderCommand::DrawText {
+                text,
+                font_size_dip,
+                ..
+            } => {
+                assert_eq!(text, "Play");
+                assert_eq!(*font_size_dip, 12.0);
+            }
+            other => panic!("Expected DrawText, got {:?}", other),
         }
     }
 }

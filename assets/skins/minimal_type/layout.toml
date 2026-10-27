@@ -18,3 +18,15 @@ y = 52.0
 value = "${time.date:EEEE, MMMM d}"
 color = "@text.secondary"
 font_size_dip = 14.0
+
+[[nodes]]
+id = "play_pause_btn"
+type = "button"
+x = 0.0
+y = 80.0
+width = 110.0
+height = 28.0
+value = "Play / Pause"
+color = "@text.primary"
+background = "@surface.raised"
+action = "media.play_pause"

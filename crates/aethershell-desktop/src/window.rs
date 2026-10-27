@@ -1,7 +1,7 @@
 //! Real Win32 Desktop Host Window embedded in Windows shell hierarchy.
 
 use crate::host::{DesktopHost, DesktopHostError};
-use crate::interaction::DismissalReason;
+use crate::interaction::{DismissalReason, InteractiveRegion};
 use aethershell_win::{enumerate_monitors, DesktopHierarchyProbe};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -14,15 +14,22 @@ use windows::Win32::System::RemoteDesktop::{
     WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
 };
 use windows::Win32::System::SystemInformation::GetTickCount64;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_NOREPEAT,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetWindowLongPtrW, IsWindow,
-    LoadCursorW, PeekMessageW, RegisterClassExW, RegisterWindowMessageW, SetWindowLongPtrW,
-    SetWindowPos, TranslateMessage, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA,
-    GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST, IDC_ARROW, MSG, PM_REMOVE, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WINDOW_EX_STYLE,
-    WM_ACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS,
-    WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_QUIT, WNDCLASSEXW, WS_POPUP, WS_VISIBLE,
+    LoadCursorW, PeekMessageW, RegisterClassExW, RegisterWindowMessageW, SetCursor,
+    SetWindowLongPtrW, SetWindowPos, TranslateMessage, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
+    GWLP_USERDATA, GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST, IDC_ARROW, IDC_HAND, MSG, PM_REMOVE,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
+    WINDOW_EX_STYLE, WM_ACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ERASEBKGND, WM_HOTKEY,
+    WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
+    WM_NCDESTROY, WM_PAINT, WM_QUIT, WNDCLASSEXW, WS_POPUP, WS_VISIBLE,
 };
+
+/// Hotkey ID for toggling Temporary Interactive Mode (PRD Section 5.3 & Q31:A).
+pub const HOTKEY_ID_INTERACTIVE_MODE: i32 = 0xAE01;
 
 static CLASS_REGISTERED: AtomicBool = AtomicBool::new(false);
 const DESKTOP_HOST_CLASS_NAME: windows::core::PCWSTR = w!("AetherShellDesktopHostWindow");
@@ -81,6 +88,8 @@ fn register_desktop_host_class() -> Result<(), DesktopHostError> {
 pub type DismissCallback = Arc<dyn Fn(DismissalReason) + Send + Sync>;
 pub type PaintCallback = Arc<dyn Fn(HWND) + Send + Sync>;
 pub type ExplorerRestartCallback = Arc<dyn Fn() + Send + Sync>;
+pub type ActionCallback = Arc<dyn Fn(&InteractiveRegion, f32, f32) + Send + Sync>;
+pub type HotkeyCallback = Arc<dyn Fn(bool) + Send + Sync>;
 
 /// Returns a verified safe Z-order target HWND.
 /// If `target` is Some and is still a valid OS window, returns it;
@@ -100,8 +109,13 @@ pub struct DesktopWindowState {
     pub on_dismiss: std::sync::Mutex<Option<DismissCallback>>,
     pub on_paint: std::sync::Mutex<Option<PaintCallback>>,
     pub on_explorer_restart: std::sync::Mutex<Option<ExplorerRestartCallback>>,
+    pub on_action: std::sync::Mutex<Option<ActionCallback>>,
+    pub on_hotkey: std::sync::Mutex<Option<HotkeyCallback>>,
+    pub interactive_regions: std::sync::Mutex<Vec<InteractiveRegion>>,
     pub explorer_restart_count: Arc<AtomicUsize>,
     pub last_restart_tick: Arc<AtomicU64>,
+    pub last_activity_tick: Arc<AtomicU64>,
+    pub is_hotkey_registered: Arc<AtomicBool>,
 }
 
 /// Represents a real Win32 desktop overlay window for a specific monitor.
@@ -138,6 +152,8 @@ impl DesktopHostWindow {
         let is_interactive = Arc::new(AtomicBool::new(false));
         let explorer_restart_count = Arc::new(AtomicUsize::new(0));
         let last_restart_tick = Arc::new(AtomicU64::new(0));
+        let last_activity_tick = Arc::new(AtomicU64::new(0));
+        let is_hotkey_registered = Arc::new(AtomicBool::new(false));
 
         let state = Box::new(DesktopWindowState {
             is_interactive: Arc::clone(&is_interactive),
@@ -146,8 +162,13 @@ impl DesktopHostWindow {
             on_dismiss: std::sync::Mutex::new(None),
             on_paint: std::sync::Mutex::new(None),
             on_explorer_restart: std::sync::Mutex::new(None),
+            on_action: std::sync::Mutex::new(None),
+            on_hotkey: std::sync::Mutex::new(None),
+            interactive_regions: std::sync::Mutex::new(Vec::new()),
             explorer_restart_count: Arc::clone(&explorer_restart_count),
             last_restart_tick,
+            last_activity_tick,
+            is_hotkey_registered,
         });
         let state_ptr = Box::into_raw(state);
 
@@ -239,6 +260,117 @@ impl DesktopHostWindow {
                 }
             }
         }
+    }
+
+    /// Sets an action callback invoked when user clicks an interactive region in interactive mode.
+    pub fn set_on_action<F>(&mut self, cb: F)
+    where
+        F: Fn(&InteractiveRegion, f32, f32) + Send + Sync + 'static,
+    {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(mut guard) = (*self.state_ptr).on_action.lock() {
+                    *guard = Some(Arc::new(cb));
+                }
+            }
+        }
+    }
+
+    /// Sets a hotkey toggle callback invoked when the global hotkey triggers mode change.
+    pub fn set_on_hotkey<F>(&mut self, cb: F)
+    where
+        F: Fn(bool) + Send + Sync + 'static,
+    {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(mut guard) = (*self.state_ptr).on_hotkey.lock() {
+                    *guard = Some(Arc::new(cb));
+                }
+            }
+        }
+    }
+
+    /// Sets the list of active interactive regions on this window surface.
+    pub fn set_interactive_regions(&mut self, regions: Vec<InteractiveRegion>) {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(mut guard) = (*self.state_ptr).interactive_regions.lock() {
+                    *guard = regions;
+                }
+            }
+        }
+    }
+
+    /// Retrieves a clone of the current interactive regions.
+    pub fn get_interactive_regions(&self) -> Vec<InteractiveRegion> {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(guard) = (*self.state_ptr).interactive_regions.lock() {
+                    return guard.clone();
+                }
+            }
+        }
+        Vec::new()
+    }
+
+    /// Registers a system-wide global hotkey on this desktop host window (PRD Section 5.3 & Q31:A).
+    pub fn register_global_hotkey(
+        &mut self,
+        modifiers: HOT_KEY_MODIFIERS,
+        vk: u32,
+    ) -> Result<(), DesktopHostError> {
+        if self.hwnd.0.is_null() {
+            return Err(DesktopHostError::WindowCreationFailed(
+                "Cannot register hotkey on NULL HWND".into(),
+            ));
+        }
+        unsafe {
+            RegisterHotKey(
+                self.hwnd,
+                HOTKEY_ID_INTERACTIVE_MODE,
+                modifiers | MOD_NOREPEAT,
+                vk,
+            )
+            .map_err(|e| {
+                DesktopHostError::WindowCreationFailed(format!("RegisterHotKey failed: {}", e))
+            })?;
+            if !self.state_ptr.is_null() {
+                (*self.state_ptr)
+                    .is_hotkey_registered
+                    .store(true, Ordering::SeqCst);
+            }
+            Ok(())
+        }
+    }
+
+    /// Unregisters the system-wide global hotkey from this window.
+    pub fn unregister_global_hotkey(&mut self) -> Result<(), DesktopHostError> {
+        if self.hwnd.0.is_null() {
+            return Ok(());
+        }
+        unsafe {
+            let res = UnregisterHotKey(self.hwnd, HOTKEY_ID_INTERACTIVE_MODE);
+            if !self.state_ptr.is_null() {
+                (*self.state_ptr)
+                    .is_hotkey_registered
+                    .store(false, Ordering::SeqCst);
+            }
+            res.map_err(|e| {
+                DesktopHostError::WindowCreationFailed(format!("UnregisterHotKey failed: {}", e))
+            })
+        }
+    }
+
+    /// Checks if the global hotkey is currently registered on this window.
+    pub fn is_hotkey_registered(&self) -> bool {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                return (*self.state_ptr)
+                    .is_hotkey_registered
+                    .load(Ordering::SeqCst);
+            }
+        }
+        false
     }
 
     /// Returns whether the window is currently in interactive mode.
@@ -403,6 +535,19 @@ impl DesktopHostWindow {
 
 impl Drop for DesktopHostWindow {
     fn drop(&mut self) {
+        if !self.state_ptr.is_null() && !self.hwnd.0.is_null() {
+            unsafe {
+                if (*self.state_ptr)
+                    .is_hotkey_registered
+                    .load(Ordering::SeqCst)
+                {
+                    let _ = UnregisterHotKey(self.hwnd, HOTKEY_ID_INTERACTIVE_MODE);
+                    (*self.state_ptr)
+                        .is_hotkey_registered
+                        .store(false, Ordering::SeqCst);
+                }
+            }
+        }
         if !self.hwnd.0.is_null() {
             unsafe {
                 let _ = WTSUnRegisterSessionNotification(self.hwnd);
@@ -522,32 +667,132 @@ unsafe extern "system" fn desktop_host_wnd_proc(
             let _ = InvalidateRect(hwnd, None, false);
             LRESULT(0)
         }
+        WM_HOTKEY => {
+            if wparam.0 as i32 == HOTKEY_ID_INTERACTIVE_MODE {
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
+                if !ptr.is_null() {
+                    let state = &*ptr;
+                    let current = state.is_interactive.load(Ordering::SeqCst);
+                    let next = !current;
+
+                    if next {
+                        state.is_interactive.store(true, Ordering::SeqCst);
+                        let ex_styles = DesktopHost::surface_extended_styles(true);
+                        let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_styles as isize);
+                        state.last_activity_tick.store(GetTickCount64(), Ordering::Relaxed);
+                        let _ = SetWindowPos(
+                            hwnd,
+                            HWND_NOTOPMOST,
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+                        );
+                        let _ = InvalidateRect(hwnd, None, false);
+                    } else {
+                        dismiss_interactive_mode(hwnd, state, DismissalReason::ExplicitExit);
+                    }
+
+                    if let Ok(guard) = state.on_hotkey.lock() {
+                        if let Some(ref cb) = *guard {
+                            cb(next);
+                        }
+                    }
+                }
+                return LRESULT(0);
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        WM_LBUTTONDOWN => {
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
+            if !ptr.is_null() {
+                let state = &*ptr;
+                if state.is_interactive.load(Ordering::SeqCst) {
+                    let px = (lparam.0 & 0xFFFF) as i16 as f32;
+                    let py = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
+
+                    let regions = if let Ok(guard) = state.interactive_regions.lock() {
+                        guard.clone()
+                    } else {
+                        Vec::new()
+                    };
+
+                    let hit = regions.iter().rev().find(|r| r.contains_point(px, py)).cloned();
+
+                    if let Some(region) = hit {
+                        tracing::info!(
+                            "DesktopHostWindow (HWND {:?}): Click on interactive region '{}' at ({}, {})",
+                            hwnd.0,
+                            region.id,
+                            px,
+                            py
+                        );
+                        state.last_activity_tick.store(GetTickCount64(), Ordering::Relaxed);
+                        if let Ok(guard) = state.on_action.lock() {
+                            if let Some(ref cb) = *guard {
+                                cb(&region, px, py);
+                            }
+                        }
+                        let _ = InvalidateRect(hwnd, None, false);
+                    } else {
+                        tracing::info!(
+                            "DesktopHostWindow (HWND {:?}): Click outside interactive regions at ({}, {}). Restoring passive mode.",
+                            hwnd.0,
+                            px,
+                            py
+                        );
+                        dismiss_interactive_mode(hwnd, state, DismissalReason::ClickOutside);
+                    }
+                    return LRESULT(0);
+                }
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        WM_LBUTTONUP => {
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
+            if !ptr.is_null() {
+                let state = &*ptr;
+                if state.is_interactive.load(Ordering::SeqCst) {
+                    return LRESULT(0);
+                }
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        WM_MOUSEMOVE => {
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
+            if !ptr.is_null() {
+                let state = &*ptr;
+                if state.is_interactive.load(Ordering::SeqCst) {
+                    let px = (lparam.0 & 0xFFFF) as i16 as f32;
+                    let py = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
+                    let regions = if let Ok(guard) = state.interactive_regions.lock() {
+                        guard.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    let is_hovering = regions.iter().any(|r| r.contains_point(px, py));
+                    if is_hovering {
+                        if let Ok(cursor) = LoadCursorW(None, IDC_HAND) {
+                            let _ = SetCursor(cursor);
+                        }
+                    } else {
+                        if let Ok(cursor) = LoadCursorW(None, IDC_ARROW) {
+                            let _ = SetCursor(cursor);
+                        }
+                    }
+                    return LRESULT(0);
+                }
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
         WM_KEYDOWN => {
             if wparam.0 == 0x1B {
                 // Escape key dismisses temporary interactive mode
                 let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
                 if !ptr.is_null() {
                     let state = &*ptr;
-                    if state.is_interactive.load(Ordering::SeqCst) {
-                        state.is_interactive.store(false, Ordering::SeqCst);
-                        let passive_styles = DesktopHost::surface_extended_styles(false);
-                        let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, passive_styles as isize);
-                        let behind = safe_stacking_target(state.shelldll_defview);
-                        let _ = SetWindowPos(
-                            hwnd,
-                            behind,
-                            0,
-                            0,
-                            0,
-                            0,
-                            SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE,
-                        );
-                        if let Ok(guard) = state.on_dismiss.lock() {
-                            if let Some(ref cb) = *guard {
-                                cb(DismissalReason::EscapeKey);
-                            }
-                        }
-                    }
+                    dismiss_interactive_mode(hwnd, state, DismissalReason::EscapeKey);
                 }
             }
             LRESULT(0)
@@ -578,30 +823,40 @@ unsafe extern "system" fn desktop_host_wnd_proc(
     }
 }
 
+/// Helper function to dismiss interactive mode cleanly and safely restore passive icon stacking.
+unsafe fn dismiss_interactive_mode(
+    hwnd: HWND,
+    state: &DesktopWindowState,
+    reason: DismissalReason,
+) {
+    if state.is_interactive.load(Ordering::SeqCst) {
+        state.is_interactive.store(false, Ordering::SeqCst);
+        let passive_styles = DesktopHost::surface_extended_styles(false);
+        let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, passive_styles as isize);
+        let behind = safe_stacking_target(state.shelldll_defview);
+        let _ = SetWindowPos(
+            hwnd,
+            behind,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE,
+        );
+        let _ = InvalidateRect(hwnd, None, false);
+        if let Ok(guard) = state.on_dismiss.lock() {
+            if let Some(ref cb) = *guard {
+                cb(reason);
+            }
+        }
+    }
+}
+
 unsafe fn trigger_focus_loss_dismissal(hwnd: HWND) {
     let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
     if !ptr.is_null() {
         let state = &*ptr;
-        if state.is_interactive.load(Ordering::SeqCst) {
-            state.is_interactive.store(false, Ordering::SeqCst);
-            let passive_styles = DesktopHost::surface_extended_styles(false);
-            let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, passive_styles as isize);
-            let behind = safe_stacking_target(state.shelldll_defview);
-            let _ = SetWindowPos(
-                hwnd,
-                behind,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE,
-            );
-            if let Ok(guard) = state.on_dismiss.lock() {
-                if let Some(ref cb) = *guard {
-                    cb(DismissalReason::FocusLost);
-                }
-            }
-        }
+        dismiss_interactive_mode(hwnd, state, DismissalReason::FocusLost);
     }
 }
 
@@ -609,26 +864,7 @@ unsafe fn trigger_session_lock_dismissal(hwnd: HWND) {
     let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
     if !ptr.is_null() {
         let state = &*ptr;
-        if state.is_interactive.load(Ordering::SeqCst) {
-            state.is_interactive.store(false, Ordering::SeqCst);
-            let passive_styles = DesktopHost::surface_extended_styles(false);
-            let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, passive_styles as isize);
-            let behind = safe_stacking_target(state.shelldll_defview);
-            let _ = SetWindowPos(
-                hwnd,
-                behind,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE,
-            );
-            if let Ok(guard) = state.on_dismiss.lock() {
-                if let Some(ref cb) = *guard {
-                    cb(DismissalReason::SessionLocked);
-                }
-            }
-        }
+        dismiss_interactive_mode(hwnd, state, DismissalReason::SessionLocked);
     }
 }
 
@@ -640,6 +876,10 @@ pub struct DesktopWindowManager {
     on_dismiss_cb: Option<DismissCallback>,
     on_paint_cb: Option<PaintCallback>,
     on_explorer_restart_cb: Option<ExplorerRestartCallback>,
+    on_action_cb: Option<ActionCallback>,
+    on_hotkey_cb: Option<HotkeyCallback>,
+    interactive_regions: Vec<InteractiveRegion>,
+    is_hotkey_registered: bool,
 }
 
 unsafe impl Send for DesktopWindowManager {}
@@ -654,6 +894,10 @@ impl DesktopWindowManager {
             on_dismiss_cb: None,
             on_paint_cb: None,
             on_explorer_restart_cb: None,
+            on_action_cb: None,
+            on_hotkey_cb: None,
+            interactive_regions: Vec::new(),
+            is_hotkey_registered: false,
         }
     }
 
@@ -691,6 +935,15 @@ impl DesktopWindowManager {
                         let cb_clone = Arc::clone(cb);
                         win.set_on_explorer_restart(move || cb_clone());
                     }
+                    if let Some(ref cb) = self.on_action_cb {
+                        let cb_clone = Arc::clone(cb);
+                        win.set_on_action(move |reg, px, py| cb_clone(reg, px, py));
+                    }
+                    if let Some(ref cb) = self.on_hotkey_cb {
+                        let cb_clone = Arc::clone(cb);
+                        win.set_on_hotkey(move |active| cb_clone(active));
+                    }
+                    win.set_interactive_regions(self.interactive_regions.clone());
 
                     self.windows.push(win);
                     created += 1;
@@ -698,6 +951,16 @@ impl DesktopWindowManager {
                 Err(e) => {
                     tracing::warn!("Failed to create host window for {}: {}", mon_id, e);
                 }
+            }
+        }
+
+        if self.is_hotkey_registered {
+            if let Some(primary) = self.windows.first_mut() {
+                let _ = primary.register_global_hotkey(
+                    windows::Win32::UI::Input::KeyboardAndMouse::MOD_WIN
+                        | windows::Win32::UI::Input::KeyboardAndMouse::MOD_CONTROL,
+                    0x41, // Win+Ctrl+A
+                );
             }
         }
 
@@ -776,6 +1039,80 @@ impl DesktopWindowManager {
                 cb_clone(hwnd);
             });
         }
+    }
+
+    /// Sets an action callback on all managed desktop host windows.
+    pub fn set_on_action<F>(&mut self, cb: F)
+    where
+        F: Fn(&InteractiveRegion, f32, f32) + Send + Sync + 'static,
+    {
+        let cb_arc: ActionCallback = Arc::new(cb);
+        self.on_action_cb = Some(Arc::clone(&cb_arc));
+        for win in &mut self.windows {
+            let cb_clone = Arc::clone(&cb_arc);
+            win.set_on_action(move |reg, px, py| {
+                cb_clone(reg, px, py);
+            });
+        }
+    }
+
+    /// Sets a hotkey toggle callback across all managed desktop host windows.
+    pub fn set_on_hotkey<F>(&mut self, cb: F)
+    where
+        F: Fn(bool) + Send + Sync + 'static,
+    {
+        let cb_arc: HotkeyCallback = Arc::new(cb);
+        self.on_hotkey_cb = Some(Arc::clone(&cb_arc));
+        for win in &mut self.windows {
+            let cb_clone = Arc::clone(&cb_arc);
+            win.set_on_hotkey(move |active| {
+                cb_clone(active);
+            });
+        }
+    }
+
+    /// Sets the list of interactive regions across all managed windows.
+    pub fn set_interactive_regions(&mut self, regions: Vec<InteractiveRegion>) {
+        self.interactive_regions = regions.clone();
+        for win in &mut self.windows {
+            win.set_interactive_regions(regions.clone());
+        }
+    }
+
+    /// Retrieves the current interactive regions.
+    pub fn interactive_regions(&self) -> &[InteractiveRegion] {
+        &self.interactive_regions
+    }
+
+    /// Registers a system-wide global hotkey on the primary desktop host window.
+    pub fn register_global_hotkey(
+        &mut self,
+        modifiers: HOT_KEY_MODIFIERS,
+        vk: u32,
+    ) -> Result<(), DesktopHostError> {
+        if let Some(primary) = self.primary_window_mut() {
+            primary.register_global_hotkey(modifiers, vk)?;
+            self.is_hotkey_registered = true;
+            Ok(())
+        } else {
+            Err(DesktopHostError::WindowCreationFailed(
+                "No primary desktop window available for hotkey registration".into(),
+            ))
+        }
+    }
+
+    /// Unregisters the system-wide global hotkey.
+    pub fn unregister_global_hotkey(&mut self) -> Result<(), DesktopHostError> {
+        if let Some(primary) = self.primary_window_mut() {
+            primary.unregister_global_hotkey()?;
+        }
+        self.is_hotkey_registered = false;
+        Ok(())
+    }
+
+    /// Checks if the global hotkey is currently registered.
+    pub fn is_hotkey_registered(&self) -> bool {
+        self.is_hotkey_registered
     }
 
     /// Handles Explorer restart across all managed desktop host overlay windows.
@@ -1111,5 +1448,184 @@ mod tests {
         }
 
         assert!(restart_fired.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_desktop_host_window_hotkey_toggle_and_dismissal() {
+        let mut win = DesktopHostWindow::create("test-mon-hotkey", 0, 0, 300, 200, None, None)
+            .expect("Failed to create test window");
+
+        assert!(!win.is_interactive());
+
+        let hotkey_toggled = Arc::new(AtomicBool::new(false));
+        let ht_clone = Arc::clone(&hotkey_toggled);
+        win.set_on_hotkey(move |active| {
+            ht_clone.store(active, Ordering::SeqCst);
+        });
+
+        let dismiss_reason = Arc::new(std::sync::Mutex::new(None));
+        let dr_clone = Arc::clone(&dismiss_reason);
+        win.set_on_dismiss(move |reason| {
+            if let Ok(mut guard) = dr_clone.lock() {
+                *guard = Some(reason);
+            }
+        });
+
+        // 1. Simulate WM_HOTKEY to activate interactive mode
+        unsafe {
+            let res = desktop_host_wnd_proc(
+                win.hwnd,
+                WM_HOTKEY,
+                WPARAM(HOTKEY_ID_INTERACTIVE_MODE as usize),
+                LPARAM(0),
+            );
+            assert_eq!(res, LRESULT(0));
+        }
+
+        assert!(win.is_interactive());
+        assert!(hotkey_toggled.load(Ordering::SeqCst));
+
+        // 2. Simulate second WM_HOTKEY to deactivate back to passive
+        unsafe {
+            let res = desktop_host_wnd_proc(
+                win.hwnd,
+                WM_HOTKEY,
+                WPARAM(HOTKEY_ID_INTERACTIVE_MODE as usize),
+                LPARAM(0),
+            );
+            assert_eq!(res, LRESULT(0));
+        }
+
+        assert!(!win.is_interactive());
+        assert!(!hotkey_toggled.load(Ordering::SeqCst));
+        assert_eq!(
+            *dismiss_reason.lock().unwrap(),
+            Some(DismissalReason::ExplicitExit)
+        );
+    }
+
+    #[test]
+    fn test_desktop_host_window_pointer_hit_test_and_action_dispatch() {
+        let mut win = DesktopHostWindow::create("test-mon-hit", 0, 0, 400, 300, None, None)
+            .expect("Failed to create test window");
+
+        let regions = vec![
+            InteractiveRegion::new(
+                "btn_play",
+                50.0,
+                50.0,
+                60.0,
+                30.0,
+                Some("play_pause".into()),
+            ),
+            InteractiveRegion::new("btn_next", 120.0, 50.0, 40.0, 30.0, Some("next".into())),
+        ];
+        win.set_interactive_regions(regions);
+
+        let action_invoked = Arc::new(std::sync::Mutex::new(None));
+        let ai_clone = Arc::clone(&action_invoked);
+        win.set_on_action(move |reg, x, y| {
+            if let Ok(mut guard) = ai_clone.lock() {
+                *guard = Some((reg.id.clone(), reg.action.clone(), x, y));
+            }
+        });
+
+        // Enter interactive mode
+        win.set_interactive(true);
+        assert!(win.is_interactive());
+
+        // 1. Click inside "btn_play" at (70, 65)
+        // LPARAM encodes x in low word, y in high word: (65 << 16) | 70
+        let lparam_inside = LPARAM(((65i16 as isize) << 16) | (70i16 as isize));
+        unsafe {
+            let res = desktop_host_wnd_proc(win.hwnd, WM_LBUTTONDOWN, WPARAM(0), lparam_inside);
+            assert_eq!(res, LRESULT(0));
+        }
+
+        // Action callback should have fired with "btn_play" and "play_pause"
+        let invoked = action_invoked.lock().unwrap().clone();
+        assert!(invoked.is_some());
+        let (id, action, x, y) = invoked.unwrap();
+        assert_eq!(id, "btn_play");
+        assert_eq!(action.as_deref(), Some("play_pause"));
+        assert_eq!(x, 70.0);
+        assert_eq!(y, 65.0);
+
+        // Window should still be interactive after successful hit
+        assert!(win.is_interactive());
+
+        // 2. Click outside any region at (300, 250)
+        let dismiss_fired = Arc::new(std::sync::Mutex::new(None));
+        let df_clone = Arc::clone(&dismiss_fired);
+        win.set_on_dismiss(move |reason| {
+            if let Ok(mut guard) = df_clone.lock() {
+                *guard = Some(reason);
+            }
+        });
+
+        let lparam_outside = LPARAM(((250i16 as isize) << 16) | (300i16 as isize));
+        unsafe {
+            let res = desktop_host_wnd_proc(win.hwnd, WM_LBUTTONDOWN, WPARAM(0), lparam_outside);
+            assert_eq!(res, LRESULT(0));
+        }
+
+        // Window must immediately dismiss to passive mode on click outside
+        assert!(!win.is_interactive());
+        assert_eq!(
+            *dismiss_fired.lock().unwrap(),
+            Some(DismissalReason::ClickOutside)
+        );
+    }
+
+    #[test]
+    fn test_desktop_window_manager_interactive_regions_and_action_preservation() {
+        let probe = DesktopHierarchyProbe {
+            progman_hwnd: None,
+            worker_w_hwnd: None,
+            shelldll_defview_hwnd: None,
+            syslistview32_hwnd: None,
+        };
+
+        let mut manager = DesktopWindowManager::new();
+        let _ = manager.initialize(&probe);
+
+        let regions = vec![InteractiveRegion::new(
+            "btn_vol",
+            10.0,
+            10.0,
+            50.0,
+            25.0,
+            Some("volume_up".into()),
+        )];
+        manager.set_interactive_regions(regions.clone());
+        assert_eq!(manager.interactive_regions(), &regions);
+
+        let action_recorded = Arc::new(AtomicBool::new(false));
+        let ar_clone = Arc::clone(&action_recorded);
+        manager.set_on_action(move |_, _, _| {
+            ar_clone.store(true, Ordering::SeqCst);
+        });
+
+        // Simulate Explorer restart recreating windows
+        if let Some(win) = manager.primary_window_mut() {
+            unsafe {
+                let _ = DestroyWindow(win.hwnd);
+            }
+        }
+        let _ = manager.handle_explorer_restart();
+        assert!(!manager.has_stale_windows());
+
+        // Verify that recreated windows retained interactive regions and action callback
+        if let Some(win) = manager.primary_window_mut() {
+            assert_eq!(win.get_interactive_regions(), regions);
+            win.set_interactive(true);
+
+            let lparam_hit = LPARAM(((20i16 as isize) << 16) | (20i16 as isize));
+            unsafe {
+                let _ = desktop_host_wnd_proc(win.hwnd, WM_LBUTTONDOWN, WPARAM(0), lparam_hit);
+            }
+        }
+
+        assert!(action_recorded.load(Ordering::SeqCst));
     }
 }

@@ -140,6 +140,7 @@ pub fn run_benchmark(duration_secs: u32) -> BenchmarkReport {
                 min_value: None,
                 max_value: None,
                 fill: None,
+                action: None,
             },
             aethershell_core::LayoutNode {
                 id: "title_text".into(),
@@ -158,6 +159,7 @@ pub fn run_benchmark(duration_secs: u32) -> BenchmarkReport {
                 min_value: None,
                 max_value: None,
                 fill: None,
+                action: None,
             },
         ],
     };

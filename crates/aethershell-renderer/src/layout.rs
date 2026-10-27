@@ -37,6 +37,15 @@ pub struct ResolvedNode {
     pub fill_color: Option<ColorRgba>,
     /// Live audio spectrum bands for SpectrumVisualizer nodes.
     pub bands: Option<Vec<f32>>,
+    /// Optional interactive action identifier (e.g. "play_pause", "prev", "next").
+    pub action: Option<String>,
+}
+
+impl ResolvedNode {
+    /// Determines whether a 2D pointer coordinate falls within this node's bounds.
+    pub fn contains_point(&self, px: f32, py: f32) -> bool {
+        px >= self.x && px <= (self.x + self.width) && py >= self.y && py <= (self.y + self.height)
+    }
 }
 
 /// Layout engine compiling declarative LayoutDefinitions into resolved spatial trees.
@@ -183,6 +192,7 @@ impl LayoutEngine {
                 progress,
                 fill_color,
                 bands,
+                action: node.action.clone(),
             });
         }
 
@@ -222,6 +232,7 @@ mod tests {
                     min_value: None,
                     max_value: None,
                     fill: None,
+                    action: None,
                 },
                 LayoutNode {
                     id: "label".into(),
@@ -240,6 +251,7 @@ mod tests {
                     min_value: None,
                     max_value: None,
                     fill: None,
+                    action: None,
                 },
                 LayoutNode {
                     id: "bar".into(),
@@ -258,6 +270,7 @@ mod tests {
                     min_value: Some(0.0),
                     max_value: Some(100.0),
                     fill: Some("@accent.primary".into()),
+                    action: None,
                 },
             ],
         };
@@ -308,6 +321,7 @@ mod tests {
                     min_value: None,
                     max_value: None,
                     fill: None,
+                    action: None,
                 },
                 LayoutNode {
                     id: "n2".into(),
@@ -326,6 +340,7 @@ mod tests {
                     min_value: None,
                     max_value: None,
                     fill: None,
+                    action: None,
                 },
             ],
         };
@@ -364,6 +379,7 @@ mod tests {
                 min_value: None,
                 max_value: None,
                 fill: Some("@accent.primary".into()),
+                action: None,
             }],
         };
 
