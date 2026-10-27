@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -10,6 +12,138 @@ pub enum TrustError {
     Untrusted,
     #[error("Failed to read script file: {0}")]
     IoError(String),
+    #[error("Script path '{0}' is invalid, malformed, or does not exist.")]
+    InvalidPath(String),
+    #[error("Conflicting trust records discovered for script '{0}'.")]
+    ConflictingTrustRecords(String),
+    #[error("Malformed trust entry for script '{0}': {1}")]
+    MalformedTrustEntry(String, String),
+}
+
+/// Normalizes a filesystem path by canonicalizing existing files and stripping verbatim UNC prefixes (`\\?\`).
+pub fn normalize_script_path(path: &Path) -> Result<PathBuf, std::io::Error> {
+    if !path.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Path does not exist: {}", path.display()),
+        ));
+    }
+    let canonical = std::fs::canonicalize(path)?;
+    let s = canonical.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        Ok(PathBuf::from(stripped))
+    } else {
+        Ok(canonical)
+    }
+}
+
+/// Compares two filesystem paths for equality, case-insensitively on Windows.
+pub fn paths_equal(p1: &Path, p2: &Path) -> bool {
+    let s1 = p1.to_string_lossy();
+    let s2 = p2.to_string_lossy();
+    s1.eq_ignore_ascii_case(&s2)
+}
+
+/// Authorizes a target script package against an explicit trust registry (PRD Section 13.2 / Gate G10).
+///
+/// Ensures:
+/// 1. Path identity identifies the approved record (never a bare filename or arbitrary name match).
+/// 2. Paths are normalized and validated to prevent ambiguous or conflicting trust entries.
+/// 3. Script content digest matches the approved digest with strict cryptographic equality.
+/// 4. Conflicting or malformed trust entries fail closed.
+/// 5. Distinct paths with identical filenames do not inherit each other's approval.
+///
+/// Returns the verified approved SHA-256 digest on success, or a `TrustError` on failure.
+pub fn authorize_script_trust(
+    script_path: &Path,
+    configured_path_str: &str,
+    trusted_digests: &HashMap<String, String>,
+) -> Result<String, TrustError> {
+    if !script_path.is_file() {
+        return Err(TrustError::InvalidPath(script_path.display().to_string()));
+    }
+
+    let canonical_script = normalize_script_path(script_path)
+        .map_err(|e| TrustError::IoError(format!("Path normalization failed: {}", e)))?;
+
+    // Read script bytes and compute actual SHA-256 digest
+    let script_bytes = std::fs::read(&canonical_script)
+        .map_err(|e| TrustError::IoError(format!("Failed to read script file: {}", e)))?;
+    let actual_digest = sha256_hex(&script_bytes);
+
+    // Find all matching trust entries for this canonical path or exact configured path string
+    let mut matching_approvals: Vec<(&str, &str)> = Vec::new();
+
+    for (k, v) in trusted_digests {
+        let k_trimmed = k.trim();
+        let v_trimmed = v.trim();
+
+        if k_trimmed.is_empty() {
+            return Err(TrustError::MalformedTrustEntry(
+                k.clone(),
+                "Empty path key in trust ledger".into(),
+            ));
+        }
+
+        if v_trimmed.len() != 64 || !v_trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(TrustError::MalformedTrustEntry(
+                k.clone(),
+                format!(
+                    "Digest must be a 64-character hexadecimal SHA-256 string (got length {})",
+                    v_trimmed.len()
+                ),
+            ));
+        }
+
+        // Determine if key 'k' identifies this script:
+        // A. Exact string match against configured_path_str (case-insensitive on Windows)
+        let exact_configured_match = !configured_path_str.trim().is_empty()
+            && k_trimmed.eq_ignore_ascii_case(configured_path_str.trim());
+
+        // B. Canonicalized path match:
+        let canonical_match = {
+            let key_path = Path::new(k_trimmed);
+            if key_path.exists() {
+                if let Ok(canon_key) = normalize_script_path(key_path) {
+                    paths_equal(&canon_key, &canonical_script)
+                } else {
+                    false
+                }
+            } else {
+                paths_equal(key_path, &canonical_script) || paths_equal(key_path, script_path)
+            }
+        };
+
+        if exact_configured_match || canonical_match {
+            matching_approvals.push((k_trimmed, v_trimmed));
+        }
+    }
+
+    if matching_approvals.is_empty() {
+        return Err(TrustError::Untrusted);
+    }
+
+    // Check for conflicting approved digests for this file
+    let first_digest = matching_approvals[0].1;
+    for &(_k, d) in &matching_approvals[1..] {
+        if !d.eq_ignore_ascii_case(first_digest) {
+            return Err(TrustError::ConflictingTrustRecords(
+                canonical_script.display().to_string(),
+            ));
+        }
+    }
+
+    let approved_digest = first_digest.to_lowercase();
+
+    // Enforce strict digest equality
+    if !actual_digest.eq_ignore_ascii_case(&approved_digest) {
+        return Err(TrustError::DigestMismatch {
+            expected: approved_digest,
+            actual: actual_digest,
+        });
+    }
+
+    Ok(approved_digest)
 }
 
 /// Computes a standard SHA-256 hexadecimal hash over bytes without external dependencies.
@@ -171,5 +305,104 @@ mod tests {
         // Empty approval fails with Untrusted
         let res2 = verify_script_digest(script, "");
         assert_eq!(res2, Err(TrustError::Untrusted));
+    }
+
+    #[test]
+    fn test_authorize_script_trust_lifecycle() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "test_trust_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let dir_a = temp_dir.join("dir_a");
+        let dir_b = temp_dir.join("dir_b");
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::create_dir_all(&dir_b).unwrap();
+
+        let script_a = dir_a.join("widget.lua");
+        let script_b = dir_b.join("widget.lua");
+
+        let content_a = "function init() print('A') end";
+        let content_b = "function init() print('B') end";
+        std::fs::write(&script_a, content_a).unwrap();
+        std::fs::write(&script_b, content_b).unwrap();
+
+        let digest_a = sha256_hex(content_a.as_bytes());
+        let digest_b = sha256_hex(content_b.as_bytes());
+
+        let mut trust_registry = HashMap::new();
+        trust_registry.insert(script_a.to_string_lossy().to_string(), digest_a.clone());
+
+        // 1. Script A with matching digest succeeds
+        let auth_res =
+            authorize_script_trust(&script_a, &script_a.to_string_lossy(), &trust_registry);
+        assert_eq!(auth_res, Ok(digest_a.clone()));
+
+        // 2. Modified Script A with same path fails with DigestMismatch
+        std::fs::write(&script_a, "function init() print('A MODIFIED') end").unwrap();
+        let modified_res =
+            authorize_script_trust(&script_a, &script_a.to_string_lossy(), &trust_registry);
+        assert!(matches!(
+            modified_res,
+            Err(TrustError::DigestMismatch { .. })
+        ));
+
+        // Restore Script A
+        std::fs::write(&script_a, content_a).unwrap();
+
+        // 3. Script B (same filename 'widget.lua', distinct path) does NOT inherit Script A's approval
+        let script_b_res =
+            authorize_script_trust(&script_b, &script_b.to_string_lossy(), &trust_registry);
+        assert_eq!(script_b_res, Err(TrustError::Untrusted));
+
+        // 4. Bare filename entry in registry does not authorize script in subdirectory
+        let mut bare_registry = HashMap::new();
+        bare_registry.insert("widget.lua".into(), digest_a.clone());
+        let bare_res =
+            authorize_script_trust(&script_a, &script_a.to_string_lossy(), &bare_registry);
+        assert_eq!(bare_res, Err(TrustError::Untrusted));
+
+        // 5. Conflicting digests fail closed
+        let mut conflicting_registry = HashMap::new();
+        conflicting_registry.insert(script_a.to_string_lossy().to_string(), digest_a.clone());
+        let canon_a = normalize_script_path(&script_a).unwrap();
+        conflicting_registry.insert(
+            canon_a.to_string_lossy().to_string(),
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".into(),
+        );
+        let conflict_res = authorize_script_trust(
+            &script_a,
+            &script_a.to_string_lossy(),
+            &conflicting_registry,
+        );
+        assert!(matches!(
+            conflict_res,
+            Err(TrustError::ConflictingTrustRecords(..))
+        ));
+
+        // 6. Malformed digest fails closed
+        let mut malformed_registry = HashMap::new();
+        malformed_registry.insert(
+            script_a.to_string_lossy().to_string(),
+            "bad_short_digest".into(),
+        );
+        let malformed_res =
+            authorize_script_trust(&script_a, &script_a.to_string_lossy(), &malformed_registry);
+        assert!(matches!(
+            malformed_res,
+            Err(TrustError::MalformedTrustEntry(..))
+        ));
+
+        // 7. Explicit reauthorization of Script B allows Script B to run
+        let mut registry_with_b = HashMap::new();
+        registry_with_b.insert(script_b.to_string_lossy().to_string(), digest_b.clone());
+        let reauth_b =
+            authorize_script_trust(&script_b, &script_b.to_string_lossy(), &registry_with_b);
+        assert_eq!(reauth_b, Ok(digest_b));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

@@ -137,7 +137,7 @@ end
         cfg.scripting.require_explicit_trust_for_imported_scripts = true;
         cfg.scripting
             .trusted_digests
-            .insert("worker_summary.lua".into(), digest);
+            .insert(script_file.to_string_lossy().to_string(), digest);
     }
 
     // 4. Synchronize script worker: launches child process on demand
@@ -330,7 +330,7 @@ async fn test_script_crash_circuit_breaker_and_quarantine_isolation() {
         cfg.scripting.require_explicit_trust_for_imported_scripts = true;
         cfg.scripting
             .trusted_digests
-            .insert("crashing_worker.lua".into(), digest);
+            .insert(script_file.to_string_lossy().to_string(), digest);
     }
 
     // Spawn 1
@@ -447,10 +447,10 @@ async fn test_dynamic_script_switching() {
         cfg.scripting.require_explicit_trust_for_imported_scripts = true;
         cfg.scripting
             .trusted_digests
-            .insert("worker_1.lua".into(), digest1);
+            .insert(script1.to_string_lossy().to_string(), digest1);
         cfg.scripting
             .trusted_digests
-            .insert("worker_2.lua".into(), digest2);
+            .insert(script2.to_string_lossy().to_string(), digest2);
     }
 
     let pid1 = harness
@@ -490,4 +490,282 @@ async fn test_dynamic_script_switching() {
     }
 
     harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_trust_rejection_modified_script_same_path_and_filename() {
+    let harness = LuaTestHarness::start("lua_test_secret_token_6").await;
+
+    let host_bin = find_script_host_binary("aethershell-script-host.exe");
+    if host_bin.is_none() {
+        if std::env::var("REQUIRE_LUA_WORKER_TEST").is_ok() {
+            panic!("REQUIRED_LUA_BIN_MISSING: aethershell-script-host.exe not found");
+        } else {
+            eprintln!("STATUS_LUA_BIN_UNAVAILABLE: aethershell-script-host.exe not found; skipping out-of-process test.");
+            harness.stop().await;
+            return;
+        }
+    }
+
+    let script_file = harness.temp_dir.join("worker.lua");
+    let original_content = "function init() aether.set_binding('script.status', 'Orig') end\n";
+    std::fs::write(&script_file, original_content).expect("write original");
+    let original_digest = sha256_hex(original_content.as_bytes());
+
+    // 1. Authorize original digest
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.enabled = true;
+        cfg.scripting.active_script = Some(script_file.to_string_lossy().to_string());
+        cfg.scripting.require_explicit_trust_for_imported_scripts = true;
+        cfg.scripting
+            .trusted_digests
+            .insert(script_file.to_string_lossy().to_string(), original_digest);
+    }
+
+    // 2. Modify script content on disk (same filename and path, but different bytes/digest)
+    let modified_content = "function init() aether.set_binding('script.status', 'Tampered') end\n";
+    std::fs::write(&script_file, modified_content).expect("write modified");
+
+    // 3. Attempt launch: MUST fail closed due to digest mismatch
+    let launch_res = harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("sync_script_worker");
+
+    assert_eq!(
+        launch_res, None,
+        "Modified script with changed content MUST be rejected fail-closed despite identical filename and path"
+    );
+
+    let sup_arc = harness.script_supervisor();
+    let sup = sup_arc.lock().await;
+    assert!(
+        !sup.has_active_child(),
+        "Supervisor must not have spawned a child process for modified script"
+    );
+
+    drop(sup);
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_trust_rejection_distinct_paths_identical_filename() {
+    let harness = LuaTestHarness::start("lua_test_secret_token_7").await;
+
+    let dir_a = harness.temp_dir.join("dir_a");
+    let dir_b = harness.temp_dir.join("dir_b");
+    std::fs::create_dir_all(&dir_a).unwrap();
+    std::fs::create_dir_all(&dir_b).unwrap();
+
+    let script_a = dir_a.join("module.lua");
+    let script_b = dir_b.join("module.lua");
+
+    let content_a = "function init() aether.set_binding('script.status', 'A') end\n";
+    let content_b = "function init() aether.set_binding('script.status', 'B') end\n";
+    std::fs::write(&script_a, content_a).unwrap();
+    std::fs::write(&script_b, content_b).unwrap();
+
+    let digest_a = sha256_hex(content_a.as_bytes());
+
+    // Trust only script A
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.enabled = true;
+        cfg.scripting.active_script = Some(script_b.to_string_lossy().to_string());
+        cfg.scripting.require_explicit_trust_for_imported_scripts = true;
+        cfg.scripting
+            .trusted_digests
+            .insert(script_a.to_string_lossy().to_string(), digest_a);
+    }
+
+    // Attempt to launch script B (which has the same filename 'module.lua')
+    let launch_res = harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("sync_script_worker");
+
+    assert_eq!(
+        launch_res, None,
+        "Script B must not inherit trust approval from Script A despite identical filenames"
+    );
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_trust_reauthorization_with_new_digest() {
+    let harness = LuaTestHarness::start("lua_test_secret_token_8").await;
+
+    let host_bin = find_script_host_binary("aethershell-script-host.exe");
+    if host_bin.is_none() {
+        if std::env::var("REQUIRE_LUA_WORKER_TEST").is_ok() {
+            panic!("REQUIRED_LUA_BIN_MISSING: aethershell-script-host.exe not found");
+        } else {
+            eprintln!("STATUS_LUA_BIN_UNAVAILABLE: aethershell-script-host.exe not found; skipping out-of-process test.");
+            harness.stop().await;
+            return;
+        }
+    }
+
+    let script_file = harness.temp_dir.join("evolving_worker.lua");
+    let content_v1 = "function init() aether.set_binding('script.status', 'V1') end\n";
+    std::fs::write(&script_file, content_v1).unwrap();
+    let digest_v1 = sha256_hex(content_v1.as_bytes());
+
+    // 1. Authorize V1
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.enabled = true;
+        cfg.scripting.active_script = Some(script_file.to_string_lossy().to_string());
+        cfg.scripting.require_explicit_trust_for_imported_scripts = true;
+        cfg.scripting
+            .trusted_digests
+            .insert(script_file.to_string_lossy().to_string(), digest_v1);
+    }
+
+    let pid_v1 = harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("spawn v1");
+    assert!(pid_v1.is_some(), "V1 should spawn successfully");
+
+    // Terminate V1
+    {
+        let sup_arc = harness.script_supervisor();
+        let mut sup = sup_arc.lock().await;
+        sup.terminate_worker();
+    }
+
+    // 2. Modify to V2 on disk
+    let content_v2 = "function init() aether.set_binding('script.status', 'V2') end\n";
+    std::fs::write(&script_file, content_v2).unwrap();
+    let digest_v2 = sha256_hex(content_v2.as_bytes());
+
+    // 3. Before reauthorization: launch attempt fails closed
+    let reject_v2 = harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("sync v2 unapproved");
+    assert_eq!(
+        reject_v2, None,
+        "V2 must be rejected before explicit reauthorization"
+    );
+
+    // 4. Explicitly reauthorize V2 digest
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting
+            .trusted_digests
+            .insert(script_file.to_string_lossy().to_string(), digest_v2);
+    }
+
+    // 5. After reauthorization: launch succeeds!
+    let pid_v2 = harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("spawn v2");
+    assert!(
+        pid_v2.is_some(),
+        "V2 should spawn successfully after explicit digest reauthorization"
+    );
+
+    // Clean up
+    {
+        let sup_arc = harness.script_supervisor();
+        let mut sup = sup_arc.lock().await;
+        sup.terminate_worker();
+    }
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_trust_rejection_conflicting_digests() {
+    let harness = LuaTestHarness::start("lua_test_secret_token_9").await;
+
+    let script_file = harness.temp_dir.join("conflict.lua");
+    let content = "function init() end\n";
+    std::fs::write(&script_file, content).unwrap();
+    let digest = sha256_hex(content.as_bytes());
+
+    // Insert conflicting trust records for the same canonical file
+    let canon_path = dunce_canonical(&script_file);
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.enabled = true;
+        cfg.scripting.active_script = Some(script_file.to_string_lossy().to_string());
+        cfg.scripting.require_explicit_trust_for_imported_scripts = true;
+        cfg.scripting
+            .trusted_digests
+            .insert(script_file.to_string_lossy().to_string(), digest);
+        cfg.scripting.trusted_digests.insert(
+            canon_path,
+            "0000000000000000000000000000000000000000000000000000000000000000".into(),
+        );
+    }
+
+    let launch_res = harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("sync_script_worker");
+
+    assert_eq!(
+        launch_res, None,
+        "Conflicting trust records must fail closed"
+    );
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_trust_rejection_malformed_digest() {
+    let harness = LuaTestHarness::start("lua_test_secret_token_10").await;
+
+    let script_file = harness.temp_dir.join("malformed.lua");
+    let content = "function init() end\n";
+    std::fs::write(&script_file, content).unwrap();
+
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.enabled = true;
+        cfg.scripting.active_script = Some(script_file.to_string_lossy().to_string());
+        cfg.scripting.require_explicit_trust_for_imported_scripts = true;
+        cfg.scripting.trusted_digests.insert(
+            script_file.to_string_lossy().to_string(),
+            "not_a_hex_digest".into(),
+        );
+    }
+
+    let launch_res = harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("sync_script_worker");
+
+    assert_eq!(launch_res, None, "Malformed trust digest must fail closed");
+
+    harness.stop().await;
+}
+
+fn dunce_canonical(p: &std::path::Path) -> String {
+    let canon = std::fs::canonicalize(p).unwrap();
+    let s = canon.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        stripped.to_string()
+    } else {
+        s.to_string()
+    }
 }
