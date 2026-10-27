@@ -20,6 +20,8 @@ pub enum ConfigStorageError {
     TomlSer(#[from] toml::ser::Error),
     #[error("Unsupported schema version: '{0}', expected '{1}'")]
     UnsupportedSchemaVersion(String, String),
+    #[error("Configuration validation error: {0}")]
+    Validation(#[from] crate::schema::ConfigValidationError),
     #[error("Atomic rename failed: {0}")]
     AtomicRename(String),
 }
@@ -35,6 +37,54 @@ impl ConfigManager {
         Self {
             config_path: config_dir.join("config.toml"),
             backup_path: config_dir.join("config.toml.bak"),
+        }
+    }
+
+    pub fn config_path(&self) -> &Path {
+        &self.config_path
+    }
+
+    pub fn backup_path(&self) -> &Path {
+        &self.backup_path
+    }
+
+    /// Loads the configuration if the file exists on disk, healing from backup if corrupted.
+    /// If the file does not exist, returns `Ok(None)` without writing anything to disk.
+    pub fn load_if_exists(&self) -> Result<Option<AppConfig>, ConfigStorageError> {
+        if !self.config_path.exists() {
+            return Ok(None);
+        }
+
+        let content = fs::read_to_string(&self.config_path)?;
+        match toml::from_str::<AppConfig>(&content) {
+            Ok(cfg) => {
+                if cfg.schema_version != CURRENT_SCHEMA_VERSION {
+                    return Err(ConfigStorageError::UnsupportedSchemaVersion(
+                        cfg.schema_version,
+                        CURRENT_SCHEMA_VERSION.into(),
+                    ));
+                }
+                cfg.validate()?;
+                Ok(Some(cfg))
+            }
+            Err(e) => {
+                if self.backup_path.exists() {
+                    let backup_content = fs::read_to_string(&self.backup_path)?;
+                    if let Ok(backup_cfg) = toml::from_str::<AppConfig>(&backup_content) {
+                        if backup_cfg.schema_version != CURRENT_SCHEMA_VERSION {
+                            return Err(ConfigStorageError::UnsupportedSchemaVersion(
+                                backup_cfg.schema_version,
+                                CURRENT_SCHEMA_VERSION.into(),
+                            ));
+                        }
+                        backup_cfg.validate()?;
+                        tracing::warn!("Recovered configuration from backup after detecting corruption in primary config");
+                        self.heal_from_backup(&backup_content)?;
+                        return Ok(Some(backup_cfg));
+                    }
+                }
+                Err(ConfigStorageError::Toml(e))
+            }
         }
     }
 
@@ -58,6 +108,7 @@ impl ConfigManager {
                         CURRENT_SCHEMA_VERSION.into(),
                     ));
                 }
+                cfg.validate()?;
                 Ok(cfg)
             }
             Err(e) => {
@@ -71,6 +122,7 @@ impl ConfigManager {
                                 CURRENT_SCHEMA_VERSION.into(),
                             ));
                         }
+                        backup_cfg.validate()?;
                         tracing::warn!("Recovered configuration from backup after detecting corruption in primary config");
                         // Safely and atomically heal primary config file with known-good backup
                         self.heal_from_backup(&backup_content)?;
@@ -161,6 +213,8 @@ impl ConfigManager {
     /// file parses cleanly, preventing backup poisoning. Employs genuine Windows atomic file replacement (`ReplaceFileW`)
     /// without direct-copy fallback to guarantee zero corruption or partial writes.
     pub fn save_atomic(&self, config: &AppConfig) -> Result<(), ConfigStorageError> {
+        config.validate()?;
+
         if let Some(parent) = self.config_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -277,6 +331,12 @@ impl ConfigManager {
 /// Per PRD Q38:B: Portable application binaries use canonical AppData settings, not portable settings beside executable.
 /// Consistently resolves configuration to `%LOCALAPPDATA%\AetherShell` (or fallback `./data` if LOCALAPPDATA is unset).
 pub fn resolve_app_data_dir() -> PathBuf {
+    if let Ok(override_path) = std::env::var("AETHERSHELL_CONFIG_DIR") {
+        let path = PathBuf::from(override_path);
+        if !path.as_os_str().is_empty() {
+            return path;
+        }
+    }
     resolve_app_data_dir_from_base(
         std::env::current_exe()
             .ok()
@@ -670,6 +730,48 @@ mod tests {
             }
             other => panic!("Expected UnsupportedSchemaVersion, got {:?}", other),
         }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_load_if_exists_behavior() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("test_load_if_exists_{}", uuid::Uuid::new_v4()));
+        let manager = ConfigManager::new(&temp_dir);
+
+        // When no file exists, returns Ok(None) without writing to disk
+        assert_eq!(manager.load_if_exists().unwrap(), None);
+        assert!(!manager.config_path().exists());
+
+        // Save a valid config
+        let cfg = AppConfig::default();
+        manager.save_atomic(&cfg).unwrap();
+        assert!(manager.config_path().exists());
+
+        // Now load_if_exists returns Ok(Some(cfg))
+        assert_eq!(manager.load_if_exists().unwrap(), Some(cfg));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_save_atomic_rejects_invalid_configuration() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("test_save_invalid_{}", uuid::Uuid::new_v4()));
+        let manager = ConfigManager::new(&temp_dir);
+
+        let invalid_cfg = AppConfig {
+            audio: crate::schema::AudioConfig {
+                render_fps: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let res = manager.save_atomic(&invalid_cfg);
+        assert!(res.is_err());
+        assert!(!manager.config_path().exists());
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

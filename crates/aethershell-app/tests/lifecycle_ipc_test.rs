@@ -6,8 +6,15 @@ use std::time::Duration;
 fn test_singleton_and_ipc_second_launch() {
     let target_bin = env!("CARGO_BIN_EXE_aethershell");
 
-    // 1. Launch primary instance in background
+    let temp_dir =
+        std::env::temp_dir().join(format!("aethershell_lifecycle_{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::create_dir_all(&temp_dir);
+    let token_path = temp_dir.join("session_1.token");
+
+    // 1. Launch primary instance in background with isolated config dir and session token path
     let mut child = Command::new(target_bin)
+        .env("AETHERSHELL_CONFIG_DIR", &temp_dir)
+        .env("AETHERSHELL_SESSION_TOKEN_PATH", &token_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -18,6 +25,8 @@ fn test_singleton_and_ipc_second_launch() {
 
     // 2. Launch second instance with --settings
     let output = Command::new(target_bin)
+        .env("AETHERSHELL_CONFIG_DIR", &temp_dir)
+        .env("AETHERSHELL_SESSION_TOKEN_PATH", &token_path)
         .arg("--settings")
         .output()
         .expect("launch secondary instance with --settings");
@@ -47,12 +56,13 @@ fn test_singleton_and_ipc_second_launch() {
                 );
 
                 // Authenticated shutdown using genuine session token capability
-                let token = aethershell_ipc::SessionToken::load()
+                let token = std::fs::read_to_string(&token_path)
+                    .or_else(|_| aethershell_ipc::SessionToken::load().ok_or(()))
                     .expect("Session token must be present on disk for active engine");
                 let auth_res = IpcClient::send_command(
                     &pipe,
                     "shutdown",
-                    serde_json::json!({ "session_token": token }),
+                    serde_json::json!({ "session_token": token.trim() }),
                 )
                 .await
                 .expect("IPC call");
@@ -65,4 +75,6 @@ fn test_singleton_and_ipc_second_launch() {
     // Await primary exit
     let exit_status = child.wait().expect("child exit");
     assert!(exit_status.success());
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }

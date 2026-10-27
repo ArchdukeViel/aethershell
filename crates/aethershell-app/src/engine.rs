@@ -1,5 +1,6 @@
 use crate::tray::SystemTray;
 use aethershell_audio::{FpsMode, WasapiLoopbackCapture};
+use aethershell_config::{AppConfig, ConfigManager};
 use aethershell_core::{
     BindingValue, LayoutDefinition, LifecycleState, ProfileDefinition, ThemeDefinition,
     VerificationStatus,
@@ -40,6 +41,8 @@ pub struct AppEngine {
     shutdown_flag: Arc<AtomicBool>,
     session_token: Arc<RwLock<String>>,
     cached_bindings: Arc<RwLock<HashMap<String, BindingValue>>>,
+    config_manager: Arc<Mutex<ConfigManager>>,
+    active_config: Arc<RwLock<AppConfig>>,
 }
 
 impl AppEngine {
@@ -48,6 +51,28 @@ impl AppEngine {
     }
 
     pub fn with_token(token: impl Into<String>) -> Self {
+        let config_dir = aethershell_config::resolve_app_data_dir();
+        Self::with_token_and_config_dir(token, config_dir)
+    }
+
+    pub fn with_token_and_config_dir(
+        token: impl Into<String>,
+        config_dir: impl Into<PathBuf>,
+    ) -> Self {
+        let manager = ConfigManager::new(&config_dir.into());
+        Self::with_token_and_config_manager(token, manager)
+    }
+
+    pub fn with_token_and_config_manager(token: impl Into<String>, manager: ConfigManager) -> Self {
+        let initial_config = manager.load_if_exists().unwrap_or(None).unwrap_or_default();
+        Self::with_token_and_config(token, manager, initial_config)
+    }
+
+    pub fn with_token_and_config(
+        token: impl Into<String>,
+        config_manager: ConfigManager,
+        initial_config: AppConfig,
+    ) -> Self {
         Self {
             os_info: WindowsVersionInfo::detect(),
             interaction: Arc::new(Mutex::new(InteractionController::new())),
@@ -63,7 +88,24 @@ impl AppEngine {
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             session_token: Arc::new(RwLock::new(token.into())),
             cached_bindings: Arc::new(RwLock::new(HashMap::new())),
+            config_manager: Arc::new(Mutex::new(config_manager)),
+            active_config: Arc::new(RwLock::new(initial_config)),
         }
+    }
+
+    pub fn config(&self) -> AppConfig {
+        self.active_config
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn config_manager(&self) -> Arc<Mutex<ConfigManager>> {
+        Arc::clone(&self.config_manager)
+    }
+
+    pub fn active_config(&self) -> Arc<RwLock<AppConfig>> {
+        Arc::clone(&self.active_config)
     }
 
     pub fn session_token(&self) -> String {
@@ -180,6 +222,28 @@ impl AppEngine {
             "Session capability token registered at {:?}",
             _session_guard.path()
         );
+
+        // Load or initialize persistent configuration store (PRD Section 10 & 16, Q38:B)
+        {
+            let mgr = self.config_manager.lock().await;
+            match mgr.load_or_default() {
+                Ok(loaded) => {
+                    info!(
+                        "Loaded configuration successfully (schema v{})",
+                        loaded.schema_version
+                    );
+                    if let Ok(mut writer) = self.active_config.write() {
+                        *writer = loaded;
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to load configuration on startup: {}. Operating with in-memory default.",
+                        e
+                    );
+                }
+            }
+        }
 
         // 2. Configure Safe Mode & Conflict Detection (PRD Section 3.4 & Q21:A)
         {
@@ -554,6 +618,8 @@ impl AppEngine {
         let os_build = self.os_info.build_number;
         let session_token = Arc::clone(&self.session_token);
         let cached_bindings = Arc::clone(&self.cached_bindings);
+        let config_manager = Arc::clone(&self.config_manager);
+        let active_config = Arc::clone(&self.active_config);
         let valid_session_id = session_id;
 
         Arc::new(move |req: IpcRequest, client_identity: IpcClientIdentity| {
@@ -568,6 +634,8 @@ impl AppEngine {
             let shutdown_tx = shutdown_tx.clone();
             let session_token = Arc::clone(&session_token);
             let cached_bindings = Arc::clone(&cached_bindings);
+            let config_manager = Arc::clone(&config_manager);
+            let active_config = Arc::clone(&active_config);
 
             Box::pin(async move {
                 // 1. Session Isolation: Enforce same-session client callers
@@ -618,6 +686,8 @@ impl AppEngine {
                         | "update_layout"
                         | "pause_audio"
                         | "resume_audio"
+                        | "get_config"
+                        | "set_config"
                 );
 
                 if is_management_command {
@@ -867,7 +937,15 @@ impl AppEngine {
                         )
                     }
                     "enter_interactive_mode" => {
-                        let timeout = req.payload["timeout_seconds"].as_u64().unwrap_or(8) as u32;
+                        let timeout = req.payload["timeout_seconds"]
+                            .as_u64()
+                            .map(|t| t as u32)
+                            .unwrap_or_else(|| {
+                                active_config
+                                    .read()
+                                    .map(|c| c.desktop.interactive_timeout_seconds)
+                                    .unwrap_or(8)
+                            });
                         let mut ctrl = interaction.lock().await;
                         ctrl.enter_temporary_mode(timeout);
                         let mut win_mgr = desktop_windows.lock().await;
@@ -911,6 +989,173 @@ impl AppEngine {
                         IpcResponse::ok(
                             req.message_id,
                             serde_json::json!({ "rendered_commands": rendered_commands, "success": true }),
+                        )
+                    }
+                    "get_config" => {
+                        let current_cfg =
+                            active_config.read().map(|c| c.clone()).unwrap_or_default();
+                        let section = req.payload.get("section").and_then(|v| v.as_str());
+                        let response_payload = match section {
+                            Some("general") => {
+                                serde_json::json!({ "section": "general", "general": current_cfg.general })
+                            }
+                            Some("taskbar") => {
+                                serde_json::json!({ "section": "taskbar", "taskbar": current_cfg.taskbar })
+                            }
+                            Some("desktop") => {
+                                serde_json::json!({ "section": "desktop", "desktop": current_cfg.desktop })
+                            }
+                            Some("audio") => {
+                                serde_json::json!({ "section": "audio", "audio": current_cfg.audio })
+                            }
+                            Some("telemetry") => serde_json::json!({
+                                "section": "telemetry",
+                                "telemetry": current_cfg.telemetry
+                            }),
+                            Some("power") => {
+                                serde_json::json!({ "section": "power", "power": current_cfg.power })
+                            }
+                            Some("gaming") => {
+                                serde_json::json!({ "section": "gaming", "gaming": current_cfg.gaming })
+                            }
+                            Some("scripting") => serde_json::json!({
+                                "section": "scripting",
+                                "scripting": current_cfg.scripting
+                            }),
+                            Some("privacy") => {
+                                serde_json::json!({ "section": "privacy", "privacy": current_cfg.privacy })
+                            }
+                            Some("updates") => {
+                                serde_json::json!({ "section": "updates", "updates": current_cfg.updates })
+                            }
+                            Some(other) => {
+                                return IpcResponse::error(
+                                    req.message_id,
+                                    format!("Unknown configuration section: '{}'", other),
+                                );
+                            }
+                            None => serde_json::json!({
+                                "config": current_cfg,
+                                "schema_version": current_cfg.schema_version,
+                            }),
+                        };
+                        IpcResponse::ok(req.message_id, response_payload)
+                    }
+                    "set_config" => {
+                        // Extract candidate configuration from payload
+                        let candidate_res: Result<AppConfig, String> = if let Some(toml_str) =
+                            req.payload.get("toml").and_then(|v| v.as_str())
+                        {
+                            toml::from_str::<AppConfig>(toml_str)
+                                .map_err(|e| format!("Failed to parse TOML configuration: {}", e))
+                        } else if let Some(cfg_val) = req.payload.get("config") {
+                            if let Some(cfg_str) = cfg_val.as_str() {
+                                toml::from_str::<AppConfig>(cfg_str)
+                                    .or_else(|_| serde_json::from_str::<AppConfig>(cfg_str))
+                                    .map_err(|e| {
+                                        format!("Failed to parse configuration string: {}", e)
+                                    })
+                            } else if cfg_val.is_object() {
+                                serde_json::from_value::<AppConfig>(cfg_val.clone()).map_err(|e| {
+                                    format!("Invalid configuration object schema: {}", e)
+                                })
+                            } else {
+                                Err("Field 'config' must be a valid JSON object or TOML string"
+                                    .into())
+                            }
+                        } else {
+                            // Attempt to parse the payload itself (excluding capability token fields)
+                            let mut stripped = req.payload.clone();
+                            if let Some(map) = stripped.as_object_mut() {
+                                map.remove("session_token");
+                                map.remove("token");
+                            }
+                            serde_json::from_value::<AppConfig>(stripped)
+                                .map_err(|e| format!("Invalid configuration payload schema: {}", e))
+                        };
+
+                        let candidate_cfg = match candidate_res {
+                            Ok(cfg) => cfg,
+                            Err(err_msg) => {
+                                warn!("IPC 'set_config' rejected: {}", err_msg);
+                                return IpcResponse::error(req.message_id, err_msg);
+                            }
+                        };
+
+                        // Pre-validation against integrity, bounds, and schema version constraints
+                        if let Err(val_err) = candidate_cfg.validate() {
+                            warn!("IPC 'set_config' validation failed: {}", val_err);
+                            return IpcResponse::error(
+                                req.message_id,
+                                format!("Configuration validation failed: {}", val_err),
+                            );
+                        }
+
+                        // Transactional disk persistence (atomic rename with backup preservation)
+                        {
+                            let mgr = config_manager.lock().await;
+                            if let Err(save_err) = mgr.save_atomic(&candidate_cfg) {
+                                warn!(
+                                    "IPC 'set_config' atomic disk persistence failed: {}",
+                                    save_err
+                                );
+                                return IpcResponse::error(
+                                    req.message_id,
+                                    format!("Transactional disk persistence failed: {}", save_err),
+                                );
+                            }
+                        }
+
+                        // Update in-memory active configuration
+                        if let Ok(mut writer) = active_config.write() {
+                            *writer = candidate_cfg.clone();
+                        }
+
+                        // Propagate changes to live engine subsystems
+                        {
+                            // 1. Audio and power FPS profile
+                            let fps_mode = match candidate_cfg.power.profile.as_str() {
+                                "performance" => FpsMode::Performance,
+                                "power_saver" => FpsMode::BatterySaver,
+                                _ => {
+                                    if candidate_cfg.audio.render_fps >= 60 {
+                                        FpsMode::Performance
+                                    } else if candidate_cfg.audio.render_fps <= 15 {
+                                        FpsMode::BatterySaver
+                                    } else {
+                                        FpsMode::AcBalanced
+                                    }
+                                }
+                            };
+                            let mut aud = audio.lock().await;
+                            aud.set_fps_mode(fps_mode);
+                        }
+
+                        {
+                            // 2. Trigger live scene re-render with updated configuration
+                            let win_mgr = desktop_windows.lock().await;
+                            if let Some(primary) = win_mgr.primary_window() {
+                                let width = primary.bounds[2].max(100) as f32;
+                                let height = primary.bounds[3].max(100) as f32;
+                                let bindings = cached_bindings
+                                    .read()
+                                    .map(|b| b.clone())
+                                    .unwrap_or_default();
+                                let scene = compile_live_scene(width, height, &bindings);
+                                let mut r_lock = desktop_renderer.lock().await;
+                                if let Some(ref mut renderer) = *r_lock {
+                                    let _ = renderer.render_scene(&scene);
+                                }
+                            }
+                        }
+
+                        info!("IPC 'set_config' successfully applied and persisted atomically.");
+                        IpcResponse::ok(
+                            req.message_id,
+                            serde_json::json!({
+                                "applied": true,
+                                "config": candidate_cfg,
+                            }),
                         )
                     }
                     "open_settings" => {

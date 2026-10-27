@@ -1,11 +1,13 @@
 use aethershell_core::{TaskbarEffect, TaskbarRule};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 pub const CURRENT_SCHEMA_VERSION: &str = "1.0.0";
 
 /// Master configuration model matching PRD Section 10.2.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppConfig {
+    #[serde(default = "default_schema_version")]
     pub schema_version: String,
     #[serde(default = "default_profile")]
     pub profile: String,
@@ -445,6 +447,231 @@ fn default_crash_limit() -> u32 {
 fn default_channel() -> String {
     "stable".into()
 }
+fn default_schema_version() -> String {
+    CURRENT_SCHEMA_VERSION.into()
+}
+
 fn default_one_float() -> f32 {
     1.0
+}
+
+/// Errors occurring during configuration validation.
+#[derive(Debug, Error, PartialEq, Clone)]
+pub enum ConfigValidationError {
+    #[error("Unsupported or mismatched schema version: '{0}' (expected '{1}')")]
+    UnsupportedSchemaVersion(String, String),
+    #[error("Profile identifier cannot be empty or exceed 64 characters")]
+    InvalidProfile,
+    #[error("Profile identifier cannot contain path separators or parent traversal: '{0}'")]
+    UnsafeProfilePath(String),
+    #[error("Audio render FPS must be between 1 and 240 (got {0})")]
+    InvalidAudioFps(u32),
+    #[error("Audio spectrum bands must be between 8 and 512 (got {0})")]
+    InvalidAudioBands(u32),
+    #[error("Audio auto-hide delay must be between 1 and 300 seconds (got {0})")]
+    InvalidAutoHideDelay(u32),
+    #[error("Telemetry sample interval must be at least 100 ms (got {0} ms)")]
+    InvalidSampleInterval(u64),
+    #[error("Telemetry on-battery sample interval must be at least 500 ms (got {0} ms)")]
+    InvalidBatterySampleInterval(u64),
+    #[error("Desktop interactive timeout must be between 1 and 300 seconds (got {0})")]
+    InvalidInteractiveTimeout(u32),
+    #[error("Desktop snap grid must be positive (got {0})")]
+    InvalidSnapGrid(f32),
+    #[error("Scripting crash restart limit cannot exceed 10 (got {0})")]
+    InvalidCrashLimit(u32),
+}
+
+impl AppConfig {
+    /// Validates the configuration model against integrity, safety, and operational constraints.
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        if self.schema_version != CURRENT_SCHEMA_VERSION {
+            return Err(ConfigValidationError::UnsupportedSchemaVersion(
+                self.schema_version.clone(),
+                CURRENT_SCHEMA_VERSION.into(),
+            ));
+        }
+
+        if self.profile.is_empty() || self.profile.len() > 64 {
+            return Err(ConfigValidationError::InvalidProfile);
+        }
+
+        if self.profile.contains('/') || self.profile.contains('\\') || self.profile.contains("..")
+        {
+            return Err(ConfigValidationError::UnsafeProfilePath(
+                self.profile.clone(),
+            ));
+        }
+
+        if self.audio.render_fps == 0 || self.audio.render_fps > 240 {
+            return Err(ConfigValidationError::InvalidAudioFps(
+                self.audio.render_fps,
+            ));
+        }
+
+        if self.audio.spectrum_bands < 8 || self.audio.spectrum_bands > 512 {
+            return Err(ConfigValidationError::InvalidAudioBands(
+                self.audio.spectrum_bands,
+            ));
+        }
+
+        if self.audio.auto_hide_delay_seconds == 0 || self.audio.auto_hide_delay_seconds > 300 {
+            return Err(ConfigValidationError::InvalidAutoHideDelay(
+                self.audio.auto_hide_delay_seconds,
+            ));
+        }
+
+        if self.telemetry.sample_interval_ms < 100 {
+            return Err(ConfigValidationError::InvalidSampleInterval(
+                self.telemetry.sample_interval_ms,
+            ));
+        }
+
+        if self.telemetry.on_battery_sample_interval_ms < 500 {
+            return Err(ConfigValidationError::InvalidBatterySampleInterval(
+                self.telemetry.on_battery_sample_interval_ms,
+            ));
+        }
+
+        if self.desktop.interactive_timeout_seconds == 0
+            || self.desktop.interactive_timeout_seconds > 300
+        {
+            return Err(ConfigValidationError::InvalidInteractiveTimeout(
+                self.desktop.interactive_timeout_seconds,
+            ));
+        }
+
+        if self.desktop.snap_grid_dip <= 0.0 || !self.desktop.snap_grid_dip.is_finite() {
+            return Err(ConfigValidationError::InvalidSnapGrid(
+                self.desktop.snap_grid_dip,
+            ));
+        }
+
+        if self.scripting.restart_after_crash_limit > 10 {
+            return Err(ConfigValidationError::InvalidCrashLimit(
+                self.scripting.restart_after_crash_limit,
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config_validates_successfully() {
+        let config = AppConfig::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_schema_version_mismatch_rejected() {
+        let config = AppConfig {
+            schema_version: "2.0.0".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.validate(),
+            Err(ConfigValidationError::UnsupportedSchemaVersion(
+                "2.0.0".into(),
+                CURRENT_SCHEMA_VERSION.into()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_unsafe_profile_path_rejected() {
+        let config = AppConfig {
+            profile: "../malicious".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.validate(),
+            Err(ConfigValidationError::UnsafeProfilePath(
+                "../malicious".into()
+            ))
+        );
+
+        let config_subdir = AppConfig {
+            profile: "subdir/profile".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            config_subdir.validate(),
+            Err(ConfigValidationError::UnsafeProfilePath(
+                "subdir/profile".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_audio_validation_bounds() {
+        let config_zero = AppConfig {
+            audio: AudioConfig {
+                render_fps: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            config_zero.validate(),
+            Err(ConfigValidationError::InvalidAudioFps(0))
+        );
+
+        let config_high = AppConfig {
+            audio: AudioConfig {
+                render_fps: 300,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            config_high.validate(),
+            Err(ConfigValidationError::InvalidAudioFps(300))
+        );
+
+        let config_bands = AppConfig {
+            audio: AudioConfig {
+                render_fps: 60,
+                spectrum_bands: 4,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            config_bands.validate(),
+            Err(ConfigValidationError::InvalidAudioBands(4))
+        );
+    }
+
+    #[test]
+    fn test_telemetry_interval_bounds() {
+        let config_low = AppConfig {
+            telemetry: TelemetryConfig {
+                sample_interval_ms: 50,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            config_low.validate(),
+            Err(ConfigValidationError::InvalidSampleInterval(50))
+        );
+
+        let config_battery = AppConfig {
+            telemetry: TelemetryConfig {
+                sample_interval_ms: 1000,
+                on_battery_sample_interval_ms: 200,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            config_battery.validate(),
+            Err(ConfigValidationError::InvalidBatterySampleInterval(200))
+        );
+    }
 }
