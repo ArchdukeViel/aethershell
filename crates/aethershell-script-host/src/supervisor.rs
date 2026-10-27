@@ -1,14 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::os::windows::io::AsRawHandle;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
 use std::time::Instant;
-use tracing::{info, warn};
+use tracing::info;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    QueryInformationJobObject, SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+};
+use windows::Win32::System::Threading::{
+    CreateProcessW, GetExitCodeProcess, ResumeThread, TerminateProcess, WaitForSingleObject,
+    CREATE_SUSPENDED, PROCESS_INFORMATION, STARTUPINFOW,
 };
 
 /// Status and health of the supervised script host child process (PRD Section 13.2 / Gate G10).
@@ -21,18 +25,93 @@ pub enum SupervisorState {
     Terminated,
 }
 
+/// RAII wrapper managing a Win32 child process handle.
+#[derive(Debug)]
+pub struct SupervisedChild {
+    process_handle: HANDLE,
+    pid: u32,
+}
+
+impl SupervisedChild {
+    pub fn new(process_handle: HANDLE, pid: u32) -> Self {
+        Self {
+            process_handle,
+            pid,
+        }
+    }
+
+    pub fn id(&self) -> u32 {
+        self.pid
+    }
+
+    pub fn handle(&self) -> HANDLE {
+        self.process_handle
+    }
+
+    pub fn is_alive(&self) -> bool {
+        unsafe {
+            let mut exit_code = 0u32;
+            if GetExitCodeProcess(self.process_handle, &mut exit_code).is_ok() {
+                exit_code == 259 // STILL_ACTIVE (0x103)
+            } else {
+                false
+            }
+        }
+    }
+
+    pub fn kill(&mut self) {
+        unsafe {
+            if !self.process_handle.0.is_null() {
+                let _ = TerminateProcess(self.process_handle, 1);
+            }
+        }
+    }
+
+    pub fn wait(&mut self) -> Result<u32, String> {
+        unsafe {
+            let _ = WaitForSingleObject(self.process_handle, 5000);
+            let mut exit_code = 0u32;
+            if GetExitCodeProcess(self.process_handle, &mut exit_code).is_ok() {
+                Ok(exit_code)
+            } else {
+                Err("GetExitCodeProcess failed".into())
+            }
+        }
+    }
+}
+
+impl Drop for SupervisedChild {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.process_handle.0.is_null() {
+                let _ = CloseHandle(self.process_handle);
+            }
+        }
+    }
+}
+
+unsafe impl Send for SupervisedChild {}
+unsafe impl Sync for SupervisedChild {}
+
 /// Windows Job Object guard ensuring all child worker processes terminate when the job or parent closes.
 #[derive(Debug)]
 pub struct JobObjectGuard(HANDLE);
 
 impl JobObjectGuard {
     pub fn new() -> Result<Self, String> {
+        // 128 MiB per-worker memory limit (PRD Table 17-1)
+        Self::with_memory_limit(128 * 1024 * 1024)
+    }
+
+    pub fn with_memory_limit(memory_limit_bytes: usize) -> Result<Self, String> {
         unsafe {
             let job = CreateJobObjectW(None, None)
                 .map_err(|e| format!("CreateJobObjectW failed: {}", e))?;
 
             let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            info.BasicLimitInformation.LimitFlags =
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+            info.ProcessMemoryLimit = memory_limit_bytes;
 
             SetInformationJobObject(
                 job,
@@ -49,16 +128,40 @@ impl JobObjectGuard {
         }
     }
 
-    pub fn assign_process(&self, child: &Child) -> Result<(), String> {
+    pub fn assign_handle(&self, child_handle: HANDLE) -> Result<(), String> {
         unsafe {
-            let child_handle = HANDLE(child.as_raw_handle());
             AssignProcessToJobObject(self.0, child_handle)
                 .map_err(|e| format!("AssignProcessToJobObject failed: {}", e))
         }
     }
 
+    pub fn assign_process(&self, child: &Child) -> Result<(), String> {
+        self.assign_handle(HANDLE(child.as_raw_handle()))
+    }
+
     pub fn handle(&self) -> HANDLE {
         self.0
+    }
+
+    /// Queries the configured per-process memory limit from the Windows Job Object.
+    pub fn query_memory_limit(&self) -> Result<usize, String> {
+        unsafe {
+            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            QueryInformationJobObject(
+                self.0,
+                JobObjectExtendedLimitInformation,
+                &mut info as *mut _ as *mut std::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                None,
+            )
+            .map_err(|e| format!("QueryInformationJobObject failed: {}", e))?;
+            Ok(info.ProcessMemoryLimit)
+        }
+    }
+
+    #[cfg(test)]
+    pub fn from_raw_handle_for_test(handle: HANDLE) -> Self {
+        Self(handle)
     }
 }
 
@@ -84,7 +187,7 @@ pub struct ScriptSupervisor {
     last_heartbeat: Option<Instant>,
     heartbeat_timeout_secs: u32,
     job: Option<JobObjectGuard>,
-    child: Option<Child>,
+    child: Option<SupervisedChild>,
 }
 
 impl ScriptSupervisor {
@@ -116,6 +219,29 @@ impl ScriptSupervisor {
         self.child.is_some()
     }
 
+    pub fn is_child_alive(&self) -> bool {
+        self.child.as_ref().map(|c| c.is_alive()).unwrap_or(false)
+    }
+
+    pub fn active_child_pid(&self) -> Option<u32> {
+        self.child.as_ref().map(|c| c.id())
+    }
+
+    pub fn assign_supervised_child(&mut self, child: SupervisedChild) {
+        let pid = child.id();
+        self.child = Some(child);
+        self.state = SupervisorState::Running { pid };
+        self.last_heartbeat = Some(Instant::now());
+    }
+
+    pub fn invalidate_worker(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            child.kill();
+        }
+        self.state = SupervisorState::Terminated;
+        self.last_heartbeat = None;
+    }
+
     pub fn record_start(&mut self, pid: u32) {
         self.state = SupervisorState::Running { pid };
         self.last_heartbeat = Some(Instant::now());
@@ -123,6 +249,11 @@ impl ScriptSupervisor {
 
     pub fn record_heartbeat(&mut self) {
         self.last_heartbeat = Some(Instant::now());
+    }
+
+    #[cfg(test)]
+    pub fn set_job_for_test(&mut self, job: Option<JobObjectGuard>) {
+        self.job = job;
     }
 
     /// Spawns a supervised child process with pure-Rust SHA-256 pre-verification and Windows Job Object containment.
@@ -147,41 +278,93 @@ impl ScriptSupervisor {
         // 2. Terminate existing worker if any
         self.terminate_worker();
 
-        // 3. Ensure Job Object is available
+        // 3. Ensure Job Object is available with strict fail-closed policy (PRD G10)
         if self.job.is_none() {
-            self.job = JobObjectGuard::new().ok();
+            self.job = Some(JobObjectGuard::new().map_err(|e| {
+                format!(
+                    "CRITICAL: Job Object initialization failed: {}. Worker spawn aborted (fail-closed).",
+                    e
+                )
+            })?);
         }
+        let job = self.job.as_ref().ok_or("Job Object unavailable")?;
 
-        // 4. Spawn child process
-        let mut cmd = Command::new(exe_path);
-        cmd.arg("--script")
-            .arg(script_path)
-            .arg("--digest")
-            .arg(approved_digest);
-        if !pipe_name.is_empty() {
-            cmd.arg("--pipe").arg(pipe_name);
-        }
-        cmd.stdin(Stdio::null());
+        // 4. Create child process in SUSPENDED state to guarantee zero uncontained execution
+        let si = STARTUPINFOW {
+            cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+            ..Default::default()
+        };
+        let mut pi = PROCESS_INFORMATION::default();
 
-        let child = cmd
-            .spawn()
-            .map_err(|e| format!("Failed to spawn child worker process: {}", e))?;
-        let pid = child.id();
-
-        // 5. Assign to Windows Job Object
-        if let Some(ref job) = self.job {
-            if let Err(e) = job.assign_process(&child) {
-                warn!("Job Object assignment failed for PID {}: {}", pid, e);
+        let cmd_line = format!(
+            "\"{}\" --script \"{}\" --digest \"{}\"{}",
+            exe_path.display(),
+            script_path.display(),
+            approved_digest,
+            if pipe_name.is_empty() {
+                String::new()
             } else {
-                info!(
-                    "Assigned worker PID {} to Windows Job Object (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)",
-                    pid
-                );
+                format!(" --pipe \"{}\"", pipe_name)
             }
+        );
+        let mut cmd_line_u16: Vec<u16> =
+            cmd_line.encode_utf16().chain(std::iter::once(0)).collect();
+
+        let create_res = unsafe {
+            CreateProcessW(
+                None,
+                windows::core::PWSTR(cmd_line_u16.as_mut_ptr()),
+                None,
+                None,
+                false,
+                CREATE_SUSPENDED,
+                None,
+                None,
+                &si,
+                &mut pi,
+            )
+        };
+
+        if create_res.is_err() {
+            return Err(format!("CreateProcessW failed: {:?}", create_res.err()));
         }
 
-        self.record_start(pid);
-        self.child = Some(child);
+        // 5. Assign to Job Object while primary thread is suspended (guarantee containment)
+        if let Err(e) = job.assign_handle(pi.hProcess) {
+            unsafe {
+                let _ = TerminateProcess(pi.hProcess, 1);
+                let _ = CloseHandle(pi.hThread);
+                let _ = CloseHandle(pi.hProcess);
+            }
+            return Err(format!(
+                "CRITICAL: Job Object assignment failed: {}. Child worker terminated before execution (fail-closed).",
+                e
+            ));
+        }
+
+        // 6. Assignment succeeded under containment: resume primary thread and close thread handle
+        let resume_res = unsafe { ResumeThread(pi.hThread) };
+        unsafe {
+            let _ = CloseHandle(pi.hThread);
+        }
+
+        if resume_res == u32::MAX {
+            unsafe {
+                let _ = TerminateProcess(pi.hProcess, 1);
+                let _ = CloseHandle(pi.hProcess);
+            }
+            return Err("Failed to resume suspended child worker thread".into());
+        }
+
+        let pid = pi.dwProcessId;
+        info!(
+            "Spawned and contained worker PID {} in Windows Job Object (128 MiB memory quota, kill-on-close)",
+            pid
+        );
+
+        self.child = Some(SupervisedChild::new(pi.hProcess, pid));
+        self.state = SupervisorState::Spawning;
+        self.last_heartbeat = Some(Instant::now());
 
         Ok(pid)
     }
@@ -200,23 +383,14 @@ impl ScriptSupervisor {
     /// Polls child process exit status and enforces crash recovery / quarantine circuit breaker (PRD 10.2).
     pub fn poll_worker_status(&mut self) -> Option<i32> {
         if let Some(ref mut child) = self.child {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    let exit_code = status.code().unwrap_or(-1);
-                    self.child = None;
-                    self.record_exit(exit_code);
-                    Some(exit_code)
-                }
-                Ok(None) => {
-                    self.check_heartbeat_timeout();
-                    None
-                }
-                Err(e) => {
-                    warn!("Error waiting on worker child: {}", e);
-                    self.child = None;
-                    self.record_exit(-1);
-                    Some(-1)
-                }
+            if child.is_alive() {
+                self.check_heartbeat_timeout();
+                None
+            } else {
+                let exit_code = child.wait().unwrap_or(1) as i32;
+                self.child = None;
+                self.record_exit(exit_code);
+                Some(exit_code)
             }
         } else {
             self.check_heartbeat_timeout();
@@ -243,7 +417,13 @@ impl ScriptSupervisor {
 
     /// Checks if worker has missed heartbeat responses beyond grace period and terminates it.
     pub fn check_heartbeat_timeout(&mut self) -> bool {
-        if let SupervisorState::Running { pid } = self.state {
+        let active_pid = match self.state {
+            SupervisorState::Running { pid } => Some(pid),
+            SupervisorState::Spawning => self.child.as_ref().map(|c| c.id()),
+            _ => None,
+        };
+
+        if let Some(pid) = active_pid {
             if let Some(last) = self.last_heartbeat {
                 if last.elapsed().as_secs() >= self.heartbeat_timeout_secs as u64 {
                     self.state = SupervisorState::Quarantined {
@@ -253,7 +433,7 @@ impl ScriptSupervisor {
                         ),
                     };
                     if let Some(mut c) = self.child.take() {
-                        let _ = c.kill();
+                        c.kill();
                         let _ = c.wait();
                     }
                     return true; // Timed out
@@ -266,7 +446,7 @@ impl ScriptSupervisor {
     /// Terminates worker process if running and resets state.
     pub fn terminate_worker(&mut self) {
         if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
+            child.kill();
             let _ = child.wait();
         }
         self.stop();
@@ -294,6 +474,7 @@ impl Drop for ScriptSupervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn test_supervisor_crash_limit_and_quarantine() {
@@ -330,11 +511,9 @@ mod tests {
         let job = job.unwrap();
         assert!(!job.handle().0.is_null());
 
-        // Test assigning a real child process (e.g. powershell or cmd)
-        let child = Command::new("powershell.exe")
-            .arg("-NoProfile")
-            .arg("-Command")
-            .arg("Start-Sleep -Milliseconds 200")
+        // Test assigning a real child process (e.g. cmd.exe)
+        let child = Command::new("cmd.exe")
+            .args(["/c", "ping", "-n", "1", "127.0.0.1"])
             .spawn();
 
         if let Ok(mut c) = child {
@@ -345,6 +524,284 @@ mod tests {
                 res
             );
             let _ = c.wait();
+        }
+    }
+
+    #[test]
+    fn test_job_object_guard_invalid_handle_failure() {
+        let job = JobObjectGuard::new().expect("create job");
+        let invalid_res = job.assign_handle(HANDLE::default());
+        assert!(
+            invalid_res.is_err(),
+            "Assigning null handle to Job Object must return Err"
+        );
+    }
+
+    #[test]
+    fn test_job_object_within_memory_limit_succeeds() {
+        let job = JobObjectGuard::with_memory_limit(128 * 1024 * 1024)
+            .expect("create job with 128 MiB limit");
+
+        let mut child = Command::new("cmd.exe")
+            .args(["/c", "exit", "0"])
+            .spawn()
+            .expect("spawn cmd");
+
+        let assign_res = job.assign_process(&child);
+        assert!(assign_res.is_ok(), "Process assignment must succeed");
+
+        let status = child.wait().expect("wait child");
+        assert!(
+            status.success(),
+            "Process within memory limit must succeed: status={:?}",
+            status
+        );
+    }
+
+    fn resolve_script_host_binary() -> std::path::PathBuf {
+        if let Ok(cur) = std::env::current_exe() {
+            if let Some(target_dir) = cur.parent().and_then(|p| p.parent()) {
+                let candidate = target_dir.join("aethershell-script-host.exe");
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+        }
+        let candidates = [
+            "target\\x86_64-pc-windows-msvc\\debug\\aethershell-script-host.exe",
+            "target\\debug\\aethershell-script-host.exe",
+            "target\\x86_64-pc-windows-msvc\\release\\aethershell-script-host.exe",
+            "target\\release\\aethershell-script-host.exe",
+            "..\\..\\target\\x86_64-pc-windows-msvc\\debug\\aethershell-script-host.exe",
+            "..\\..\\target\\debug\\aethershell-script-host.exe",
+        ];
+        for c in candidates {
+            let p = std::path::PathBuf::from(c);
+            if p.exists() {
+                return p;
+            }
+        }
+
+        // If not found, build it using cargo (e.g. during clean CI runs where lib tests run before bin build)
+        let mut cmd = Command::new("cargo");
+        cmd.args([
+            "build",
+            "-p",
+            "aethershell-script-host",
+            "--bin",
+            "aethershell-script-host",
+        ]);
+        if let Ok(status) = cmd.status() {
+            if status.success() {
+                if let Ok(cur) = std::env::current_exe() {
+                    if let Some(target_dir) = cur.parent().and_then(|p| p.parent()) {
+                        let candidate = target_dir.join("aethershell-script-host.exe");
+                        if candidate.exists() {
+                            return candidate;
+                        }
+                    }
+                }
+                for c in candidates {
+                    let p = std::path::PathBuf::from(c);
+                    if p.exists() {
+                        return p;
+                    }
+                }
+            }
+        }
+
+        std::path::PathBuf::from("aethershell-script-host.exe")
+    }
+
+    #[test]
+    fn test_job_object_memory_limit_enforced_on_real_worker() {
+        // 1. Verify Job Object exists with expected configured limit
+        let limit_20mib = 20 * 1024 * 1024;
+        let job =
+            JobObjectGuard::with_memory_limit(limit_20mib).expect("create job with 20 MiB limit");
+        let queried_limit = job.query_memory_limit().expect("query memory limit");
+        assert_eq!(
+            queried_limit, limit_20mib,
+            "Job Object limit must match configured value"
+        );
+
+        // Also verify production default limit
+        let prod_job = JobObjectGuard::new().expect("create prod job");
+        assert_eq!(
+            prod_job.query_memory_limit().unwrap(),
+            128 * 1024 * 1024,
+            "Production Job Object memory limit must be 128 MiB per PRD Table 17-1"
+        );
+
+        let worker_bin = resolve_script_host_binary();
+        assert!(
+            worker_bin.exists(),
+            "Dedicated test worker binary must exist: {:?}",
+            worker_bin
+        );
+
+        // 2. Below-limit test (5 MiB under 20 MiB limit):
+        // Worker actually starts, is assigned before execution, and succeeds.
+        let child_below = Command::new(&worker_bin)
+            .args(["--test-alloc-mib", "5"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn below-limit worker");
+
+        job.assign_process(&child_below)
+            .expect("assign below-limit worker to job");
+
+        let output_below = child_below.wait_with_output().expect("wait below-limit");
+        assert!(
+            output_below.status.success(),
+            "Below-limit worker must succeed with exit code 0: {:?}",
+            output_below.status
+        );
+        let stdout_below = String::from_utf8_lossy(&output_below.stdout);
+        assert!(
+            stdout_below.contains("WORKER_STARTED:"),
+            "Worker must start: {}",
+            stdout_below
+        );
+        assert!(
+            stdout_below.contains("ALLOCATED_5_MIB_SUCCESS"),
+            "Below-limit allocation must succeed: {}",
+            stdout_below
+        );
+
+        // 3. Above-limit test (50 MiB under 20 MiB limit):
+        // Worker starts, attempts allocation, and produces a quota-related OS failure.
+        let child_above = Command::new(&worker_bin)
+            .args(["--test-alloc-mib", "50"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn above-limit worker");
+
+        job.assign_process(&child_above)
+            .expect("assign above-limit worker to job");
+
+        let output_above = child_above.wait_with_output().expect("wait above-limit");
+        assert!(
+            !output_above.status.success(),
+            "Above-limit worker must fail or be terminated by Job Object: {:?}",
+            output_above.status
+        );
+        let stdout_above = String::from_utf8_lossy(&output_above.stdout);
+        assert!(
+            !stdout_above.contains("ALLOCATED_50_MIB_SUCCESS"),
+            "Above-limit allocation must NOT succeed: {}",
+            stdout_above
+        );
+    }
+
+    #[test]
+    fn test_spawn_worker_nonexistent_binary_fails_before_execution() {
+        let mut supervisor = ScriptSupervisor::new(2);
+        let nonexistent = Path::new("C:\\NonExistent_Worker_Path_12345.exe");
+        let script = std::env::temp_dir().join(format!(
+            "test_s_{}_{}.lua",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&script, b"-- dummy lua").unwrap();
+
+        let sha = crate::sha256_hex(b"-- dummy lua");
+        let res = supervisor.spawn_worker(nonexistent, &script, &sha, "");
+        assert!(
+            res.is_err(),
+            "Spawning nonexistent binary must fail cleanly"
+        );
+        assert!(res.unwrap_err().contains("CreateProcessW failed"));
+
+        let _ = std::fs::remove_file(script);
+    }
+
+    #[test]
+    fn test_spawn_worker_digest_mismatch_fails_before_process_creation() {
+        let mut supervisor = ScriptSupervisor::new(2);
+        let script = std::env::temp_dir().join(format!(
+            "test_mismatch_{}_{}.lua",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&script, b"-- actual content").unwrap();
+
+        let bogus_sha = "0000000000000000000000000000000000000000000000000000000000000000";
+        let res = supervisor.spawn_worker(Path::new("cmd.exe"), &script, bogus_sha, "");
+        assert!(
+            res.is_err(),
+            "Digest mismatch must reject spawn before any process creation"
+        );
+        assert!(res
+            .unwrap_err()
+            .contains("Pre-spawn digest verification failed"));
+
+        let _ = std::fs::remove_file(script);
+    }
+
+    #[test]
+    fn test_job_object_creation_with_zero_limit_fails_closed() {
+        // Zero memory limit with JOB_OBJECT_LIMIT_PROCESS_MEMORY is invalid in Win32
+        let res = JobObjectGuard::with_memory_limit(0);
+        assert!(res.is_err(), "Zero memory limit must fail closed");
+        assert!(res.unwrap_err().contains("SetInformationJobObject failed"));
+    }
+
+    #[test]
+    fn test_spawn_worker_assignment_failure_terminates_suspended_child_fail_closed() {
+        let mut supervisor = ScriptSupervisor::new(2);
+        // Inject invalid Job Object handle (12345678)
+        let invalid_job = JobObjectGuard::from_raw_handle_for_test(HANDLE(12345678 as *mut _));
+        supervisor.set_job_for_test(Some(invalid_job));
+
+        let script = std::env::temp_dir().join(format!(
+            "test_assign_fail_{}_{}.lua",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&script, b"-- dummy lua content").unwrap();
+        let sha = crate::sha256_hex(b"-- dummy lua content");
+
+        // spawn_worker will create the process in CREATE_SUSPENDED state,
+        // then job.assign_handle will fail, triggering immediate fail-closed termination.
+        let res = supervisor.spawn_worker(Path::new("cmd.exe"), &script, &sha, "");
+        assert!(
+            res.is_err(),
+            "Spawn must fail when Job Object assignment fails"
+        );
+        let err_msg = res.unwrap_err();
+        assert!(
+            err_msg.contains("CRITICAL: Job Object assignment failed"),
+            "Error must report Job Object assignment failure: {}",
+            err_msg
+        );
+        assert!(
+            !supervisor.has_active_child(),
+            "Supervisor must have no active child after assignment failure"
+        );
+
+        let _ = std::fs::remove_file(script);
+    }
+
+    #[test]
+    fn test_thread_resumption_failure_returns_max() {
+        // Verify Win32 ResumeThread on invalid handle returns u32::MAX
+        unsafe {
+            let res = ResumeThread(HANDLE(99999999 as *mut _));
+            assert_eq!(
+                res,
+                u32::MAX,
+                "ResumeThread on invalid handle must return u32::MAX"
+            );
         }
     }
 }

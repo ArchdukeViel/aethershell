@@ -3,7 +3,7 @@
 //! Operates out-of-process on demand over session-scoped Named Pipe IPC.
 //! Exits immediately on close, releasing memory working set.
 
-use aethershell_ipc::IpcClient;
+use aethershell_ipc::{IpcClient, SessionToken};
 use aethershell_win::SessionSingletonGuard;
 use std::env;
 use std::process::ExitCode;
@@ -15,10 +15,20 @@ async fn main() -> ExitCode {
 
     let args: Vec<String> = env::args().collect();
 
-    // 1. Resolve session-scoped IPC pipe name
-    let singleton = SessionSingletonGuard::acquire();
-    let session_id = singleton.as_ref().map(|s| s.session_id()).unwrap_or(1);
-    let pipe_name = format!(r"\\.\pipe\aethershell-ipc-{}", session_id);
+    // 1. Resolve IPC pipe name (allows test isolation via --pipe or AETHERSHELL_TEST_IPC_PIPE)
+    let custom_pipe = args
+        .iter()
+        .position(|a| a == "--pipe")
+        .and_then(|pos| args.get(pos + 1).cloned())
+        .or_else(|| env::var("AETHERSHELL_TEST_IPC_PIPE").ok());
+
+    let (session_id, pipe_name) = if let Some(p) = custom_pipe {
+        (0, p)
+    } else {
+        let singleton = SessionSingletonGuard::acquire();
+        let s_id = singleton.as_ref().map(|s| s.session_id()).unwrap_or(1);
+        (s_id, format!(r"\\.\pipe\aethershell-ipc-{}", s_id))
+    };
 
     info!(
         "AetherShell Settings v{} (Session: {}, Pipe: {})",
@@ -125,7 +135,12 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn query_command(pipe_name: &str, command: &str, payload: serde_json::Value) -> ExitCode {
+async fn query_command(pipe_name: &str, command: &str, mut payload: serde_json::Value) -> ExitCode {
+    if let Some(token) = SessionToken::load() {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("session_token".into(), serde_json::json!(token));
+        }
+    }
     match IpcClient::send_command(pipe_name, command, payload).await {
         Ok(resp) => {
             if resp.success {
@@ -159,6 +174,7 @@ fn print_usage() {
     println!("  --page <PAGE>         Open specific settings page (general|taskbar|desktop|widgets|audio|scripts)");
     println!("  --interactive [SECS]  Trigger temporary interactive desktop mode");
     println!("  --shutdown-core       Request active engine to terminate cleanly");
+    println!("  --pipe <PIPE>         Connect to explicit Named Pipe endpoint");
     println!("  --version, -v         Display version and exit");
     println!("  --help, -h            Show this help text");
 }

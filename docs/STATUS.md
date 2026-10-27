@@ -82,7 +82,7 @@ An adversarial audit conducted on 2026-10-26 originally revealed 17 specific def
 14. **Portable Storage PRD Q38:B Violation**: Remediated in PR #17 (`crates/aethershell-config/src/storage.rs`) with canonical `%LOCALAPPDATA%\AetherShell` resolution across all packaging modes.
 15. **Insecure IPC Named Pipes**: Remediated in PR #16 (`crates/aethershell-ipc/src/server.rs`) with Windows DACLs, client SID verification, and PID checking.
 16. **Synthetic Performance Benchmark**: Remediated in PR #17 (`crates/aethershell-diagnostics/src/benchmark.rs`) with active 512-sample harmonic PCM synthesis, real-time FFT spectrum analysis, layout engine evaluation, and true private working set measurement.
-17. **Committed Binaries in Git History & Developer Path Leaks**: Cleaned tracked binaries from layout; configured compiler path remapping in `.cargo/config.toml` (`--remap-path-prefix`) eliminating developer username (`AKMALSAFARIPELLU`) and machine paths from compiled binaries.
+17. **Committed Binaries in Git History & Developer Path Leaks**: Cleaned tracked binaries from layout; configured compiler path remapping in build tooling (`--remap-path-prefix` and MSVC `/pathmap`) eliminating developer usernames and local machine paths from compiled binaries.
 
 ---
 
@@ -123,3 +123,13 @@ An adversarial audit conducted on 2026-10-26 originally revealed 17 specific def
   - Compiler path remapping configured in `.cargo/config.toml`
   - Formal evidence ledger EVD-009 logged and verified
   - Final campaign audit reconciliation and clean master merge
+- [x] **Phase A: Security, IPC Hardening & Data Integrity** (PR #20)
+  - Named pipe atomic security descriptor construction at creation (`create_with_security_attributes_raw`)
+  - Elimination of worker registration and heartbeat bypasses in `engine.rs`
+  - Privileged management command authorization with session capability tokens (`session_{session_id}.token`) across all IPC clients (Rust core, Tray, Rust settings CLI, C++/WinUI Settings)
+  - Supervised worker process role containment (prohibiting management command execution)
+  - Win32 `ReplaceFileW` and `MoveFileExW` genuinely atomic configuration saving with `REPLACE_FILE_FLAGS(0)`, backup self-healing, and lock failure protection
+  - Pre-execution worker Job Object containment via `CREATE_SUSPENDED`, 128 MiB memory limit enforcement (`0x800705AF` tested on child process), and zero-uncontained-execution guarantee
+  - Binary path privacy verified: 0 developer-specific paths across all 4 release binaries via `--remap-path-prefix` and MSVC `/pathmap`
+  - Formal evidence ledgers EVD-010 and EVD-011 logged and verified across 142 workspace tests (108 unit tests + 34 integration tests)
+

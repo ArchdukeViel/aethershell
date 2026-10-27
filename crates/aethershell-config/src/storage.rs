@@ -1,8 +1,14 @@
 use crate::schema::{AppConfig, CURRENT_SCHEMA_VERSION};
 use std::fs;
 use std::io;
+use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+use windows::core::PCWSTR;
+use windows::Win32::Storage::FileSystem::{
+    MoveFileExW, ReplaceFileW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    REPLACE_FILE_FLAGS,
+};
 
 #[derive(Debug, Error)]
 pub enum ConfigStorageError {
@@ -34,8 +40,8 @@ impl ConfigManager {
 
     /// Loads the configuration, falling back to backup if corrupted, or default if missing.
     ///
-    /// Resolves Finding IVA-002: When recovering from backup, heals `config.toml` immediately
-    /// so the corrupt file is not retained on disk.
+    /// Resolves Finding IVA-002: When recovering from backup, heals `config.toml` safely and atomically
+    /// so the corrupt file is not retained on disk and backup is not damaged.
     pub fn load_or_default(&self) -> Result<AppConfig, ConfigStorageError> {
         if !self.config_path.exists() {
             let default_cfg = AppConfig::default();
@@ -59,9 +65,15 @@ impl ConfigManager {
                 if self.backup_path.exists() {
                     let backup_content = fs::read_to_string(&self.backup_path)?;
                     if let Ok(backup_cfg) = toml::from_str::<AppConfig>(&backup_content) {
+                        if backup_cfg.schema_version != CURRENT_SCHEMA_VERSION {
+                            return Err(ConfigStorageError::UnsupportedSchemaVersion(
+                                backup_cfg.schema_version,
+                                CURRENT_SCHEMA_VERSION.into(),
+                            ));
+                        }
                         tracing::warn!("Recovered configuration from backup after detecting corruption in primary config");
-                        // Heal primary config file immediately with known-good backup
-                        let _ = fs::write(&self.config_path, &backup_content);
+                        // Safely and atomically heal primary config file with known-good backup
+                        self.heal_from_backup(&backup_content)?;
                         return Ok(backup_cfg);
                     }
                 }
@@ -70,40 +82,191 @@ impl ConfigManager {
         }
     }
 
-    /// Saves the configuration atomically using a temporary file and preserves the prior version as backup.
+    /// Safely and atomically heals the primary config file from backup content without
+    /// modifying or overwriting the backup file itself.
+    pub fn heal_from_backup(&self, backup_content: &str) -> Result<(), ConfigStorageError> {
+        let temp_path = self
+            .config_path
+            .with_extension(format!("tmp.heal.{}", uuid::Uuid::new_v4()));
+
+        fs::write(&temp_path, backup_content.as_bytes())?;
+
+        let temp_u16: Vec<u16> = temp_path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let dest_u16: Vec<u16> = self
+            .config_path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let mut replace_ok = false;
+        let mut last_err = io::Error::other("Atomic healing ReplaceFileW failed");
+
+        for attempt in 0..4 {
+            // Per Microsoft documentation, REPLACEFILE_WRITE_THROUGH (0x1) is unsupported.
+            // Using REPLACEFILE_FLAGS(0) with NULL lpBackupFileName to ensure backup is preserved.
+            let res = unsafe {
+                ReplaceFileW(
+                    PCWSTR(dest_u16.as_ptr()),
+                    PCWSTR(temp_u16.as_ptr()),
+                    PCWSTR::null(),
+                    REPLACE_FILE_FLAGS(0),
+                    None,
+                    None,
+                )
+            };
+
+            if res.is_ok() {
+                replace_ok = true;
+                break;
+            }
+
+            last_err = io::Error::last_os_error();
+            if attempt < 3 {
+                std::thread::sleep(std::time::Duration::from_millis(30 * (attempt + 1) as u64));
+            }
+        }
+
+        if !replace_ok {
+            // Fallback to MoveFileExW if destination file did not exist
+            let move_res = unsafe {
+                MoveFileExW(
+                    PCWSTR(temp_u16.as_ptr()),
+                    PCWSTR(dest_u16.as_ptr()),
+                    MOVEFILE_WRITE_THROUGH | MOVEFILE_REPLACE_EXISTING,
+                )
+            };
+            let _ = fs::remove_file(&temp_path);
+            if move_res.is_err() {
+                let err = io::Error::last_os_error();
+                return Err(ConfigStorageError::AtomicRename(format!(
+                    "Failed to atomically heal config file from backup: {}. Last ReplaceFileW error: {}",
+                    err, last_err
+                )));
+            }
+        } else {
+            let _ = fs::remove_file(&temp_path);
+        }
+
+        Ok(())
+    }
+
+    /// Saves the configuration atomically using Win32 `ReplaceFileW` and preserves the prior version as backup.
     ///
-    /// Resolves Finding IVA-002: Only promotes `config_path` to `backup_path` if the existing file parses cleanly,
-    /// preventing backup poisoning from corrupt or half-written files.
+    /// Resolves Finding IVA-002 and Owner Directive: Only promotes `config_path` to `backup_path` if the existing
+    /// file parses cleanly, preventing backup poisoning. Employs genuine Windows atomic file replacement (`ReplaceFileW`)
+    /// without direct-copy fallback to guarantee zero corruption or partial writes.
     pub fn save_atomic(&self, config: &AppConfig) -> Result<(), ConfigStorageError> {
         if let Some(parent) = self.config_path.parent() {
             fs::create_dir_all(parent)?;
         }
 
         let serialized = toml::to_string_pretty(config)?;
+        // Sanity pre-validation: ensure serialized configuration parses back cleanly
+        let _parsed: AppConfig = toml::from_str(&serialized)?;
+
         let temp_path = self
             .config_path
             .with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
 
         fs::write(&temp_path, &serialized)?;
 
-        // Only promote the existing config to backup if it currently parses validly
-        if self.config_path.exists() {
-            if let Ok(existing_content) = fs::read_to_string(&self.config_path) {
-                if toml::from_str::<AppConfig>(&existing_content).is_ok() {
-                    if let Err(copy_err) = fs::copy(&self.config_path, &self.backup_path) {
-                        tracing::warn!("Failed to create configuration backup: {}", copy_err);
-                    }
+        let temp_u16: Vec<u16> = temp_path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let dest_u16: Vec<u16> = self
+            .config_path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let mut save_ok = false;
+        let mut last_err = std::io::Error::other("Atomic replacement failed");
+
+        for attempt in 0..5 {
+            if self.config_path.exists() {
+                // Determine whether destination should be backed up
+                let dest_is_valid =
+                    if let Ok(existing_content) = fs::read_to_string(&self.config_path) {
+                        toml::from_str::<AppConfig>(&existing_content).is_ok()
+                    } else {
+                        false
+                    };
+
+                let backup_u16: Vec<u16> = if dest_is_valid {
+                    self.backup_path
+                        .as_os_str()
+                        .encode_wide()
+                        .chain(std::iter::once(0))
+                        .collect()
                 } else {
-                    tracing::warn!("Existing config on disk is invalid; preserving existing backup from being overwritten");
+                    tracing::warn!(
+                        "Existing config on disk is invalid; preserving existing backup from being overwritten"
+                    );
+                    Vec::new()
+                };
+
+                let lp_backup = if dest_is_valid {
+                    PCWSTR(backup_u16.as_ptr())
+                } else {
+                    PCWSTR::null()
+                };
+
+                // Per Microsoft documentation: REPLACEFILE_WRITE_THROUGH (0x00000001) is explicitly not supported.
+                // We use REPLACE_FILE_FLAGS(0).
+                let res = unsafe {
+                    ReplaceFileW(
+                        PCWSTR(dest_u16.as_ptr()),
+                        PCWSTR(temp_u16.as_ptr()),
+                        lp_backup,
+                        REPLACE_FILE_FLAGS(0),
+                        None,
+                        None,
+                    )
+                };
+
+                if res.is_ok() {
+                    save_ok = true;
+                    break;
                 }
+                last_err = std::io::Error::last_os_error();
+            } else {
+                let res = unsafe {
+                    MoveFileExW(
+                        PCWSTR(temp_u16.as_ptr()),
+                        PCWSTR(dest_u16.as_ptr()),
+                        MOVEFILE_WRITE_THROUGH | MOVEFILE_REPLACE_EXISTING,
+                    )
+                };
+
+                if res.is_ok() {
+                    save_ok = true;
+                    break;
+                }
+                last_err = std::io::Error::last_os_error();
+            }
+
+            if attempt < 4 {
+                std::thread::sleep(std::time::Duration::from_millis(30 * (attempt + 1) as u64));
             }
         }
 
-        // Atomic replacement on Windows via standard rename
-        fs::rename(&temp_path, &self.config_path).map_err(|e| {
-            let _ = fs::remove_file(&temp_path);
-            ConfigStorageError::Io(e)
-        })?;
+        // Clean up temporary file in all paths (ReplaceFileW/MoveFileExW delete temp on success, but guarantee cleanup)
+        let _ = fs::remove_file(&temp_path);
+
+        if !save_ok {
+            return Err(ConfigStorageError::AtomicRename(format!(
+                "Atomic file replacement failed: {}. Live configuration preserved untouched.",
+                last_err
+            )));
+        }
 
         Ok(())
     }
@@ -165,6 +328,30 @@ mod tests {
     }
 
     #[test]
+    fn test_save_atomic_preserves_original_on_invalid_data() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("aethershell_atomic_neg_{}", uuid::Uuid::new_v4()));
+        let manager = ConfigManager::new(&temp_dir);
+
+        let initial = manager.load_or_default().expect("load default");
+        assert_eq!(initial.profile, "signature_minimal");
+
+        // Second save atomically replaces config and populates backup
+        manager
+            .save_atomic(&initial)
+            .expect("second save creates backup");
+        assert!(manager.backup_path.exists());
+
+        // Corrupt config.toml directly with garbage text
+        fs::write(&manager.config_path, "GARBAGE TOML [[[ :::").unwrap();
+        // But backup exists from previous valid save!
+        let recovered = manager.load_or_default().expect("recovered from backup");
+        assert_eq!(recovered.schema_version, "1.0.0");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
     fn test_backup_poisoning_prevention_iva_002() {
         let temp_dir =
             std::env::temp_dir().join(format!("aethershell_poison_test_{}", uuid::Uuid::new_v4()));
@@ -220,6 +407,269 @@ mod tests {
             Some(fake_local_appdata.clone()),
         );
         assert_eq!(portable, fake_local_appdata.join("AetherShell"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_concurrent_atomic_writers() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("aethershell_concurrent_{}", uuid::Uuid::new_v4()));
+        let manager = Arc::new(ConfigManager::new(&temp_dir));
+
+        let initial = manager.load_or_default().expect("load default");
+        assert_eq!(initial.schema_version, "1.0.0");
+
+        let mut handles = Vec::new();
+        for i in 0..6 {
+            let mgr = Arc::clone(&manager);
+            let mut cfg = initial.clone();
+            cfg.general.language = format!("en-US-{}", i);
+            handles.push(thread::spawn(move || mgr.save_atomic(&cfg)));
+        }
+
+        let mut successes = 0;
+        let mut rename_collisions = 0;
+        for h in handles {
+            match h.join().expect("thread join") {
+                Ok(()) => successes += 1,
+                Err(ConfigStorageError::AtomicRename(_)) => rename_collisions += 1,
+                Err(other) => panic!("Unexpected concurrent writer error: {:?}", other),
+            }
+        }
+
+        assert!(successes >= 1, "At least one atomic writer must succeed");
+        assert_eq!(
+            successes + rename_collisions,
+            6,
+            "Every concurrent writer must have a verified outcome (success or AtomicRename collision)"
+        );
+
+        // Must load cleanly and parse validly without corruption
+        let final_cfg = manager.load_or_default().expect("load final config");
+        assert!(final_cfg.general.language.starts_with("en-US"));
+        assert!(manager.config_path.exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_recovery_after_restart_and_interrupted_write() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "aethershell_restart_recovery_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let manager = ConfigManager::new(&temp_dir);
+
+        // 1. Initial valid saves to establish state and backup
+        let mut initial = AppConfig::default();
+        initial.general.language = "de-DE".into();
+        manager.save_atomic(&initial).expect("save initial");
+        manager
+            .save_atomic(&initial)
+            .expect("save second to populate backup");
+        assert!(manager.config_path.exists());
+        assert!(manager.backup_path.exists());
+
+        // 2. Simulate interrupted write: leave an orphaned .tmp file
+        let orphan_tmp = temp_dir.join("config.toml.tmp.orphan");
+        fs::write(&orphan_tmp, "INCOMPLETE TOML PAYLOAD").unwrap();
+
+        // 3. Simulate sudden restart / power loss corrupting live config.toml
+        fs::write(&manager.config_path, "CORRUPT [TOML").unwrap();
+
+        // 4. Recovery after restart: load_or_default heals live config from valid backup
+        let new_manager_instance = ConfigManager::new(&temp_dir);
+        let recovered = new_manager_instance
+            .load_or_default()
+            .expect("load_or_default must recover from backup after restart");
+        assert_eq!(recovered.general.language, "de-DE");
+
+        // 5. Verify live config.toml is healed and parseable
+        let healed_content = fs::read_to_string(&manager.config_path).expect("read healed config");
+        let parsed: Result<AppConfig, _> = toml::from_str(&healed_content);
+        assert!(parsed.is_ok(), "Healed config must be valid TOML");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_replacement_failure_preserves_live_config_untouched() {
+        use std::fs::OpenOptions;
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("aethershell_replace_fail_{}", uuid::Uuid::new_v4()));
+        let manager = ConfigManager::new(&temp_dir);
+
+        let initial = AppConfig::default();
+        manager.save_atomic(&initial).expect("initial save");
+        let original_content = fs::read_to_string(&manager.config_path).unwrap();
+
+        // Lock destination with exclusive access (share_mode 0 = deny read, write, and delete sharing)
+        let lock_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&manager.config_path);
+
+        if let Ok(_locked) = lock_file {
+            let mut updated = initial.clone();
+            updated.general.language = "fr-FR".into();
+
+            // Attempt save: ReplaceFileW will fail due to sharing violation
+            let res = manager.save_atomic(&updated);
+
+            // Must fail safely with AtomicRename error
+            assert!(res.is_err(), "Save to locked destination must fail");
+            match res.err().unwrap() {
+                ConfigStorageError::AtomicRename(msg) => {
+                    assert!(msg.contains("Live configuration preserved untouched"));
+                }
+                other => panic!("Expected AtomicRename error, got {:?}", other),
+            }
+
+            // Drop lock
+            drop(_locked);
+
+            // Verify live file was preserved untouched
+            let after_content = fs::read_to_string(&manager.config_path).unwrap();
+            assert_eq!(original_content, after_content);
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_atomic_recovery_heals_corrupt_config_and_preserves_backup() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "aethershell_heal_backup_preservation_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let manager = ConfigManager::new(&temp_dir);
+
+        // 1. Establish valid config and backup
+        let mut initial = AppConfig::default();
+        initial.general.language = "en-GB".into();
+        manager.save_atomic(&initial).expect("initial save");
+        manager
+            .save_atomic(&initial)
+            .expect("second save populating backup");
+
+        let backup_content_before = fs::read_to_string(&manager.backup_path).expect("read backup");
+
+        // 2. Corrupt live config
+        fs::write(&manager.config_path, "COMPLETELY_INVALID_TOML_DATA[[[").expect("corrupt live");
+
+        // 3. Trigger load_or_default: heals config.toml atomically
+        let recovered = manager.load_or_default().expect("load_or_default recovery");
+        assert_eq!(recovered.general.language, "en-GB");
+
+        // 4. Verify backup was preserved completely intact
+        let backup_content_after =
+            fs::read_to_string(&manager.backup_path).expect("read backup after");
+        assert_eq!(
+            backup_content_before, backup_content_after,
+            "Backup must remain unaltered during recovery"
+        );
+
+        // 5. Verify live config is valid TOML
+        let healed_live = fs::read_to_string(&manager.config_path).expect("read healed live");
+        assert!(toml::from_str::<AppConfig>(&healed_live).is_ok());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_atomic_recovery_failure_on_locked_destination() {
+        use std::fs::OpenOptions;
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("aethershell_heal_locked_{}", uuid::Uuid::new_v4()));
+        let manager = ConfigManager::new(&temp_dir);
+
+        let initial = AppConfig::default();
+        manager.save_atomic(&initial).expect("initial save");
+        manager.save_atomic(&initial).expect("backup save");
+
+        let backup_content_before = fs::read_to_string(&manager.backup_path).expect("read backup");
+
+        // Corrupt live config
+        fs::write(&manager.config_path, "CORRUPT [CONFIG").expect("corrupt config");
+
+        // Lock live config denying write/delete sharing (share_mode 1 = FILE_SHARE_READ: allows reading to discover corruption)
+        let lock_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(1)
+            .open(&manager.config_path);
+
+        if let Ok(_locked) = lock_file {
+            // Attempt recovery while live config is exclusively locked: ReplaceFileW will fail
+            let res = manager.load_or_default();
+            assert!(
+                res.is_err(),
+                "Recovery must fail when primary file is exclusively locked"
+            );
+            match res.err().unwrap() {
+                ConfigStorageError::AtomicRename(msg) => {
+                    assert!(msg.contains("Failed to atomically heal config file from backup"));
+                }
+                other => panic!("Expected AtomicRename error, got {:?}", other),
+            }
+
+            // Drop lock
+            drop(_locked);
+
+            // Backup must still be preserved intact
+            let backup_content_after =
+                fs::read_to_string(&manager.backup_path).expect("read backup after");
+            assert_eq!(backup_content_before, backup_content_after);
+
+            // Now recovery succeeds cleanly
+            let second_recovery = manager
+                .load_or_default()
+                .expect("recovery after lock released");
+            assert_eq!(second_recovery.profile, "signature_minimal");
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_load_or_default_rejects_backup_with_unsupported_schema_version() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("aethershell_schema_check_{}", uuid::Uuid::new_v4()));
+        let manager = ConfigManager::new(&temp_dir);
+
+        // Corrupt live config
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(&manager.config_path, "INVALID TOML").unwrap();
+
+        // Write backup with incompatible schema version 999.0
+        let incompatible = AppConfig {
+            schema_version: "999.0".into(),
+            ..Default::default()
+        };
+        let incompatible_toml = toml::to_string_pretty(&incompatible).unwrap();
+        fs::write(&manager.backup_path, incompatible_toml).unwrap();
+
+        let res = manager.load_or_default();
+        assert!(
+            res.is_err(),
+            "Recovery must fail when backup has unsupported schema version"
+        );
+        match res.err().unwrap() {
+            ConfigStorageError::UnsupportedSchemaVersion(actual, expected) => {
+                assert_eq!(actual, "999.0");
+                assert_eq!(expected, CURRENT_SCHEMA_VERSION);
+            }
+            other => panic!("Expected UnsupportedSchemaVersion, got {:?}", other),
+        }
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

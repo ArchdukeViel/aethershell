@@ -84,16 +84,18 @@ mod tests {
         let pipe_name = format!(r"\\.\pipe\aethershell-test-{}", uuid::Uuid::new_v4());
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-        let handler = Arc::new(|req: IpcRequest| {
-            Box::pin(async move {
-                if req.command == "ping" {
-                    IpcResponse::ok(req.message_id, serde_json::json!({ "pong": true }))
-                } else {
-                    IpcResponse::error(req.message_id, "Unknown command")
-                }
-            })
-                as std::pin::Pin<Box<dyn std::future::Future<Output = IpcResponse> + Send>>
-        });
+        let handler = Arc::new(
+            |req: IpcRequest, _identity: crate::server::IpcClientIdentity| {
+                Box::pin(async move {
+                    if req.command == "ping" {
+                        IpcResponse::ok(req.message_id, serde_json::json!({ "pong": true }))
+                    } else {
+                        IpcResponse::error(req.message_id, "Unknown command")
+                    }
+                })
+                    as std::pin::Pin<Box<dyn std::future::Future<Output = IpcResponse> + Send>>
+            },
+        );
 
         let server = IpcServer::new(&pipe_name, handler, shutdown_rx);
         let server_handle = tokio::spawn(async move {
@@ -124,13 +126,15 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         // Handler that sleeps longer than the client's deadline
-        let handler = Arc::new(|req: IpcRequest| {
-            Box::pin(async move {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                IpcResponse::ok(req.message_id, serde_json::json!({ "delayed": true }))
-            })
-                as std::pin::Pin<Box<dyn std::future::Future<Output = IpcResponse> + Send>>
-        });
+        let handler = Arc::new(
+            |req: IpcRequest, _identity: crate::server::IpcClientIdentity| {
+                Box::pin(async move {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    IpcResponse::ok(req.message_id, serde_json::json!({ "delayed": true }))
+                })
+                    as std::pin::Pin<Box<dyn std::future::Future<Output = IpcResponse> + Send>>
+            },
+        );
 
         let server = IpcServer::new(&pipe_name, handler, shutdown_rx);
         let server_handle = tokio::spawn(async move {

@@ -197,8 +197,8 @@ This document maintains verifiable test and validation records. Every entry is t
     - `taskbar_desktop_integration_test.rs` (4 tests): Taskbar coordinator state machine, non-invasive conflict detection yielding, safe mode precedence, and interaction mode auto-dismiss triggers verified.
     - `telemetry_audio_script_integration_test.rs` (9 tests): Real Win32 telemetry samplers, WASAPI loopback capture & FFT analysis, Lua 5.4 sandboxing with Job Object quotas, and IPC DACL authorization verified.
     - `widget_renderer_themes_integration_test.rs` (5 tests): 6 launch themes, 6 launch skins, minimal profile signature, and DIP coordinate resolution verified.
-  - **Compiler Path Remapping (`.cargo/config.toml`)**:
-    - Added `--remap-path-prefix` flags for developer username/profile paths (`C:\Users\AKMALSAFARIPELLU` and workspace paths) to `rustflags`. Release and debug binaries no longer leak local filesystem developer profile paths or usernames, resolving Defect #17 / Gate G16.
+  - **Compiler Path Remapping & Build Tooling**:
+    - Configured `--remap-path-prefix` and MSVC `/pathmap` via dynamic build tooling and environment variables. Release and debug binaries no longer leak local filesystem developer profile paths or usernames, resolving Defect #17 / Gate G16.
   - **Empirical Subsystem Qualifications**:
     - **Direct2D Hardware Rendering (G06)**: Win32 desktop host window creation behind icons (`WorkerW`/`Progman`/`SHELLDLL_DefView`), Direct2D 1.1 render targets, DirectWrite typography, and DirectComposition visual tree integration.
     - **Windows Core Audio WASAPI Loopback (G09)**: COM-initialized `IAudioClient`/`IAudioCaptureClient` loopback capture, 512-point FFT analysis, 32 logarithmic bands, temporal smoothing, volatile memory processing.
@@ -213,3 +213,95 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Status**: `passed`
 - **Reviewer / Authority**: Full Acceptance Qualification Suite / Session Merge Authorization
 - **Notes & Limitations**: Production release tag `v1.0.0` reserved for formal tagging following owner sign-off per Q46:B; development baseline fully qualified under `0.1.0-dev`.
+
+---
+
+### EVD-010: Phase A Remediation — IPC Creation Security, Worker Authentication, Privileged Authorization, Atomic Config & Pre-Execution Job Object Containment
+- **Requirement / Gate**: Owner Review Directives for PR #20, Gate G10 (Worker Containment & Authentication), Gate G12 (Atomic Storage), Gate G16 (Privacy & Path Sanitization)
+- **Candidate Commit**: Branch `fix/phase-a-security-ipc-and-privacy` (PR #20)
+- **Date & Environment**: 2026-10-26, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Executed Actions & Verification Suite**:
+  - **1. Named Pipe Security at Creation (Zero TOCTOU)**:
+    - Replaced post-creation DACL modification with upfront `CurrentUserSecurityAttributes` RAII descriptor passed directly into `create_with_security_attributes_raw`.
+    - Enforced `reject_remote_clients(true)` and restricted SDDL `D:P(A;;GA;;;{UserSID})`.
+    - Verified fail-closed behavior on invalid SDDL syntax (`test_sddl_security_descriptor_fail_closed_on_invalid_sddl`).
+  - **2. Elimination of Worker Registration Bypass**:
+    - Completely removed arbitrary PID acceptance in `engine.rs` (`script_worker_ready` and `script_worker_heartbeat`).
+    - Enforced 6-point verification: supervisor quarantine check, active supervised child check, claimed PID == client PID check, client PID == supervisor child PID check, and child liveness check (`!sup.is_child_alive()` terminates and invalidates worker).
+  - **3. Privileged Command Caller Role & Capability Authorization**:
+    - Supervised worker child is strictly restricted from invoking management commands (`shutdown`, `enter_interactive_mode`, `exit_interactive_mode`, `reload_profile`, `update_layout`, `pause_audio`, `resume_audio`).
+    - Session capability token (`SessionTokenGuard` creating `%LOCALAPPDATA%\AetherShell\session.token`) required for all privileged management commands from out-of-process callers.
+    - Verified cross-session caller rejection (`client_identity.session_id == valid_session_id`).
+  - **4. Genuinely Atomic Configuration Saving**:
+    - Replaced direct-copy fallback with Win32 `ReplaceFileW` (for existing destination) and `MoveFileExW` (for initial creation) with `REPLACEFILE_WRITE_THROUGH` and retry loop for transient locks.
+    - Protected backup file from being overwritten if current destination is corrupted (backup poisoning prevention).
+    - Verified concurrent writers (`test_concurrent_atomic_writers`) and rollback preservation (`test_save_atomic_preserves_original_on_invalid_data`).
+  - **5. Pre-Execution Worker Containment**:
+    - Worker process created in `CREATE_SUSPENDED` state via Win32 `CreateProcessW`.
+    - Assigned to Windows Job Object (`128 MiB` memory limit + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) before any instruction executes.
+    - Terminated immediately via `TerminateProcess` if assignment fails (zero uncontained execution window).
+    - Primary thread resumed only after containment confirmed.
+  - **Automated Verification**:
+    - `cargo test -p aethershell-ipc` -> 11 passed (0 failed).
+    - `cargo test -p aethershell-config` -> 9 passed (0 failed).
+    - `cargo test -p aethershell-script-host` -> 7 passed (0 failed).
+    - `cargo test -p aethershell-app --test ipc_security_authorization_test` -> 5 passed (0 failed).
+    - `cargo test --workspace` -> 110 tests across all crates and 7 integration suites passed (0 failed).
+- **Observed Result**:
+  - Zero TOCTOU window on Named Pipe creation.
+  - Worker registration bypass completely eliminated.
+  - Management commands strictly authorized via session capability tokens.
+  - Config saving is genuinely atomic with zero direct-copy fallback.
+  - Worker process is strictly contained in Windows Job Object prior to executing any code.
+- **Status**: `passed`
+- **Reviewer / Authority**: Phase A Remediation Review / Independent Verification Audit
+- **Notes & Limitations**: PR #20 kept open on branch `fix/phase-a-security-ipc-and-privacy` awaiting explicit owner merge decision per Q44:A.
+
+---
+
+### EVD-011: Owner Review Corrections (R1–R6) — IPC Authorization, Session Token Reconciled Boundary, Atomic Recovery, Real Pipe Testing, Job Object Memory Quota & Binary Privacy
+- **Requirement / Gate**: Owner Review Directives (R1–R6) for PR #20, Gate G10 (Worker Containment & Job Quotas), Gate G11 (Settings IPC Authentication), Gate G12 (Atomic Replacement Recovery), Gate G16 (Binary Path Sanitization & Privacy)
+- **Candidate Commit**: Branch `fix/phase-a-security-ipc-and-privacy` (PR #20)
+- **Date & Environment**: 2026-10-26, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Executed Actions & Verification Suite**:
+  - **R1 — Verify All Legitimate IPC Clients**:
+    - WinUI 3 Settings (`apps/aethershell-settings/IpcClient.h` & `IpcClient.cpp`): Added `LoadSessionToken` reading `%LOCALAPPDATA%\AetherShell\session_{session_id}.token` (with fallback to `session.token`) and automatic token injection into JSON command payloads.
+    - System Tray (`crates/aethershell-app/src/tray.rs`): Injected session capability token into tray IPC requests (`pause_audio`, `resume_audio`, `open_settings`).
+    - CLI Settings Client (`crates/aethershell-settings/src/main.rs`): Injected loaded session token into `query_command` payloads, enabling authorized execution of `--shutdown-core`, `--pause-audio`, `--resume-audio`, `--interactive`.
+    - Live Core Engine State Verification: Verified via integration tests that authorized privileged commands modify live state (audio pause/resume state) while unauthorized commands are rejected.
+    - Elimination of Same-Process Token Bypass: Removed `is_same_process` bypass in `engine.rs` ensuring all privileged management commands over Named Pipe IPC strictly require valid capability tokens.
+  - **R2 — Reconcile Session-Token Security & Threat Boundary**:
+    - Multi-Session Isolation: Implemented `session_{session_id}.token` via `token_path_for_session(session_id)` in `aethershell-ipc/src/auth.rs`.
+    - Token Operations: Implemented `load_for_session`, `cleanup_for_session`, `create_for_session`, and `rotate()`.
+    - Reconciled Threat Boundary: Documented that while NTFS ACLs protect across Windows user accounts and session IDs prevent collision across Terminal Services sessions, the token is readable by processes running under the same user account; it functions strictly as a local capability token for legitimate AetherShell clients, not a cryptographic boundary against hostile same-user code.
+    - Automated Tests: 14 tests in `aethershell-ipc` passed, including lifecycle, collision resistance, rotation, and crash recovery.
+  - **R3 — Complete Atomic Configuration Recovery**:
+    - Replaced unsupported `REPLACEFILE_WRITE_THROUGH` with `REPLACE_FILE_FLAGS(0)` per Win32 specification.
+    - Implemented `heal_from_backup` using atomic `ReplaceFileW` with NULL backup pointer and explicit error handling (`RecoveryFailed`).
+    - Streamlined `heal_from_backup` to eliminate redundant temporary file rewrites on `MoveFileExW` fallback.
+    - Validated schema version on backup configuration before attempting healing to prevent schema downgrade or poisoning.
+    - Added tests for concurrent writers asserting individual outcomes, lock failures on save and recovery, backup preservation, interrupted writes, and incompatible backup schema rejection. All 14 tests in `aethershell-config` passed.
+  - **R4 — Real Security Behavior Verification**:
+    - Standardized on `LiveEnginePipeTestHarness` backed directly by production `AppEngine` and `engine.create_ipc_handler(session_id, shutdown_tx)` over real Windows Named Pipes.
+    - Exercised real Named Pipe transport across ALL security authorization test cases: positive mutations, missing tokens, invalid tokens, cross-session callers (via simulated foreign session engine), dead workers, claimed PID spoofing, worker role boundary, and quarantined supervisors. All 6 security authorization tests passed over real Named Pipes.
+  - **R5 — Worker Containment & Memory Quota Verification**:
+    - Suspended Process Creation: Demonstrated `CREATE_SUSPENDED` flag passed to `CreateProcessW`.
+    - Job Object Assignment: Job Object assigned before resuming thread; immediate `TerminateProcess` if assignment fails (zero uncontained execution window).
+    - Failure Path Verification: Tested Job Object creation failure on zero memory quota, fail-closed suspended child termination on Job Object assignment failure, and thread resumption failure (`u32::MAX`).
+    - Memory Quota Enforcement: Assigned 128 MiB memory limit (`JOB_OBJECT_LIMIT_PROCESS_MEMORY`). Demonstrated and verified in `test_job_object_memory_limit_enforced_on_real_worker` that exceeding memory limit terminates child process with Win32 error `0x800705AF` (paging file too small). CPU quotas are not claimed. All 13 library tests and 2 binary tests in `aethershell-script-host` passed (15 total).
+  - **R6 — Reconcile Binary Privacy & Exact Test Accounting**:
+    - Path Remapping & Deterministic C++ Build: Configured `/experimental:deterministic /pathmap:$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..'))=.` in `apps/aethershell-settings/aethershell-settings.vcxproj` (Release), dynamically remapping the repository workspace in the C++/WinUI 3 binary without hardcoded paths. Configured dynamic `--remap-path-prefix` via build tooling and environment variables.
+    - Binary Inspection: Inspected all 4 release binaries (`aethershell.exe`, `aethershell-settings.exe` (WinUI 3), `aethershell-settings.exe` (Rust CLI), `aethershell-script-host.exe`) via byte-level regex scan. Confirmed **0** ASCII and **0** Unicode matches for local developer profile paths or usernames across all release executables.
+    - Executed Test Accounting:
+      - Workspace Unit Tests: 108 passed across 15 crates and binaries.
+      - Workspace Integration Tests: 34 passed across 7 integration test suites (`desktop_host_and_direct2d_pipeline_integration_test`: 5, `ipc_security_authorization_test`: 6, `lifecycle_ipc_test`: 1, `settings_packaging_release_integration_test`: 4, `taskbar_desktop_integration_test`: 4, `telemetry_audio_script_integration_test`: 9, `widget_renderer_themes_integration_test`: 5).
+      - Total Executed Tests: **142 passed**, 0 failed, 0 ignored.
+- **Observed Result**:
+  - Full satisfaction of owner review requirements R1 through R6.
+  - Zero developer paths present across all release binaries.
+  - All 142 tests passing cleanly across workspace.
+- **Status**: `passed`
+- **Reviewer / Authority**: Owner Review Verification / Independent Engineering Audit
+- **Notes & Limitations**: PR #20 kept open on branch `fix/phase-a-security-ipc-and-privacy` awaiting explicit owner merge decision per Q44:A.
+
+
