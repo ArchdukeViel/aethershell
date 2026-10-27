@@ -403,21 +403,24 @@ impl AppEngine {
             });
 
             // Direct2D / DirectWrite canvas rendering pipeline initialization
+            let initial_scale = win_mgr.primary_scale_factor();
+            let initial_dpi = win_mgr.primary_dpi();
             if let Some(primary) = win_mgr.primary_window_mut() {
                 let width = primary.bounds[2].max(100) as u32;
                 let height = primary.bounds[3].max(100) as u32;
-                let bounds = primary.bounds;
                 match D2D1CanvasRenderer::new_for_hwnd(primary.hwnd, width, height) {
                     Ok(mut renderer) => {
+                        renderer.set_dpi(initial_dpi as f32, initial_dpi as f32);
                         let initial_bindings = self
                             .cached_bindings
                             .read()
                             .map(|b| b.clone())
                             .unwrap_or_default();
-                        let (scene, regions) = compile_live_scene_and_regions(
+                        let (scene, regions) = compile_live_scene_with_scale(
                             width as f32,
                             height as f32,
                             &initial_bindings,
+                            initial_scale,
                         );
                         win_mgr.set_interactive_regions(regions);
                         match renderer.render_scene(&scene) {
@@ -437,22 +440,96 @@ impl AppEngine {
                         );
                     }
                 }
+            }
 
-                // Wire on_paint callback across all desktop overlay windows to automatically repaint scene on WM_PAINT
-                let r_paint = Arc::clone(&self.desktop_renderer);
-                let cached_paint = Arc::clone(&self.cached_bindings);
-                win_mgr.set_on_paint(move |_hwnd| {
-                    let w = bounds[2].max(100) as f32;
-                    let h = bounds[3].max(100) as f32;
-                    let bindings = cached_paint.read().map(|b| b.clone()).unwrap_or_default();
-                    let scene = compile_live_scene(w, h, &bindings);
-                    if let Ok(mut r_lock) = r_paint.try_lock() {
+            // Wire PerMonitorV2 DPI change callback across all desktop overlay windows
+            let r_dpi = Arc::clone(&self.desktop_renderer);
+            let cached_dpi = Arc::clone(&self.cached_bindings);
+            let win_mgr_dpi = Arc::clone(&self.desktop_windows);
+            win_mgr.set_on_dpi_changed(move |_hwnd, new_dpi, rect| {
+                let w = (rect.right - rect.left).max(100) as u32;
+                let h = (rect.bottom - rect.top).max(100) as u32;
+                let scale = aethershell_win::dpi_to_scale_factor(new_dpi);
+                info!(
+                    "PerMonitorV2 DPI changed to {} (scale factor {:.2})",
+                    new_dpi, scale
+                );
+                let bindings = cached_dpi.read().map(|b| b.clone()).unwrap_or_default();
+                let (scene, regions) =
+                    compile_live_scene_with_scale(w as f32, h as f32, &bindings, scale);
+                if let Ok(mut mgr) = win_mgr_dpi.try_lock() {
+                    mgr.set_interactive_regions(regions);
+                }
+                if let Ok(mut r_lock) = r_dpi.try_lock() {
+                    if let Some(ref mut renderer) = *r_lock {
+                        let _ = renderer.resize(w, h);
+                        renderer.set_dpi(new_dpi as f32, new_dpi as f32);
+                        let _ = renderer.render_scene(&scene);
+                    }
+                }
+            });
+
+            // Wire display topology change callback across all desktop overlay windows
+            let r_display = Arc::clone(&self.desktop_renderer);
+            let cached_display = Arc::clone(&self.cached_bindings);
+            let win_mgr_display = Arc::clone(&self.desktop_windows);
+            win_mgr.set_on_display_change(move || {
+                info!("Display topology change (WM_DISPLAYCHANGE): refreshing monitors and re-synchronizing layout");
+                if let Ok(mut mgr) = win_mgr_display.try_lock() {
+                    mgr.refresh_monitors();
+                    let (w, h, dpi, scale) = if let Some(primary) = mgr.primary_window() {
+                        let b = primary.bounds();
+                        let d = primary.dpi();
+                        (
+                            b[2].max(100) as u32,
+                            b[3].max(100) as u32,
+                            d,
+                            primary.scale_factor(),
+                        )
+                    } else {
+                        (1920, 1080, 96, 1.0)
+                    };
+                    let bindings = cached_display.read().map(|b| b.clone()).unwrap_or_default();
+                    let (scene, regions) =
+                        compile_live_scene_with_scale(w as f32, h as f32, &bindings, scale);
+                    mgr.set_interactive_regions(regions);
+                    if let Ok(mut r_lock) = r_display.try_lock() {
                         if let Some(ref mut renderer) = *r_lock {
+                            let _ = renderer.resize(w, h);
+                            renderer.set_dpi(dpi as f32, dpi as f32);
                             let _ = renderer.render_scene(&scene);
                         }
                     }
-                });
-            }
+                }
+            });
+
+            // Wire on_paint callback across all desktop overlay windows to automatically repaint scene on WM_PAINT
+            let r_paint = Arc::clone(&self.desktop_renderer);
+            let cached_paint = Arc::clone(&self.cached_bindings);
+            let win_mgr_paint = Arc::clone(&self.desktop_windows);
+            win_mgr.set_on_paint(move |_hwnd| {
+                let (w, h, scale) = if let Ok(mgr) = win_mgr_paint.try_lock() {
+                    if let Some(primary) = mgr.primary_window() {
+                        let b = primary.bounds();
+                        (
+                            b[2].max(100) as f32,
+                            b[3].max(100) as f32,
+                            primary.scale_factor(),
+                        )
+                    } else {
+                        (1920.0, 1080.0, 1.0)
+                    }
+                } else {
+                    (1920.0, 1080.0, 1.0)
+                };
+                let bindings = cached_paint.read().map(|b| b.clone()).unwrap_or_default();
+                let (scene, _) = compile_live_scene_with_scale(w, h, &bindings, scale);
+                if let Ok(mut r_lock) = r_paint.try_lock() {
+                    if let Some(ref mut renderer) = *r_lock {
+                        let _ = renderer.render_scene(&scene);
+                    }
+                }
+            });
         }
 
         // 4. Initialize System Tray on dedicated OS thread with active message pump (IVA-P1-001)
@@ -669,9 +746,12 @@ impl AppEngine {
                     // Render scene if renderer is available and desktop host has primary window
                     if let Ok(win_mgr) = self.desktop_windows.try_lock() {
                         if let Some(primary) = win_mgr.primary_window() {
-                            let width = primary.bounds[2].max(100) as f32;
-                            let height = primary.bounds[3].max(100) as f32;
-                            let scene = compile_live_scene(width, height, &live_bindings);
+                            let bounds = primary.bounds();
+                            let width = bounds[2].max(100) as f32;
+                            let height = bounds[3].max(100) as f32;
+                            let scale = primary.scale_factor();
+                            let (scene, _) =
+                                compile_live_scene_with_scale(width, height, &live_bindings, scale);
 
                             if let Ok(mut r_lock) = self.desktop_renderer.try_lock() {
                                 if let Some(ref mut renderer) = *r_lock {
@@ -1342,11 +1422,12 @@ pub fn extract_interactive_regions(resolved: &[ResolvedNode]) -> Vec<Interactive
 }
 
 /// Compiles the scene with live telemetry, audio spectrum, and time bindings,
-/// returning both the rendered `SceneGraph` and extracted `InteractiveRegion` list.
-pub fn compile_live_scene_and_regions(
+/// applying dynamic DPI scaling and returning both the rendered `SceneGraph` and extracted `InteractiveRegion` list.
+pub fn compile_live_scene_with_scale(
     screen_width: f32,
     _screen_height: f32,
     bindings: &HashMap<String, BindingValue>,
+    scale: f32,
 ) -> (SceneGraph, Vec<InteractiveRegion>) {
     let profile_path = find_asset_file("assets/profiles/signature_minimal.toml");
     let profile: ProfileDefinition = profile_path
@@ -1412,14 +1493,32 @@ pub fn compile_live_scene_and_regions(
         .entry("time.date".into())
         .or_insert_with(|| BindingValue::String(now.format("%A, %B %d").to_string()));
 
-    let origin_x = (screen_width * 0.5 - 120.0).max(40.0);
-    let origin_y = 60.0f32;
+    let effective_scale = if scale > 0.0 { scale } else { 1.0 };
+    let origin_x = (screen_width * 0.5 - 120.0 * effective_scale).max(40.0 * effective_scale);
+    let origin_y = 60.0f32 * effective_scale;
 
-    let resolved = LayoutEngine::resolve(&layout, &theme, &merged, origin_x, origin_y, 1.0)
-        .unwrap_or_default();
+    let resolved = LayoutEngine::resolve(
+        &layout,
+        &theme,
+        &merged,
+        origin_x,
+        origin_y,
+        effective_scale,
+    )
+    .unwrap_or_default();
 
     let regions = extract_interactive_regions(&resolved);
     (SceneGraph::compile(&resolved), regions)
+}
+
+/// Compiles the scene with live telemetry, audio spectrum, and time bindings,
+/// returning both the rendered `SceneGraph` and extracted `InteractiveRegion` list.
+pub fn compile_live_scene_and_regions(
+    screen_width: f32,
+    screen_height: f32,
+    bindings: &HashMap<String, BindingValue>,
+) -> (SceneGraph, Vec<InteractiveRegion>) {
+    compile_live_scene_with_scale(screen_width, screen_height, bindings, 1.0)
 }
 
 /// Compiles the scene with live telemetry, audio spectrum, and time bindings.
