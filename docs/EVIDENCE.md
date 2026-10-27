@@ -972,10 +972,10 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Date & Environment**: 2026-10-27 / 2026-10-28, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
 - **Executed Actions & Verification Suite**:
   - **1. Pre-Merge Verification on PR #45 (`5f7c06d`)**:
-    - `C++/WinUI 3 Mandatory Qualification`: **`pass`** in 2m 04s (Run ID `40598556214`, Job `122520578062`).
-    - `Cargo Audit & Advisory Database`: **`pass`** in 28s (Run ID `40598556179`, Job `122520578261`).
+    - `C++/WinUI 3 Mandatory Qualification`: **`pass`** in 2m 20s (Run ID `40598556214`, Job `122520578062`).
+    - `Cargo Audit & Advisory Database`: **`pass`** in 29s (Run ID `40598556179`, Job `122520578261`).
     - `GitGuardian Security Checks`: **`pass`** in 1s (Dashboard verified).
-    - `Rust Quality Gates & Tests`: **`pass`** in 2m 58s (Run ID `40598556214`, Job `122520578320`).
+    - `Rust Quality Gates & Tests`: **`pass`** in 2m 56s (Run ID `40598556214`, Job `122520578320`).
   - **2. Delegated Merge Execution**:
     - Merged PR #45 into `main` via `gh pr merge 45 --squash` at `2026-10-27T22:38:29Z`.
     - Generated `main` merge commit SHA: `19db018900ab1fc18dcc55c3bfe4699ba41d9df7`.
@@ -1044,13 +1044,13 @@ This document maintains verifiable test and validation records. Every entry is t
   - **5. Automated Test Accounting**:
     - Implemented 10 integration tests in `crates/aethershell-diagnostics/tests/runtime_benchmark_integration_test.rs`:
       - `test_prd_section_14_budget_conformance`
-      - `test_environment_metadata_capture`
-      - `test_fail_closed_self_attachment_rejection`
+      - `test_environment_metadata_and_instrumentation_honesty`
+      - `test_fail_closed_self_attachment_protection`
       - `test_fail_closed_empty_sampler_rejection`
       - `test_fail_closed_missing_required_roles`
       - `test_fail_closed_executable_mismatch_without_override`
       - `test_multi_process_live_sampling_and_ledger_generation`
-      - `test_honest_instrumentation_statuses_and_partially_verified_verdict`
+      - `test_verdict_evaluation_within_budget`
       - `test_process_anomaly_exit_detection`
       - `test_percentile_sorting_edge_cases`
     - Workspace test count: **238 passing Rust tests** across 12 crates + 2 C++ qualification tests (240 tests total), with 0 items written to `%LOCALAPPDATA%\AetherShell`.
