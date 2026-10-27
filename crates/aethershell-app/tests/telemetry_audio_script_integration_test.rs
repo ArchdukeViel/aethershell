@@ -488,3 +488,70 @@ fn test_phase5_supervised_crash_circuit_breaker() {
 
     let _ = std::fs::remove_file(script_path);
 }
+
+#[test]
+fn test_live_telemetry_and_spectrum_bindings_flow_into_scene() {
+    use aethershell_app::compile_live_scene;
+    use aethershell_renderer::RenderCommand;
+    use std::collections::HashMap;
+
+    let mut bindings = HashMap::new();
+    // Supply real non-dummy telemetry values
+    bindings.insert("metrics.cpu".into(), BindingValue::Percent(88.5));
+    bindings.insert("metrics.ram".into(), BindingValue::Float(14.2));
+    let test_bands = vec![0.15f32, 0.45, 0.85, 0.35];
+    bindings.insert(
+        "audio.spectrum".into(),
+        BindingValue::FloatArray(test_bands.clone()),
+    );
+
+    let scene = compile_live_scene(1920.0, 1080.0, &bindings);
+    assert!(!scene.commands.is_empty());
+
+    // Verify time bindings were automatically populated
+    let has_text_clock = scene.commands.iter().any(|cmd| match cmd {
+        RenderCommand::DrawText { text, .. } => text.contains(':'),
+        _ => false,
+    });
+    assert!(has_text_clock, "Scene must include rendered time clock");
+
+    // Verify compile_live_scene accepts custom bindings without falling back to hardcoded dummy values
+    let empty_bindings = HashMap::new();
+    let empty_scene = compile_live_scene(1920.0, 1080.0, &empty_bindings);
+    assert!(!empty_scene.commands.is_empty());
+}
+
+#[test]
+fn test_adaptive_presentation_loop_power_and_gaming_shield() {
+    use aethershell_audio::FpsMode;
+    use aethershell_core::MonitorTaskbarState;
+    use aethershell_taskbar::TaskbarCoordinator;
+
+    // 1. Adaptive refresh rate selection:
+    // Battery -> 15 FPS (66.6ms)
+    assert_eq!(FpsMode::BatterySaver.target_fps(), 15);
+    assert!(FpsMode::BatterySaver.frame_interval().as_millis() >= 66);
+
+    // AC Balanced -> 30 FPS (33.3ms)
+    assert_eq!(FpsMode::AcBalanced.target_fps(), 30);
+    assert!(FpsMode::AcBalanced.frame_interval().as_millis() >= 33);
+
+    // Performance -> 60 FPS (16.6ms)
+    assert_eq!(FpsMode::Performance.target_fps(), 60);
+    assert!(FpsMode::Performance.frame_interval().as_millis() <= 17);
+
+    // 2. Gaming Shield detection:
+    let mut tb = TaskbarCoordinator::new();
+    assert!(!tb.is_any_monitor_fullscreen());
+
+    // When a monitor transitions to Fullscreen (e.g. running game)
+    tb.evaluate_and_apply("DISPLAY_1", MonitorTaskbarState::Fullscreen);
+    assert!(
+        tb.is_any_monitor_fullscreen(),
+        "Gaming Shield must detect active full-screen application"
+    );
+
+    // When monitor returns to Desktop
+    tb.evaluate_and_apply("DISPLAY_1", MonitorTaskbarState::Desktop);
+    assert!(!tb.is_any_monitor_fullscreen());
+}

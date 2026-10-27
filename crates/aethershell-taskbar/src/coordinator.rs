@@ -54,6 +54,13 @@ impl TaskbarCoordinator {
         &self.rules
     }
 
+    /// Checks if any monitored display has an active full-screen window (Gaming Shield trigger).
+    pub fn is_any_monitor_fullscreen(&self) -> bool {
+        self.per_monitor_states
+            .values()
+            .any(|state| matches!(state, MonitorTaskbarState::Fullscreen))
+    }
+
     pub fn set_conflict_info(&mut self, conflict: Option<ConflictInfo>) {
         self.conflict_info = conflict;
     }

@@ -39,6 +39,7 @@ pub struct AppEngine {
     desktop_renderer: Arc<Mutex<Option<D2D1CanvasRenderer>>>,
     shutdown_flag: Arc<AtomicBool>,
     session_token: Arc<RwLock<String>>,
+    cached_bindings: Arc<RwLock<HashMap<String, BindingValue>>>,
 }
 
 impl AppEngine {
@@ -61,6 +62,7 @@ impl AppEngine {
             desktop_renderer: Arc::new(Mutex::new(None)),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             session_token: Arc::new(RwLock::new(token.into())),
+            cached_bindings: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -126,6 +128,11 @@ impl AppEngine {
     #[allow(dead_code)]
     pub fn taskbar(&self) -> Arc<Mutex<TaskbarCoordinator>> {
         Arc::clone(&self.taskbar)
+    }
+
+    #[allow(dead_code)]
+    pub fn cached_bindings(&self) -> Arc<RwLock<HashMap<String, BindingValue>>> {
+        Arc::clone(&self.cached_bindings)
     }
 
     pub fn is_shutdown_requested(&self) -> bool {
@@ -221,6 +228,7 @@ impl AppEngine {
             // Wire Explorer restart recovery across all desktop overlay windows
             let win_mgr_restart = Arc::clone(&self.desktop_windows);
             let renderer_restart = Arc::clone(&self.desktop_renderer);
+            let cached_restart = Arc::clone(&self.cached_bindings);
             win_mgr.set_on_explorer_restart(move || {
                 info!("Explorer restart notification received: re-probing desktop hierarchy and re-synchronizing surfaces");
                 if let Ok(mut mgr) = win_mgr_restart.try_lock() {
@@ -235,7 +243,15 @@ impl AppEngine {
                         if let Ok(mut r_lock) = renderer_restart.try_lock() {
                             match D2D1CanvasRenderer::new_for_hwnd(primary.hwnd, width, height) {
                                 Ok(mut new_renderer) => {
-                                    let scene = compile_first_run_scene(width as f32, height as f32);
+                                    let bindings = cached_restart
+                                        .read()
+                                        .map(|b| b.clone())
+                                        .unwrap_or_default();
+                                    let scene = compile_live_scene(
+                                        width as f32,
+                                        height as f32,
+                                        &bindings,
+                                    );
                                     let _ = new_renderer.render_scene(&scene);
                                     *r_lock = Some(new_renderer);
                                     info!("Direct2D canvas renderer re-synchronized to HWND {:?}", primary.hwnd.0);
@@ -256,7 +272,13 @@ impl AppEngine {
                 let bounds = primary.bounds;
                 match D2D1CanvasRenderer::new_for_hwnd(primary.hwnd, width, height) {
                     Ok(mut renderer) => {
-                        let scene = compile_first_run_scene(width as f32, height as f32);
+                        let initial_bindings = self
+                            .cached_bindings
+                            .read()
+                            .map(|b| b.clone())
+                            .unwrap_or_default();
+                        let scene =
+                            compile_live_scene(width as f32, height as f32, &initial_bindings);
                         match renderer.render_scene(&scene) {
                             Ok(cmd_count) => info!(
                                 "Direct2D 1.1 / DirectWrite rendered {} commands live on desktop host",
@@ -277,10 +299,12 @@ impl AppEngine {
 
                 // Wire on_paint callback across all desktop overlay windows to automatically repaint scene on WM_PAINT
                 let r_paint = Arc::clone(&self.desktop_renderer);
+                let cached_paint = Arc::clone(&self.cached_bindings);
                 win_mgr.set_on_paint(move |_hwnd| {
                     let w = bounds[2].max(100) as f32;
                     let h = bounds[3].max(100) as f32;
-                    let scene = compile_first_run_scene(w, h);
+                    let bindings = cached_paint.read().map(|b| b.clone()).unwrap_or_default();
+                    let scene = compile_live_scene(w, h, &bindings);
                     if let Ok(mut r_lock) = r_paint.try_lock() {
                         if let Some(ref mut renderer) = *r_lock {
                             let _ = renderer.render_scene(&scene);
@@ -359,17 +383,34 @@ impl AppEngine {
 
         info!("AetherShell IPC server running on {}", pipe_name);
 
-        // 7. Engine event loop with periodic interaction timeout tick (Q31:A) and monitoring
+        // 7. Engine event loop with periodic interaction timeout tick, telemetry polling, and adaptive presentation loop
         let mut last_telemetry_poll = std::time::Instant::now();
         let mut last_watchdog_check = std::time::Instant::now();
+        let mut last_render_tick = std::time::Instant::now();
+
+        // Initial telemetry poll to populate bindings immediately
+        let mut current_telemetry: HashMap<String, BindingValue> = {
+            if let Ok(mut tel) = self.telemetry.try_lock() {
+                tel.poll_all()
+            } else {
+                HashMap::new()
+            }
+        };
+        {
+            if let Ok(mut cache) = self.cached_bindings.write() {
+                *cache = current_telemetry.clone();
+            }
+        }
 
         while !self.shutdown_flag.load(Ordering::Relaxed) {
             // Pump Win32 messages (WM_PAINT, WM_KEYDOWN, WM_ACTIVATE, WM_WTSSESSION_CHANGE, etc.)
             DesktopWindowManager::pump_messages();
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(16)).await;
 
-            // Tick interaction mode timeout
+            let now = std::time::Instant::now();
+
+            // 1. Tick interaction mode timeout
             {
                 let mut ctrl = self.interaction.lock().await;
                 if ctrl.tick(chrono::Utc::now()) {
@@ -380,16 +421,15 @@ impl AppEngine {
                 }
             }
 
-            // Periodic native telemetry poll (1s interval)
-            let now = std::time::Instant::now();
+            // 2. Periodic native telemetry poll (1s interval to prevent CPU wakeups per PRD G08)
             if now.duration_since(last_telemetry_poll) >= std::time::Duration::from_secs(1) {
                 if let Ok(mut tel) = self.telemetry.try_lock() {
-                    let _ = tel.poll_all();
+                    current_telemetry = tel.poll_all();
                 }
                 last_telemetry_poll = now;
             }
 
-            // Periodic script worker watchdog check and crash monitor (2s interval)
+            // 3. Periodic script worker watchdog check and crash monitor (2s interval)
             if now.duration_since(last_watchdog_check) >= std::time::Duration::from_secs(2) {
                 if let Ok(mut sup) = self.script_supervisor.try_lock() {
                     let exit_code = sup.poll_worker_status();
@@ -407,6 +447,76 @@ impl AppEngine {
                     }
                 }
                 last_watchdog_check = now;
+            }
+
+            // 4. Adaptive Direct2D Presentation Loop (PRD Section 7.3 & Q36:A)
+            let is_on_battery = match current_telemetry.get("power.ac_state") {
+                Some(BindingValue::String(s)) => s == "Battery",
+                _ => false,
+            };
+
+            let fps_mode = if is_on_battery {
+                FpsMode::BatterySaver // 15 FPS
+            } else if let Ok(aud) = self.audio.try_lock() {
+                aud.fps_mode()
+            } else {
+                FpsMode::AcBalanced // 30 FPS default
+            };
+
+            let frame_interval = fps_mode.frame_interval();
+
+            if now.duration_since(last_render_tick) >= frame_interval {
+                // Check if gaming shield is active (fullscreen application running)
+                let is_gaming = if let Ok(tb) = self.taskbar.try_lock() {
+                    tb.is_any_monitor_fullscreen()
+                } else {
+                    false
+                };
+
+                if !is_gaming {
+                    // Sample audio spectrum
+                    let bands = if let Ok(aud) = self.audio.try_lock() {
+                        aud.current_bands()
+                    } else {
+                        Vec::new()
+                    };
+
+                    // Construct live bindings
+                    let mut live_bindings = current_telemetry.clone();
+                    live_bindings.insert("audio.spectrum".into(), BindingValue::FloatArray(bands));
+
+                    let now_local = chrono::Local::now();
+                    live_bindings.insert(
+                        "time.clock".into(),
+                        BindingValue::String(now_local.format("%H:%M").to_string()),
+                    );
+                    live_bindings.insert(
+                        "time.date".into(),
+                        BindingValue::String(now_local.format("%A, %B %d").to_string()),
+                    );
+
+                    // Update cached bindings
+                    if let Ok(mut cache) = self.cached_bindings.write() {
+                        *cache = live_bindings.clone();
+                    }
+
+                    // Render scene if renderer is available and desktop host has primary window
+                    if let Ok(win_mgr) = self.desktop_windows.try_lock() {
+                        if let Some(primary) = win_mgr.primary_window() {
+                            let width = primary.bounds[2].max(100) as f32;
+                            let height = primary.bounds[3].max(100) as f32;
+                            let scene = compile_live_scene(width, height, &live_bindings);
+
+                            if let Ok(mut r_lock) = self.desktop_renderer.try_lock() {
+                                if let Some(ref mut renderer) = *r_lock {
+                                    let _ = renderer.render_scene(&scene);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                last_render_tick = now;
             }
 
             if *shutdown_tx.borrow() {
@@ -443,6 +553,7 @@ impl AppEngine {
         let shutdown_flag = Arc::clone(&self.shutdown_flag);
         let os_build = self.os_info.build_number;
         let session_token = Arc::clone(&self.session_token);
+        let cached_bindings = Arc::clone(&self.cached_bindings);
         let valid_session_id = session_id;
 
         Arc::new(move |req: IpcRequest, client_identity: IpcClientIdentity| {
@@ -456,6 +567,7 @@ impl AppEngine {
             let shutdown_flag = Arc::clone(&shutdown_flag);
             let shutdown_tx = shutdown_tx.clone();
             let session_token = Arc::clone(&session_token);
+            let cached_bindings = Arc::clone(&cached_bindings);
 
             Box::pin(async move {
                 // 1. Session Isolation: Enforce same-session client callers
@@ -780,7 +892,11 @@ impl AppEngine {
                         if let Some(primary) = win_mgr.primary_window() {
                             let width = primary.bounds[2].max(100) as f32;
                             let height = primary.bounds[3].max(100) as f32;
-                            let scene = compile_first_run_scene(width, height);
+                            let bindings = cached_bindings
+                                .read()
+                                .map(|b| b.clone())
+                                .unwrap_or_default();
+                            let scene = compile_live_scene(width, height, &bindings);
                             let mut r_lock = desktop_renderer.lock().await;
                             if let Some(ref mut renderer) = *r_lock {
                                 if let Ok(count) = renderer.render_scene(&scene) {
@@ -829,6 +945,28 @@ impl Default for AppEngine {
 
 /// Resolves the canonical first-run `signature_minimal` profile, theme tokens, and declarative layout AST.
 pub fn compile_first_run_scene(screen_width: f32, _screen_height: f32) -> SceneGraph {
+    let now = chrono::Local::now();
+    let mut bindings = HashMap::new();
+    bindings.insert(
+        "time.clock".into(),
+        BindingValue::String(now.format("%H:%M").to_string()),
+    );
+    bindings.insert(
+        "time.date".into(),
+        BindingValue::String(now.format("%A, %B %d").to_string()),
+    );
+    bindings.insert("metrics.cpu".into(), BindingValue::Percent(0.0));
+    bindings.insert("metrics.ram".into(), BindingValue::Float(0.0));
+
+    compile_live_scene(screen_width, _screen_height, &bindings)
+}
+
+/// Compiles the scene with live telemetry, audio spectrum, and time bindings.
+pub fn compile_live_scene(
+    screen_width: f32,
+    _screen_height: f32,
+    bindings: &HashMap<String, BindingValue>,
+) -> SceneGraph {
     let profile_path = find_asset_file("assets/profiles/signature_minimal.toml");
     let profile: ProfileDefinition = profile_path
         .and_then(|p| std::fs::read_to_string(p).ok())
@@ -872,23 +1010,20 @@ pub fn compile_first_run_scene(screen_width: f32, _screen_height: f32) -> SceneG
             .unwrap()
         });
 
+    // Ensure time bindings are always present (callers may not provide them)
+    let mut merged = bindings.clone();
     let now = chrono::Local::now();
-    let mut bindings = HashMap::new();
-    bindings.insert(
-        "time.clock".into(),
-        BindingValue::String(now.format("%H:%M").to_string()),
-    );
-    bindings.insert(
-        "time.date".into(),
-        BindingValue::String(now.format("%A, %B %d").to_string()),
-    );
-    bindings.insert("metrics.cpu".into(), BindingValue::Percent(24.5));
-    bindings.insert("metrics.ram".into(), BindingValue::Float(6.8));
+    merged
+        .entry("time.clock".into())
+        .or_insert_with(|| BindingValue::String(now.format("%H:%M").to_string()));
+    merged
+        .entry("time.date".into())
+        .or_insert_with(|| BindingValue::String(now.format("%A, %B %d").to_string()));
 
     let origin_x = (screen_width * 0.5 - 120.0).max(40.0);
     let origin_y = 60.0f32;
 
-    let resolved = LayoutEngine::resolve(&layout, &theme, &bindings, origin_x, origin_y, 1.0)
+    let resolved = LayoutEngine::resolve(&layout, &theme, &merged, origin_x, origin_y, 1.0)
         .unwrap_or_default();
 
     SceneGraph::compile(&resolved)
