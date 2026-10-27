@@ -499,5 +499,50 @@ This document maintains verifiable test and validation records. Every entry is t
   - Post-merge CI and security workflows 100% green on `main`.
 - **Status**: `passed`
 - **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
-- **Notes & Limitations**: Ready to advance to the next stability milestone: Authenticated Configuration IPC Endpoints (`get_config` / `set_config`).
+- **Notes & Limitations**: Advanced to the next stability milestone: Authenticated Configuration IPC Endpoints (`get_config` / `set_config`) in PR #29.
+
+---
+
+### EVD-017: Core Configuration IPC Endpoints (`get_config` / `set_config`), Schema Validation & Atomic Win32 Persistence (PR #29)
+- **Requirement / Gate**: Gate G11 (WinUI Settings Independence & IPC), Gate G12 (Schema / Backup & Atomic Storage), PRD Section 10.2, Section 16, Section 18.2, Q38:B
+- **Candidate Commit**: `1ae09984a6de10c9b257dbde7b6db915f450bc9a` (PR #29 Head)
+- **Main Merge Commit**: `5cb5df55aa333900cae7cb9229f60037a3465133` (Merge pull request #29)
+- **Date & Environment**: 2026-10-27, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
+- **Executed Actions & Verification Suite**:
+  - **1. Pre-Merge Verification on PR #29 (`1ae0998`)**:
+    - `C++/WinUI 3 Mandatory Qualification`: **`pass`** in 3m 41s (Run ID `40474466371`, Job `122089155644`).
+    - `Cargo Audit & Advisory Database`: **`pass`** in 27s (Run ID `40474466457`, Job `122089155059`).
+    - `GitGuardian Security Checks`: **`pass`** in 1s.
+    - `Rust Quality Gates & Tests`: **`pass`** in 2m 32s (Run ID `40474466371`, Job `122089155341`).
+  - **2. Delegated Merge Execution (Section 1 & 3)**:
+    - Merged PR #29 into `main` via `gh pr merge 29 --merge --match-head-commit 1ae09984a6de10c9b257dbde7b6db915f450bc9a` at `2026-10-27T08:38:43Z`.
+    - Generated `main` merge commit SHA: `5cb5df55aa333900cae7cb9229f60037a3465133`.
+  - **3. Post-Merge Exact-Commit GitHub CI Verification on `main`**:
+    - `CI Pipeline` (Run ID: `40474954175`):
+      - `Rust Quality Gates & Tests` (Job `122090790086`): **`pass`** in 2m 29s.
+      - `C++/WinUI 3 Mandatory Qualification` (Job `122090790377`): **`pass`** in 2m 20s.
+    - `Security Audit` (Run ID: `40474954550`):
+      - `Cargo Audit & Advisory Database` (Job `122090790699`): **`pass`** in 34s.
+  - **4. Independent Adversarial Audit**:
+    - Conducted by Independent Adversarial Subagent (`a32acfeb-80ed-44d0-821a-87050c282cdd`).
+    - Audit Verdict: **`PASS`** across all 7 criteria (session token enforcement, worker role rejection, schema version and bounds validation, atomic file persistence, backup preservation, transactional rollback, and test isolation).
+  - **5. Core Configuration Integration & Security Capabilities**:
+    - **Schema Validation & Path Containment**: Added `ConfigValidationError` enum and `AppConfig::validate(&self)` checking version mismatch, profile path traversal/injection, audio render FPS bounds (1–240), spectrum bands (8–512), telemetry intervals, interactive timeouts, and scripting crash limits.
+    - **Atomic Persistence & Backup Preservation**: Wired pre-validation into `ConfigManager::save_atomic()`. If live file is corrupt, `ReplaceFileW` is called with null backup parameter, preserving `config.toml.bak` intact and preventing backup poisoning (IVA-002).
+    - **Safe Loading & Test Isolation**: Implemented `ConfigManager::load_if_exists()` so default instantiation does not write unsolicited files. Added `AETHERSHELL_CONFIG_DIR` environment override to `resolve_app_data_dir()` ensuring tests operate strictly within temporary directories.
+    - **Privileged Management Authorization & Worker Rejection**: Authenticated `get_config` (full and section queries) and `set_config` via session capability tokens. Supervised script workers are strictly blocked from invoking configuration endpoints prior to token evaluation.
+    - **Transactional In-Memory Rollback**: If atomic disk write fails (e.g. file lock or permission error), `set_config` returns an error immediately and in-memory `AppConfig` remains completely unmutated.
+    - **Dynamic Subsystem Propagation**: Applied configuration changes dynamically to running subsystems, adjusting audio FPS mode, power profile, interactive timeout, and re-rendering active Direct2D scenes.
+    - **Test Isolation Hardening**: Hardened `lifecycle_ipc_test.rs` to run `aethershell.exe` with explicit temporary directories and token paths, maintaining `%LOCALAPPDATA%\AetherShell` at 0 items. Expanded `ipc_security_authorization_test.rs` worker boundary rejection tests to include `get_config` and `set_config`.
+  - **6. Automated Test Accounting**:
+    - `aethershell-config`: 21 passed (including validation bounds, atomic recovery, and load_if_exists).
+    - `aethershell-app`: 4 unit tests + 9 integration test suites passed (including all 7 tests in `config_ipc_test.rs` and hardened `lifecycle_ipc_test.rs`).
+- **Observed Result**:
+    - PR #29 cleanly merged into `main` at `5cb5df55aa333900cae7cb9229f60037a3465133`.
+    - Core configuration IPC endpoints, schema validation, and atomic storage are fully operational.
+    - Post-merge CI and security workflows 100% green on `main`.
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
+- **Notes & Limitations**: Ready to advance to the next stability milestone: Functional WinUI 3 Settings Controls & State Persistence.
+
 
