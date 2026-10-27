@@ -683,7 +683,53 @@ This document maintains verifiable test and validation records. Every entry is t
   - Post-merge CI and security workflows 100% green on `main`.
 - **Status**: `passed`
 - **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
-- **Notes & Limitations**: Ready to advance to the next stability milestone: PR #37 (Interactive Mode Global Hotkey & Pointer Hit-Testing).
+- **Notes & Limitations**: Documented in PR #36. Milestone completed.
+
+---
+
+### EVD-021: Interactive Mode Global Hotkey, Spatial Pointer Hit-Testing & Safe Desktop Dismissal (PR #37)
+- **Requirement / Gate**: Gate G07 (Temporary Interactive Mode), PRD Section 5.3, Owner Decision Q31:A, Section 18.2
+- **Candidate Commit**: `33ba4a0085866b65765823c84369f33af2c26bd4` (PR #37 Head)
+- **Main Merge Commit**: `d8e46175ae4c43afc44565cf37f642a38db6ab51` (Merge pull request #37)
+- **Date & Environment**: 2026-10-27, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
+- **Executed Actions & Verification Suite**:
+  - **1. Pre-Merge Verification on PR #37 (`33ba4a0`)**:
+    - `C++/WinUI 3 Mandatory Qualification`: **`pass`** in 3m 06s (Run ID `40495985307`, Job `122161429640`).
+    - `Cargo Audit & Advisory Database`: **`pass`** in 34s (Run ID `40495985204`, Job `122161428919`).
+    - `GitGuardian Security Checks`: **`pass`** in 1s (Job `122161422990`).
+    - `Rust Quality Gates & Tests`: **`pass`** in 3m 59s (Run ID `40495985307`, Job `122161429068`).
+  - **2. Delegated Merge Execution**:
+    - Merged PR #37 into `main` via `gh pr merge 37 --merge --delete-branch` at `2026-10-27T11:30:15Z`.
+    - Generated `main` merge commit SHA: `d8e46175ae4c43afc44565cf37f642a38db6ab51`.
+  - **3. Post-Merge Exact-Commit GitHub CI Verification on `main`**:
+    - `CI Pipeline` (Run ID: `40496634600`):
+      - `Rust Quality Gates & Tests` (Job `122163640729`): **`pass`** in 3m 58s.
+      - `C++/WinUI 3 Mandatory Qualification` (Job `122163641067`): **`pass`** in 3m 25s.
+    - `Security Audit` (Run ID: `40496634432`):
+      - `Cargo Audit & Advisory Database` (Job `122163639424`): **`pass`** in 28s.
+  - **4. Independent Adversarial Audit**:
+    - Conducted by Independent Verification Reviewer Subagent (`4d4d0458-bec3-4c6f-b84f-0b58effccde6`).
+    - Audit Verdict: **`PASS`** across PRD 5.3 & Q31:A compliance, extended window styles (`WS_EX_TRANSPARENT | WS_EX_NOACTIVATE` in passive mode, no `WS_EX_TOPMOST` in interactive mode), spatial pointer hit-testing, click-outside dismissal, Escape key, inactivity timeout, Explorer restart preservation, and host test isolation (0 items in `%LOCALAPPDATA%\AetherShell`).
+  - **5. Architectural & Technical Implementation**:
+    - **Windows Extended Styles Contract**: Passive mode strictly applies `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED`, ensuring zero pointer capture over desktop icons (`SHELLDLL_DefView` / `SysListView32`). Stacking stays safely beneath `SHELLDLL_DefView` via `safe_stacking_target()`.
+    - **Global Hotkey Registration**: Registered `HOTKEY_ID_INTERACTIVE_MODE (0xAE01)` with `MOD_WIN | MOD_CONTROL` and `VK_A (0x41)` (`Win+Ctrl+A`) on the primary desktop window via `RegisterHotKey`.
+    - **Interactive Mode Activation**: Toggles interactive state, clearing `WS_EX_TRANSPARENT` and `WS_EX_NOACTIVATE` to receive direct pointer input, while explicitly avoiding `WS_EX_TOPMOST` and keeping `HWND_NOTOPMOST` to prevent occluding application windows.
+    - **Spatial Pointer Hit-Testing**: In `WM_LBUTTONDOWN`, evaluates `(px, py)` against `InteractiveRegion` list in reverse visual order. If a region is hit, invokes `on_action`, updates `last_activity_tick`, and resets inactivity deadline via `InteractionController::reset_activity()`.
+    - **Immediate Click-Outside Dismissal**: When `(px, py)` falls outside all active interactive regions, immediately triggers `dismiss_interactive_mode(hwnd, state, DismissalReason::ClickOutside)`, instantly reapplying `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE` and restacking behind `SHELLDLL_DefView`.
+    - **Dynamic Cursor Feedback**: `WM_MOUSEMOVE` displays `IDC_HAND` when hovering over interactive regions and `IDC_ARROW` elsewhere.
+    - **Explorer Restart Recovery**: Preserves callbacks (`on_dismiss`, `on_paint`, `on_explorer_restart`, `on_action`, `on_hotkey`), `interactive_regions`, and global hotkey across Explorer restarts triggered by `TaskbarCreated`.
+    - **Engine Integration**: Wired interactive mode toggle to `AppEngine` and media playback actions (`media.play_pause`, `media.pause`, `media.resume`) to `WasapiLoopbackCapture`. Layout compiler extracts live interactive regions from declarative button AST nodes.
+  - **6. Automated Test Accounting**:
+    - `crates/aethershell-desktop`: 18 tests passed (including `test_desktop_host_window_hotkey_toggle_and_dismissal`, `test_desktop_host_window_pointer_hit_test_and_action_dispatch`, `test_desktop_window_manager_interactive_regions_and_action_preservation`).
+    - `crates/aethershell-app/tests/interactive_mode_hotkey_and_hit_testing_test.rs`: 6 integration tests passed (`test_global_hotkey_registration_and_toggle`, `test_pointer_hit_testing_and_action_dispatch`, `test_click_outside_dismisses_to_passive_mode`, `test_inactivity_timeout_and_escape_dismissal`, `test_explorer_restart_preserves_hotkey_and_interactive_regions`, `test_compile_live_scene_and_regions_extraction`).
+    - Entire workspace: 99 automated tests passed with 0 failures, 0 warnings, and 0 items written to `%LOCALAPPDATA%\AetherShell`.
+- **Observed Result**:
+  - PR #37 cleanly merged into `main` at `d8e46175ae4c43afc44565cf37f642a38db6ab51`.
+  - Interactive Mode global hotkey, spatial pointer hit-testing, and click-outside dismissal are fully operational.
+  - Post-merge CI and security workflows 100% green on `main`.
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
+- **Notes & Limitations**: Ready to advance to the next stability milestone: PR #39 (`PerMonitorV2` DPI Awareness & Multi-Monitor Topology Handling).
 
 
 
