@@ -118,9 +118,9 @@ With Phase A merged, engineering focus transitions entirely to **making AetherSh
 
 The proposed sequence of focused, independently reviewable pull requests is:
 
-1. **PR #21: Acceptance Ledger & Evidence Reconciliation** *(Current)*
+1. **PR #21: Acceptance Ledger & Evidence Reconciliation** *(Completed & Merged into main at `e21c344` — see [EVD-013](EVIDENCE.md#evd-013-pr-21-merge-completion-post-merge-ci-verification--documentation-architecture-reconciliation))*
    - Update `docs/STATUS.md`, `docs/EVIDENCE.md`, and `README.md` with verified PR #20 merge evidence, truthful gate statuses, and the session-token historical record.
-2. **PR #22: Explorer Restart Recovery & Notification Tray Restoration**
+2. **PR #22: Explorer Restart Recovery & Notification Tray Restoration** *(Active Next Workstream)*
    - Register dynamic Windows message `TaskbarCreated` in `tray.rs` and `DesktopHostWindow`.
    - Re-register tray icon via `Shell_NotifyIconW(NIM_ADD, ...)` and re-probe desktop hierarchy (`WorkerW`/`Progman`) upon Explorer restart.
 3. **PR #23: Real-Time Telemetry & WASAPI Spectrum Presentation Loop**
