@@ -580,6 +580,167 @@ async fn test_negative_quarantined_supervisor_rejects_worker_actions() {
 }
 
 #[tokio::test]
+async fn test_script_worker_publish_bindings_flow_and_quarantine_purge() {
+    let harness = LiveEnginePipeTestHarness::start("worker_bindings_token").await;
+    let my_pid = std::process::id();
+
+    // 1. Negative test: publish without active supervised child must fail closed
+    let unreg_pub = IpcClient::send_command(
+        &harness.pipe_name,
+        "publish_script_bindings",
+        serde_json::json!({
+            "bindings": {
+                "script.test_metric": 42.0
+            }
+        }),
+    )
+    .await
+    .expect("send unreg publish");
+    assert!(
+        !unreg_pub.success,
+        "Publish without active supervised child must fail closed"
+    );
+    assert!(unreg_pub
+        .error_message
+        .unwrap()
+        .contains("no active worker child expected"));
+
+    // 2. Assign caller PID as supervised child
+    let my_handle = unsafe {
+        windows::Win32::System::Threading::OpenProcess(
+            windows::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION,
+            false,
+            my_pid,
+        )
+        .unwrap_or_default()
+    };
+    {
+        let sup_arc = harness.engine.script_supervisor();
+        let mut sup = sup_arc.lock().await;
+        sup.assign_supervised_child(SupervisedChild::new(my_handle, my_pid));
+    }
+
+    // Register worker
+    let ready_res = IpcClient::send_command(
+        &harness.pipe_name,
+        "script_worker_ready",
+        serde_json::json!({ "pid": my_pid }),
+    )
+    .await
+    .expect("send ready");
+    assert!(ready_res.success, "Worker ready must succeed");
+
+    // 3. Negative test: invalid non-object payload
+    let invalid_payload = IpcClient::send_command(
+        &harness.pipe_name,
+        "publish_script_bindings",
+        serde_json::json!({ "bindings": "invalid_string" }),
+    )
+    .await
+    .expect("send invalid payload");
+    assert!(!invalid_payload.success);
+    assert!(invalid_payload
+        .error_message
+        .unwrap()
+        .contains("'bindings' must be a JSON object"));
+
+    // 4. Negative test: forbidden namespace (attempting to overwrite system metrics)
+    let bad_namespace = IpcClient::send_command(
+        &harness.pipe_name,
+        "publish_script_bindings",
+        serde_json::json!({
+            "bindings": {
+                "metrics.cpu": 99.9
+            }
+        }),
+    )
+    .await
+    .expect("send bad namespace");
+    assert!(!bad_namespace.success);
+    assert!(bad_namespace
+        .error_message
+        .unwrap()
+        .contains("must start with 'script.' or 'user.' namespace"));
+
+    // 5. Positive test: publish valid script and user bindings
+    let valid_pub = IpcClient::send_command(
+        &harness.pipe_name,
+        "publish_script_bindings",
+        serde_json::json!({
+            "bindings": {
+                "script.custom_stat": 88.5,
+                "script.device_status": "online",
+                "user.greeting": "hello world",
+                "script.fan_rpm": 2400,
+                "script.is_active": true
+            }
+        }),
+    )
+    .await
+    .expect("send valid publish");
+    assert!(valid_pub.success, "Valid publish must succeed");
+    assert_eq!(valid_pub.payload["updated"], 5);
+
+    // Verify bindings flowed into engine's cached_bindings
+    {
+        let cache = harness.engine.cached_bindings();
+        let guard = cache.read().unwrap();
+        assert_eq!(
+            guard.get("script.custom_stat"),
+            Some(&aethershell_core::BindingValue::Float(88.5))
+        );
+        assert_eq!(
+            guard.get("script.device_status"),
+            Some(&aethershell_core::BindingValue::String("online".into()))
+        );
+        assert_eq!(
+            guard.get("user.greeting"),
+            Some(&aethershell_core::BindingValue::String(
+                "hello world".into()
+            ))
+        );
+        assert_eq!(
+            guard.get("script.fan_rpm"),
+            Some(&aethershell_core::BindingValue::Integer(2400))
+        );
+        assert_eq!(
+            guard.get("script.is_active"),
+            Some(&aethershell_core::BindingValue::String("true".into()))
+        );
+    }
+
+    // 6. Negative test: Quarantined supervisor rejects publish
+    {
+        let sup_arc = harness.engine.script_supervisor();
+        let mut sup = sup_arc.lock().await;
+        sup.record_start(6001);
+        sup.record_exit(1);
+        sup.record_start(6002);
+        sup.record_exit(1);
+        assert!(sup.is_quarantined());
+    }
+
+    let quar_pub = IpcClient::send_command(
+        &harness.pipe_name,
+        "publish_script_bindings",
+        serde_json::json!({
+            "bindings": {
+                "script.custom_stat": 99.0
+            }
+        }),
+    )
+    .await
+    .expect("send quarantined publish");
+    assert!(!quar_pub.success);
+    assert!(quar_pub
+        .error_message
+        .unwrap()
+        .contains("supervisor is quarantined"));
+
+    harness.stop().await;
+}
+
+#[tokio::test]
 async fn test_runtime_token_rotation_through_production_ipc_handler() {
     let _env_lock = ENV_MUTEX.lock().await;
     let (_iso_guard, _token_file) = TestIsolationGuard::new(

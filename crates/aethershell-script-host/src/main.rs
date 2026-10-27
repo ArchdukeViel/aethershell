@@ -1,6 +1,7 @@
 use aethershell_ipc::IpcClient;
 use aethershell_script_host::{verify_script_digest, TrustError};
 use mlua::Lua;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::sync::{Arc, RwLock};
@@ -38,11 +39,47 @@ fn json_to_lua<'lua>(lua: &'lua Lua, value: &serde_json::Value) -> mlua::Result<
     }
 }
 
-/// Registers the host `aether` API bindings with Lua 5.4 exposing telemetry and audio spectrum.
-pub fn register_host_bindings(
+fn lua_to_json(val: &mlua::Value) -> mlua::Result<serde_json::Value> {
+    match val {
+        mlua::Value::Nil => Ok(serde_json::Value::Null),
+        mlua::Value::Boolean(b) => Ok(serde_json::Value::Bool(*b)),
+        mlua::Value::Integer(i) => Ok(serde_json::Value::Number((*i).into())),
+        mlua::Value::Number(n) => {
+            if let Some(num) = serde_json::Number::from_f64(*n) {
+                Ok(serde_json::Value::Number(num))
+            } else {
+                Ok(serde_json::Value::Null)
+            }
+        }
+        mlua::Value::String(s) => Ok(serde_json::Value::String(s.to_str()?.to_string())),
+        mlua::Value::Table(t) => {
+            let len = t.raw_len();
+            if len > 0 {
+                let mut arr = Vec::with_capacity(len);
+                for i in 1..=len {
+                    let v: mlua::Value = t.raw_get(i)?;
+                    arr.push(lua_to_json(&v)?);
+                }
+                Ok(serde_json::Value::Array(arr))
+            } else {
+                let mut map = serde_json::Map::new();
+                for pair in t.clone().pairs::<String, mlua::Value>() {
+                    let (k, v) = pair?;
+                    map.insert(k, lua_to_json(&v)?);
+                }
+                Ok(serde_json::Value::Object(map))
+            }
+        }
+        _ => Ok(serde_json::Value::Null),
+    }
+}
+
+/// Registers the host `aether` API bindings with Lua 5.4 exposing telemetry, audio spectrum, and outbound bindings.
+pub fn register_host_bindings_with_outbound(
     lua: &Lua,
     cached_telemetry: Arc<RwLock<serde_json::Value>>,
     cached_spectrum: Arc<RwLock<serde_json::Value>>,
+    outbound_bindings: Arc<RwLock<HashMap<String, serde_json::Value>>>,
 ) -> mlua::Result<()> {
     let aether = lua.create_table()?;
 
@@ -64,8 +101,45 @@ pub fn register_host_bindings(
         })?,
     )?;
 
+    let out_ref = Arc::clone(&outbound_bindings);
+    aether.set(
+        "set_binding",
+        lua.create_function(move |_lua, (key, value): (String, mlua::Value)| {
+            if let Ok(json_val) = lua_to_json(&value) {
+                if let Ok(mut map) = out_ref.write() {
+                    map.insert(key, json_val);
+                }
+            }
+            Ok(())
+        })?,
+    )?;
+
+    let out_ref2 = Arc::clone(&outbound_bindings);
+    aether.set(
+        "publish_bindings",
+        lua.create_function(move |_lua, table: mlua::Table| {
+            if let Ok(mut map) = out_ref2.write() {
+                for (k, v) in table.pairs::<String, mlua::Value>().flatten() {
+                    if let Ok(json_val) = lua_to_json(&v) {
+                        map.insert(k, json_val);
+                    }
+                }
+            }
+            Ok(())
+        })?,
+    )?;
+
     lua.globals().set("aether", aether)?;
     Ok(())
+}
+
+pub fn register_host_bindings(
+    lua: &Lua,
+    cached_telemetry: Arc<RwLock<serde_json::Value>>,
+    cached_spectrum: Arc<RwLock<serde_json::Value>>,
+) -> mlua::Result<()> {
+    let dummy_outbound = Arc::new(RwLock::new(HashMap::new()));
+    register_host_bindings_with_outbound(lua, cached_telemetry, cached_spectrum, dummy_outbound)
 }
 
 #[tokio::main]
@@ -208,10 +282,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4. Initialize real unrestricted Lua 5.4 engine (PRD Section 13.2 / Q32:B)
     let lua = Lua::new();
-    register_host_bindings(
+    let outbound_bindings = Arc::new(RwLock::new(HashMap::new()));
+    register_host_bindings_with_outbound(
         &lua,
         Arc::clone(&cached_telemetry),
         Arc::clone(&cached_spectrum),
+        Arc::clone(&outbound_bindings),
     )?;
 
     // 5. Load and execute script if supplied
@@ -244,6 +320,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pipe_for_bg = pipe_name.clone();
     let telem_bg = Arc::clone(&cached_telemetry);
     let spec_bg = Arc::clone(&cached_spectrum);
+    let outbound_bg = Arc::clone(&outbound_bindings);
     let tick_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let tick_counter_bg = Arc::clone(&tick_counter);
     let has_script = script_bytes.is_some();
@@ -275,6 +352,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     serde_json::json!({}),
                 )
                 .await;
+
+                // Flush outbound custom bindings to Core IPC if any
+                let pending: Option<HashMap<String, serde_json::Value>> = {
+                    if let Ok(mut map) = outbound_bg.write() {
+                        if !map.is_empty() {
+                            Some(map.drain().collect())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+                if let Some(bindings) = pending {
+                    let _ = IpcClient::send_command(
+                        &pipe_for_bg,
+                        "publish_script_bindings",
+                        serde_json::json!({ "bindings": bindings }),
+                    )
+                    .await;
+                }
 
                 // Refresh telemetry cache
                 if let Ok(t_resp) =
@@ -394,5 +492,62 @@ mod tests {
             .eval()
             .expect("eval is_silent");
         assert!(!is_silent);
+    }
+
+    #[test]
+    fn test_aether_host_api_publish_and_set_binding() {
+        let lua = Lua::new();
+        let telemetry = Arc::new(RwLock::new(serde_json::json!({})));
+        let spectrum = Arc::new(RwLock::new(serde_json::json!({})));
+        let outbound = Arc::new(RwLock::new(HashMap::new()));
+
+        register_host_bindings_with_outbound(&lua, telemetry, spectrum, Arc::clone(&outbound))
+            .expect("register host bindings");
+
+        // 1. Test aether.set_binding
+        lua.load(r#"aether.set_binding("script.custom_stat", 42.5)"#)
+            .exec()
+            .expect("set_binding number");
+        lua.load(r#"aether.set_binding("user.message", "hello from lua")"#)
+            .exec()
+            .expect("set_binding string");
+
+        {
+            let map = outbound.read().unwrap();
+            assert_eq!(
+                map.get("script.custom_stat").unwrap(),
+                &serde_json::json!(42.5)
+            );
+            assert_eq!(
+                map.get("user.message").unwrap(),
+                &serde_json::json!("hello from lua")
+            );
+        }
+
+        // 2. Test aether.publish_bindings with table
+        lua.load(
+            r#"
+            aether.publish_bindings({
+                ["script.battery_health"] = "optimal",
+                ["script.fan_rpm"] = 2400,
+                ["script.is_boosted"] = true
+            })
+        "#,
+        )
+        .exec()
+        .expect("publish_bindings");
+
+        {
+            let map = outbound.read().unwrap();
+            assert_eq!(
+                map.get("script.battery_health").unwrap(),
+                &serde_json::json!("optimal")
+            );
+            assert_eq!(map.get("script.fan_rpm").unwrap(), &serde_json::json!(2400));
+            assert_eq!(
+                map.get("script.is_boosted").unwrap(),
+                &serde_json::json!(true)
+            );
+        }
     }
 }

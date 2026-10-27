@@ -659,9 +659,15 @@ impl AppEngine {
                                 sup.crash_count()
                             );
                         }
+                        if let Ok(mut cache) = self.cached_bindings.write() {
+                            cache.retain(|k, _| !k.starts_with("script."));
+                        }
                     }
                     if sup.is_quarantined() {
                         warn!("Script worker is quarantined: {:?}", sup.state());
+                        if let Ok(mut cache) = self.cached_bindings.write() {
+                            cache.retain(|k, _| !k.starts_with("script."));
+                        }
                     }
                 }
                 last_watchdog_check = now;
@@ -738,10 +744,15 @@ impl AppEngine {
                         BindingValue::String(now_local.format("%A, %B %d").to_string()),
                     );
 
-                    // Update cached bindings
-                    if let Ok(mut cache) = self.cached_bindings.write() {
-                        *cache = live_bindings.clone();
-                    }
+                    // Update cached bindings with live telemetry & extract full snapshot for rendering
+                    let bindings_snapshot = if let Ok(mut cache) = self.cached_bindings.write() {
+                        for (k, v) in live_bindings {
+                            cache.insert(k, v);
+                        }
+                        cache.clone()
+                    } else {
+                        live_bindings
+                    };
 
                     // Render scene if renderer is available and desktop host has primary window
                     if let Ok(win_mgr) = self.desktop_windows.try_lock() {
@@ -750,8 +761,12 @@ impl AppEngine {
                             let width = bounds[2].max(100) as f32;
                             let height = bounds[3].max(100) as f32;
                             let scale = primary.scale_factor();
-                            let (scene, _) =
-                                compile_live_scene_with_scale(width, height, &live_bindings, scale);
+                            let (scene, _) = compile_live_scene_with_scale(
+                                width,
+                                height,
+                                &bindings_snapshot,
+                                scale,
+                            );
 
                             if let Ok(mut r_lock) = self.desktop_renderer.try_lock() {
                                 if let Some(ref mut renderer) = *r_lock {
@@ -854,6 +869,7 @@ impl AppEngine {
                         req.command.as_str(),
                         "script_worker_ready"
                             | "script_worker_heartbeat"
+                            | "publish_script_bindings"
                             | "get_telemetry"
                             | "get_spectrum"
                             | "get_status"
@@ -1117,6 +1133,141 @@ impl AppEngine {
                                 "Security violation: no supervised worker child exists to heartbeat",
                             )
                         }
+                    }
+                    "publish_script_bindings" => {
+                        let mut sup = supervisor.lock().await;
+                        if sup.is_quarantined() {
+                            warn!("publish_script_bindings rejected: supervisor is quarantined");
+                            return IpcResponse::error(
+                                req.message_id,
+                                "Security violation: supervisor is quarantined",
+                            );
+                        }
+                        if let Some(child_pid) = sup.active_child_pid() {
+                            if child_pid != client_identity.process_id {
+                                warn!(
+                                    "publish_script_bindings rejected: client PID {} does not match worker PID {}",
+                                    client_identity.process_id, child_pid
+                                );
+                                return IpcResponse::error(
+                                    req.message_id,
+                                    "Security violation: unexpected worker PID",
+                                );
+                            }
+                            if !sup.is_child_alive() {
+                                warn!(
+                                    "publish_script_bindings rejected: worker PID {} is dead",
+                                    child_pid
+                                );
+                                sup.invalidate_worker();
+                                return IpcResponse::error(
+                                    req.message_id,
+                                    "Security violation: worker process is dead",
+                                );
+                            }
+                        } else {
+                            warn!(
+                                "publish_script_bindings rejected: no active worker child from PID {}",
+                                client_identity.process_id
+                            );
+                            return IpcResponse::error(
+                                req.message_id,
+                                "Security violation: no active worker child expected",
+                            );
+                        }
+
+                        // Validate payload
+                        let bindings_obj =
+                            match req.payload.get("bindings").and_then(|v| v.as_object()) {
+                                Some(obj) => obj,
+                                None => {
+                                    return IpcResponse::error(
+                                        req.message_id,
+                                        "Validation error: 'bindings' must be a JSON object",
+                                    );
+                                }
+                            };
+
+                        // Strictly enforce PRD Q32:B / Section 13 limits
+                        if bindings_obj.len() > 32 {
+                            return IpcResponse::error(
+                                req.message_id,
+                                "Validation error: maximum 32 script binding keys allowed per publish",
+                            );
+                        }
+
+                        let mut valid_bindings = Vec::new();
+                        for (k, v) in bindings_obj {
+                            if !k.starts_with("script.") && !k.starts_with("user.") {
+                                return IpcResponse::error(
+                                    req.message_id,
+                                    format!(
+                                        "Validation error: key '{}' must start with 'script.' or 'user.' namespace",
+                                        k
+                                    ),
+                                );
+                            }
+                            if k.len() > 64 {
+                                return IpcResponse::error(
+                                    req.message_id,
+                                    format!(
+                                        "Validation error: key '{}' exceeds maximum length of 64 characters",
+                                        k
+                                    ),
+                                );
+                            }
+
+                            let binding_val = match v {
+                                serde_json::Value::String(s) => {
+                                    if s.len() > 1024 {
+                                        return IpcResponse::error(
+                                            req.message_id,
+                                            format!(
+                                                "Validation error: string value for key '{}' exceeds 1024 characters",
+                                                k
+                                            ),
+                                        );
+                                    }
+                                    BindingValue::String(s.clone())
+                                }
+                                serde_json::Value::Number(n) => {
+                                    if let Some(i) = n.as_i64() {
+                                        BindingValue::Integer(i)
+                                    } else if let Some(f) = n.as_f64() {
+                                        BindingValue::Float(f)
+                                    } else {
+                                        BindingValue::Float(0.0)
+                                    }
+                                }
+                                serde_json::Value::Bool(b) => BindingValue::String(if *b {
+                                    "true".into()
+                                } else {
+                                    "false".into()
+                                }),
+                                serde_json::Value::Array(arr) => {
+                                    let mut floats = Vec::with_capacity(arr.len().min(64));
+                                    for item in arr.iter().take(64) {
+                                        if let Some(f) = item.as_f64() {
+                                            floats.push(f as f32);
+                                        }
+                                    }
+                                    BindingValue::FloatArray(floats)
+                                }
+                                _ => continue,
+                            };
+                            valid_bindings.push((k.clone(), binding_val));
+                        }
+
+                        let count = valid_bindings.len();
+                        if let Ok(mut cache) = cached_bindings.write() {
+                            for (k, v) in valid_bindings {
+                                cache.insert(k, v);
+                            }
+                        }
+
+                        sup.record_heartbeat();
+
+                        IpcResponse::ok(req.message_id, serde_json::json!({ "updated": count }))
                     }
                     "get_script_status" => {
                         let sup = supervisor.lock().await;
