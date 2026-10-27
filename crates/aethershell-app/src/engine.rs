@@ -527,6 +527,13 @@ impl AppEngine {
                 FpsMode::AcBalanced // 30 FPS default
             };
 
+            // Dynamically synchronize audio loopback capture power profile with power state
+            if let Ok(aud) = self.audio.try_lock() {
+                if is_on_battery && aud.fps_mode() != FpsMode::BatterySaver {
+                    aud.set_fps_mode(FpsMode::BatterySaver);
+                }
+            }
+
             let frame_interval = fps_mode.frame_interval();
 
             if now.duration_since(last_render_tick) >= frame_interval {
@@ -1138,7 +1145,7 @@ impl AppEngine {
                                     }
                                 }
                             };
-                            let mut aud = audio.lock().await;
+                            let aud = audio.lock().await;
                             aud.set_fps_mode(fps_mode);
                         }
 
