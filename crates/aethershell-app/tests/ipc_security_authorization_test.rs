@@ -10,6 +10,31 @@ use tokio::sync::watch;
 
 static ENV_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// RAII guard providing guaranteed isolation and cleanup for tests.
+/// Sets an environment variable to point to a temporary test credential path,
+/// and guarantees removal of the variable and temporary directory on drop.
+struct TestIsolationGuard {
+    dir: std::path::PathBuf,
+    env_var: &'static str,
+}
+
+impl TestIsolationGuard {
+    fn new(dir_prefix: &str, env_var: &'static str, file_name: &str) -> (Self, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("{}_{}", dir_prefix, uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file_path = dir.join(file_name);
+        std::env::set_var(env_var, &file_path);
+        (Self { dir, env_var }, file_path)
+    }
+}
+
+impl Drop for TestIsolationGuard {
+    fn drop(&mut self) {
+        std::env::remove_var(self.env_var);
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
 fn find_cpp_settings_binary() -> Option<std::path::PathBuf> {
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir.parent()?.parent()?;
@@ -527,10 +552,11 @@ async fn test_negative_quarantined_supervisor_rejects_worker_actions() {
 #[tokio::test]
 async fn test_runtime_token_rotation_through_production_ipc_handler() {
     let _env_lock = ENV_MUTEX.lock().await;
-    let custom_dir = std::env::temp_dir().join(format!("test_rot_live_{}", uuid::Uuid::new_v4()));
-    let _ = std::fs::create_dir_all(&custom_dir);
-    let token_file = custom_dir.join("session_live.token");
-    std::env::set_var("AETHERSHELL_SESSION_TOKEN_PATH", &token_file);
+    let (_iso_guard, _token_file) = TestIsolationGuard::new(
+        "test_rot_live",
+        "AETHERSHELL_SESSION_TOKEN_PATH",
+        "session_live.token",
+    );
 
     let initial_token = "initial_secret_token_12345".to_string();
     let mut guard = aethershell_ipc::SessionTokenGuard::with_token(&initial_token)
@@ -601,17 +627,16 @@ async fn test_runtime_token_rotation_through_production_ipc_handler() {
 
     harness.stop().await;
     drop(guard);
-    std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
-    let _ = std::fs::remove_dir_all(custom_dir);
 }
 
 #[tokio::test]
 async fn test_token_rotation_poisoned_lock_fails_closed_without_disk_divergence() {
     let _env_lock = ENV_MUTEX.lock().await;
-    let custom_dir = std::env::temp_dir().join(format!("test_rot_poison_{}", uuid::Uuid::new_v4()));
-    let _ = std::fs::create_dir_all(&custom_dir);
-    let token_file = custom_dir.join("session_poison.token");
-    std::env::set_var("AETHERSHELL_SESSION_TOKEN_PATH", &token_file);
+    let (_iso_guard, _token_file) = TestIsolationGuard::new(
+        "test_rot_poison",
+        "AETHERSHELL_SESSION_TOKEN_PATH",
+        "session_poison.token",
+    );
 
     let initial_token = "initial_token_before_poison_99".to_string();
     let mut guard = aethershell_ipc::SessionTokenGuard::with_token(&initial_token)
@@ -660,17 +685,16 @@ async fn test_token_rotation_poisoned_lock_fails_closed_without_disk_divergence(
     );
 
     drop(guard);
-    std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
-    let _ = std::fs::remove_dir_all(custom_dir);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_rust_cli_settings_client_interoperability() {
     let _env_lock = ENV_MUTEX.lock().await;
-    let custom_dir = std::env::temp_dir().join(format!("test_cli_iso_{}", uuid::Uuid::new_v4()));
-    let _ = std::fs::create_dir_all(&custom_dir);
-    let token_file = custom_dir.join("cli_session.token");
-    std::env::set_var("AETHERSHELL_SESSION_TOKEN_PATH", &token_file);
+    let (_iso_guard, _token_file) = TestIsolationGuard::new(
+        "test_cli_iso",
+        "AETHERSHELL_SESSION_TOKEN_PATH",
+        "cli_session.token",
+    );
 
     let pipe_name = format!(
         r"\\.\pipe\aethershell-rust-cli-test-{}",
@@ -747,8 +771,6 @@ async fn test_rust_cli_settings_client_interoperability() {
 
     harness.stop().await;
     drop(guard);
-    std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
-    let _ = std::fs::remove_dir_all(custom_dir);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -756,7 +778,7 @@ async fn test_cpp_winui_settings_client_authenticates_privileged_command() {
     let cpp_bin = find_cpp_settings_binary();
     if cpp_bin.is_none() {
         if std::env::var("REQUIRE_CPP_SETTINGS_TEST").is_ok() {
-            panic!("REQUIRED_CPP_BIN_MISSING: C++/WinUI 3 settings client binary not found.");
+            panic!("REQUIRED_CPP_BIN_MISSING: C++/WinUI 3 settings client binary not found at apps/aethershell-settings/x64/Release/aethershell-settings.exe.");
         } else {
             eprintln!("STATUS_CPP_BIN_UNAVAILABLE: Real C++ Settings executable not found; skipping C++ verification without falling back to Rust CLI.");
             return;
@@ -765,10 +787,11 @@ async fn test_cpp_winui_settings_client_authenticates_privileged_command() {
     let bin_path = cpp_bin.unwrap();
 
     let _env_lock = ENV_MUTEX.lock().await;
-    let custom_dir = std::env::temp_dir().join(format!("test_cpp_auth_{}", uuid::Uuid::new_v4()));
-    let _ = std::fs::create_dir_all(&custom_dir);
-    let token_file = custom_dir.join("cpp_session.token");
-    std::env::set_var("AETHERSHELL_SESSION_TOKEN_PATH", &token_file);
+    let (_iso_guard, token_file) = TestIsolationGuard::new(
+        "test_cpp_auth",
+        "AETHERSHELL_SESSION_TOKEN_PATH",
+        "cpp_session.token",
+    );
 
     let pipe_name = format!(
         r"\\.\pipe\aethershell-cpp-auth-test-{}",
@@ -786,11 +809,13 @@ async fn test_cpp_winui_settings_client_authenticates_privileged_command() {
     )
     .await;
 
-    // 1. Invoke C++/WinUI Settings client binary to execute privileged 'pause_audio' over isolated test pipe
+    // 1. Invoke C++/WinUI Settings client binary to execute privileged 'pause_audio' over isolated test pipe and explicit test token
     let output_pause = tokio::process::Command::new(&bin_path)
         .args([
             "--test-ipc-pipe",
             &pipe_name,
+            "--test-ipc-token",
+            token_file.to_str().unwrap(),
             "--test-ipc-command",
             "pause_audio",
         ])
@@ -816,11 +841,13 @@ async fn test_cpp_winui_settings_client_authenticates_privileged_command() {
         assert!(aud, "Audio must be paused by C++ settings client");
     }
 
-    // 2. Invoke C++/WinUI Settings client binary to execute privileged 'resume_audio' over isolated test pipe
+    // 2. Invoke C++/WinUI Settings client binary to execute privileged 'resume_audio' over isolated test pipe and explicit test token
     let output_resume = tokio::process::Command::new(&bin_path)
         .args([
             "--test-ipc-pipe",
             &pipe_name,
+            "--test-ipc-token",
+            token_file.to_str().unwrap(),
             "--test-ipc-command",
             "resume_audio",
         ])
@@ -848,8 +875,6 @@ async fn test_cpp_winui_settings_client_authenticates_privileged_command() {
 
     harness.stop().await;
     drop(guard);
-    std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
-    let _ = std::fs::remove_dir_all(custom_dir);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -857,7 +882,7 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
     let cpp_bin = find_cpp_settings_binary();
     if cpp_bin.is_none() {
         if std::env::var("REQUIRE_CPP_SETTINGS_TEST").is_ok() {
-            panic!("REQUIRED_CPP_BIN_MISSING: C++/WinUI 3 settings client binary not found.");
+            panic!("REQUIRED_CPP_BIN_MISSING: C++/WinUI 3 settings client binary not found at apps/aethershell-settings/x64/Release/aethershell-settings.exe.");
         } else {
             eprintln!("STATUS_CPP_BIN_UNAVAILABLE: Real C++ Settings executable not found; skipping negative C++ tests.");
             return;
@@ -871,13 +896,13 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
     // The server reports { "success": false, "error_message": "Security violation: ..." }
     // The C++ client must parse JSON, respect success=false, propagate error_message, and exit with code 1.
     {
-        let custom_dir =
-            std::env::temp_dir().join(format!("test_cpp_rej_{}", uuid::Uuid::new_v4()));
-        let _ = std::fs::create_dir_all(&custom_dir);
-        let token_file = custom_dir.join("cpp_bad_session.token");
+        let (_iso_guard, token_file) = TestIsolationGuard::new(
+            "test_cpp_rej",
+            "AETHERSHELL_SESSION_TOKEN_PATH",
+            "cpp_bad_session.token",
+        );
         // Write invalid token into isolated token file
         std::fs::write(&token_file, "INVALID_STALE_TOKEN_XYZ").unwrap();
-        std::env::set_var("AETHERSHELL_SESSION_TOKEN_PATH", &token_file);
 
         let pipe_name = format!(
             r"\\.\pipe\aethershell-cpp-rej-test-{}",
@@ -896,6 +921,8 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
             .args([
                 "--test-ipc-pipe",
                 &pipe_name,
+                "--test-ipc-token",
+                token_file.to_str().unwrap(),
                 "--test-ipc-command",
                 "pause_audio",
             ])
@@ -927,8 +954,6 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
         }
 
         harness.stop().await;
-        std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
-        let _ = std::fs::remove_dir_all(custom_dir);
     }
 
     // Case 2: Server returns malformed response (invalid JSON)
@@ -1034,6 +1059,158 @@ async fn test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_command
         assert!(
             stdout.contains("IPC_TEST_ERROR:Malformed IPC response: missing success field."),
             "C++ client must report missing success field: {}",
+            stdout
+        );
+
+        let _ = server_task.await;
+    }
+
+    // Case 4: Server returns response with unsupported protocol version
+    {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        let pipe_name = format!(
+            r"\\.\pipe\aethershell-cpp-badproto-{}",
+            uuid::Uuid::new_v4()
+        );
+        let mut pipe_server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&pipe_name)
+            .expect("create mock bad-proto pipe server");
+
+        let server_task = tokio::spawn(async move {
+            pipe_server.connect().await.expect("client connect");
+            let mut buf = [0u8; 1024];
+            let _ = pipe_server.read(&mut buf).await;
+
+            // Unsupported protocol_version: 99
+            let body =
+                br#"{"protocol_version":99,"correlation_id":"test","success":true,"payload":{}}"#;
+            let len_prefix = (body.len() as u32).to_le_bytes();
+            let mut resp = Vec::new();
+            resp.extend_from_slice(&len_prefix);
+            resp.extend_from_slice(body);
+            let _ = pipe_server.write_all(&resp).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        });
+
+        let output = tokio::process::Command::new(&bin_path)
+            .args([
+                "--test-ipc-pipe",
+                &pipe_name,
+                "--test-ipc-command",
+                "test_cmd",
+            ])
+            .output()
+            .await
+            .expect("execute C++ settings client against bad-proto server");
+
+        assert!(
+            !output.status.success(),
+            "C++ client must fail on unsupported protocol version"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("IPC_TEST_ERROR:Malformed IPC response: unsupported protocol_version."),
+            "C++ client must report unsupported protocol_version: {}",
+            stdout
+        );
+
+        let _ = server_task.await;
+    }
+
+    // Case 5: Server returns response exceeding 1 MiB framing ceiling
+    {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        let pipe_name = format!(
+            r"\\.\pipe\aethershell-cpp-oversized-{}",
+            uuid::Uuid::new_v4()
+        );
+        let mut pipe_server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&pipe_name)
+            .expect("create mock oversized pipe server");
+
+        let server_task = tokio::spawn(async move {
+            pipe_server.connect().await.expect("client connect");
+            let mut buf = [0u8; 1024];
+            let _ = pipe_server.read(&mut buf).await;
+
+            // Send length prefix > 1 MiB (e.g. 2 MiB)
+            let len_prefix = (2 * 1024 * 1024u32).to_le_bytes();
+            let _ = pipe_server.write_all(&len_prefix).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        });
+
+        let output = tokio::process::Command::new(&bin_path)
+            .args([
+                "--test-ipc-pipe",
+                &pipe_name,
+                "--test-ipc-command",
+                "test_cmd",
+            ])
+            .output()
+            .await
+            .expect("execute C++ settings client against oversized server");
+
+        assert!(
+            !output.status.success(),
+            "C++ client must fail on oversized response length"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("IPC_TEST_ERROR:Response length exceeded 1 MiB framing ceiling."),
+            "C++ client must report framing ceiling error: {}",
+            stdout
+        );
+
+        let _ = server_task.await;
+    }
+
+    // Case 6: Server returns zero-length response payload
+    {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        let pipe_name = format!(r"\\.\pipe\aethershell-cpp-zerolen-{}", uuid::Uuid::new_v4());
+        let mut pipe_server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&pipe_name)
+            .expect("create mock zerolen pipe server");
+
+        let server_task = tokio::spawn(async move {
+            pipe_server.connect().await.expect("client connect");
+            let mut buf = [0u8; 1024];
+            let _ = pipe_server.read(&mut buf).await;
+
+            // Zero-length response payload: 4-byte 0
+            let len_prefix = 0u32.to_le_bytes();
+            let _ = pipe_server.write_all(&len_prefix).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        });
+
+        let output = tokio::process::Command::new(&bin_path)
+            .args([
+                "--test-ipc-pipe",
+                &pipe_name,
+                "--test-ipc-command",
+                "test_cmd",
+            ])
+            .output()
+            .await
+            .expect("execute C++ settings client against zerolen server");
+
+        assert!(
+            !output.status.success(),
+            "C++ client must fail on zero-length response payload"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("IPC_TEST_ERROR:Malformed IPC response: zero-length response payload."),
+            "C++ client must report zero-length payload error: {}",
             stdout
         );
 

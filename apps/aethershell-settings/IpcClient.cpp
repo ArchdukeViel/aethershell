@@ -8,16 +8,12 @@ namespace AetherShell::Settings
 {
     std::wstring SettingsIpcClient::ResolvePipeName(const std::wstring& pipeOverride)
     {
+        // Explicit pipe override is only used when injected (e.g. via --test-ipc-pipe CLI flag).
+        // Ordinary production execution never passes an override and will always connect
+        // to the authoritative session-scoped pipe, preventing accidental test endpoint leakage.
         if (!pipeOverride.empty())
         {
             return pipeOverride;
-        }
-
-        wchar_t envPipe[MAX_PATH] = { 0 };
-        DWORD len = GetEnvironmentVariableW(L"AETHERSHELL_TEST_IPC_PIPE", envPipe, MAX_PATH);
-        if (len > 0 && len < MAX_PATH)
-        {
-            return envPipe;
         }
 
         DWORD sessionId = 1;
@@ -27,9 +23,24 @@ namespace AetherShell::Settings
         return ss.str();
     }
 
-    std::string SettingsIpcClient::LoadSessionToken()
+    std::string SettingsIpcClient::LoadSessionToken(const std::wstring& tokenPathOverride)
     {
-        // 1. Check override environment variable AETHERSHELL_SESSION_TOKEN_PATH
+        // 1. Explicit override path (e.g. from --test-ipc-token CLI argument)
+        if (!tokenPathOverride.empty())
+        {
+            std::ifstream file(tokenPathOverride);
+            if (file.is_open())
+            {
+                std::string tok;
+                if (std::getline(file, tok))
+                {
+                    while (!tok.empty() && (tok.back() == '\r' || tok.back() == '\n' || tok.back() == ' ')) tok.pop_back();
+                    if (!tok.empty()) return tok;
+                }
+            }
+        }
+
+        // 2. Check override environment variable AETHERSHELL_SESSION_TOKEN_PATH
         wchar_t overridePath[MAX_PATH] = { 0 };
         DWORD len = GetEnvironmentVariableW(L"AETHERSHELL_SESSION_TOKEN_PATH", overridePath, MAX_PATH);
         if (len > 0 && len < MAX_PATH)
@@ -46,7 +57,7 @@ namespace AetherShell::Settings
             }
         }
 
-        // 2. Resolve per-session token path: %LOCALAPPDATA%\AetherShell\session_{sessionId}.token
+        // 3. Resolve per-session token path: %LOCALAPPDATA%\AetherShell\session_{sessionId}.token
         DWORD sessionId = 1;
         ProcessIdToSessionId(GetCurrentProcessId(), &sessionId);
 
@@ -86,7 +97,8 @@ namespace AetherShell::Settings
     IpcResult SettingsIpcClient::SendCommand(
         const std::string& command,
         const std::string& jsonPayload,
-        const std::wstring& pipeOverride)
+        const std::wstring& pipeOverride,
+        const std::wstring& tokenPathOverride)
     {
         IpcResult result;
         std::wstring pipePath = ResolvePipeName(pipeOverride);
@@ -111,7 +123,7 @@ namespace AetherShell::Settings
 
         // Attach session capability token to payload for privileged management commands
         std::string effectivePayload = jsonPayload;
-        std::string token = LoadSessionToken();
+        std::string token = LoadSessionToken(tokenPathOverride);
         if (!token.empty() && effectivePayload.find("session_token") == std::string::npos)
         {
             if (effectivePayload.empty() || effectivePayload == "{}")
@@ -136,28 +148,52 @@ namespace AetherShell::Settings
 
         uint32_t lengthPrefix = static_cast<uint32_t>(reqBody.size());
         DWORD written = 0;
+        DWORD totalWritten = 0;
 
-        // Write 4-byte length prefix + payload
-        if (!WriteFile(hPipe, &lengthPrefix, sizeof(lengthPrefix), &written, nullptr) ||
-            !WriteFile(hPipe, reqBody.data(), lengthPrefix, &written, nullptr))
+        // Write 4-byte length prefix in a robust loop
+        while (totalWritten < sizeof(lengthPrefix))
         {
-            CloseHandle(hPipe);
-            result.transportSuccess = false;
-            result.success = false;
-            result.error = "Failed writing request to IPC pipe.";
-            return result;
+            if (!WriteFile(hPipe, reinterpret_cast<const char*>(&lengthPrefix) + totalWritten, sizeof(lengthPrefix) - totalWritten, &written, nullptr) || written == 0)
+            {
+                CloseHandle(hPipe);
+                result.transportSuccess = false;
+                result.success = false;
+                result.error = "Failed writing request length prefix to IPC pipe.";
+                return result;
+            }
+            totalWritten += written;
         }
 
-        // Read 4-byte response length
-        uint32_t respLength = 0;
-        DWORD bytesRead = 0;
-        if (!ReadFile(hPipe, &respLength, sizeof(respLength), &bytesRead, nullptr) || bytesRead != sizeof(respLength))
+        // Write request payload in a robust loop
+        totalWritten = 0;
+        while (totalWritten < lengthPrefix)
         {
-            CloseHandle(hPipe);
-            result.transportSuccess = false;
-            result.success = false;
-            result.error = "Failed reading response length from IPC pipe.";
-            return result;
+            if (!WriteFile(hPipe, reqBody.data() + totalWritten, lengthPrefix - totalWritten, &written, nullptr) || written == 0)
+            {
+                CloseHandle(hPipe);
+                result.transportSuccess = false;
+                result.success = false;
+                result.error = "Failed writing request body to IPC pipe.";
+                return result;
+            }
+            totalWritten += written;
+        }
+
+        // Read 4-byte response length in a robust loop
+        uint32_t respLength = 0;
+        DWORD totalRead = 0;
+        while (totalRead < sizeof(respLength))
+        {
+            DWORD bytesRead = 0;
+            if (!ReadFile(hPipe, reinterpret_cast<char*>(&respLength) + totalRead, sizeof(respLength) - totalRead, &bytesRead, nullptr) || bytesRead == 0)
+            {
+                CloseHandle(hPipe);
+                result.transportSuccess = false;
+                result.success = false;
+                result.error = "Failed reading response length from IPC pipe.";
+                return result;
+            }
+            totalRead += bytesRead;
         }
 
         if (respLength == 0)
@@ -172,20 +208,26 @@ namespace AetherShell::Settings
         if (respLength > 1024 * 1024) // 1 MiB safety ceiling
         {
             CloseHandle(hPipe);
-            result.transportSuccess = false;
+            result.transportSuccess = true;
             result.success = false;
             result.error = "Response length exceeded 1 MiB framing ceiling.";
             return result;
         }
 
         std::vector<char> buffer(respLength);
-        if (!ReadFile(hPipe, buffer.data(), respLength, &bytesRead, nullptr) || bytesRead != respLength)
+        totalRead = 0;
+        while (totalRead < respLength)
         {
-            CloseHandle(hPipe);
-            result.transportSuccess = false;
-            result.success = false;
-            result.error = "Failed reading response body from IPC pipe.";
-            return result;
+            DWORD bytesRead = 0;
+            if (!ReadFile(hPipe, buffer.data() + totalRead, respLength - totalRead, &bytesRead, nullptr) || bytesRead == 0)
+            {
+                CloseHandle(hPipe);
+                result.transportSuccess = false;
+                result.success = false;
+                result.error = "Failed reading response body from IPC pipe.";
+                return result;
+            }
+            totalRead += bytesRead;
         }
 
         CloseHandle(hPipe);
@@ -204,6 +246,15 @@ namespace AetherShell::Settings
         {
             result.success = false;
             result.error = "Malformed IPC response: missing protocol_version.";
+            return result;
+        }
+
+        auto protoVal = root.GetNamedValue(L"protocol_version");
+        if (protoVal.ValueType() != winrt::Windows::Data::Json::JsonValueType::Number ||
+            static_cast<uint32_t>(protoVal.GetNumber()) != 1)
+        {
+            result.success = false;
+            result.error = "Malformed IPC response: unsupported protocol_version.";
             return result;
         }
 

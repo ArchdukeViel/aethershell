@@ -41,6 +41,7 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     if (argv)
     {
         std::wstring testPipe;
+        std::wstring testTokenPath;
         std::string testCmd;
         std::string testPayload = "{}";
         bool isTest = false;
@@ -50,6 +51,11 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             if (wcscmp(argv[i], L"--test-ipc-pipe") == 0 && i + 1 < argc)
             {
                 testPipe = argv[i + 1];
+                ++i;
+            }
+            else if (wcscmp(argv[i], L"--test-ipc-token") == 0 && i + 1 < argc)
+            {
+                testTokenPath = argv[i + 1];
                 ++i;
             }
             else if (wcscmp(argv[i], L"--test-ipc-command") == 0 && i + 1 < argc)
@@ -67,7 +73,8 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
         if (isTest)
         {
-            auto res = ::AetherShell::Settings::SettingsIpcClient::SendCommand(testCmd, testPayload, testPipe);
+            auto res = ::AetherShell::Settings::SettingsIpcClient::SendCommand(
+                testCmd, testPayload, testPipe, testTokenPath);
 
             // Write directly to standard output handle for test capture
             HANDLE hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
