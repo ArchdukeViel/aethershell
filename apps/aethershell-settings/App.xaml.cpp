@@ -58,6 +58,11 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 testTokenPath = argv[i + 1];
                 ++i;
             }
+            else if (wcscmp(argv[i], L"--test-ipc-payload") == 0 && i + 1 < argc)
+            {
+                testPayload = winrt::to_string(argv[i + 1]);
+                ++i;
+            }
             else if (wcscmp(argv[i], L"--test-ipc-command") == 0 && i + 1 < argc)
             {
                 isTest = true;

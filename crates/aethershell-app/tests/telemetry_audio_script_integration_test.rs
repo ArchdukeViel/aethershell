@@ -144,8 +144,15 @@ fn test_script_digest_verification_and_quarantine() {
 fn test_phase4_engine_ipc_integration() {
     let target_bin = env!("CARGO_BIN_EXE_aethershell");
 
-    // 1. Launch primary instance in background
+    let temp_dir =
+        std::env::temp_dir().join(format!("aethershell_telem_test_{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::create_dir_all(&temp_dir);
+    let token_path = temp_dir.join("session_1.token");
+
+    // 1. Launch primary instance in background with isolated config dir and session token path
     let mut child = Command::new(target_bin)
+        .env("AETHERSHELL_CONFIG_DIR", &temp_dir)
+        .env("AETHERSHELL_SESSION_TOKEN_PATH", &token_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -172,9 +179,10 @@ fn test_phase4_engine_ipc_integration() {
 
         let pipe = connected_pipe.expect("Must connect to running engine IPC");
 
-        // Load session capability token from canonical AppData location
-        let session_token = aethershell_ipc::SessionToken::load()
-            .expect("Active engine must expose session.token capability");
+        // Load session capability token from isolated test location
+        let session_token = std::fs::read_to_string(&token_path)
+            .or_else(|_| aethershell_ipc::SessionToken::load().ok_or(()))
+            .expect("Active engine must expose session token capability");
 
         // 1. Query status: verify telemetry_provider, audio_spectrum, and script_supervisor
         let status_res = IpcClient::send_command(&pipe, "get_status", serde_json::json!({}))
@@ -312,6 +320,7 @@ fn test_phase4_engine_ipc_integration() {
 
     let exit_status = child.wait().expect("child exit");
     assert!(exit_status.success());
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
 fn find_script_host_binary() -> std::path::PathBuf {

@@ -57,8 +57,9 @@ struct LiveEnginePipeTestHarness {
     engine: Arc<AppEngine>,
     pipe_name: String,
     session_token: String,
+    temp_dir: std::path::PathBuf,
     shutdown_tx: watch::Sender<bool>,
-    server_handle: tokio::task::JoinHandle<()>,
+    server_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 fn current_session_id() -> u32 {
@@ -78,7 +79,12 @@ impl LiveEnginePipeTestHarness {
     }
 
     async fn start_with_session(session_token: &str, session_id: u32) -> Self {
-        let engine = Arc::new(AppEngine::with_token(session_token));
+        let temp_dir = std::env::temp_dir().join(format!("test_engine_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let engine = Arc::new(AppEngine::with_token_and_config_dir(
+            session_token,
+            &temp_dir,
+        ));
         let pipe_name = format!(r"\\.\pipe\aethershell-auth-test-{}", uuid::Uuid::new_v4());
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -96,8 +102,9 @@ impl LiveEnginePipeTestHarness {
             engine,
             pipe_name,
             session_token: session_token.to_string(),
+            temp_dir,
             shutdown_tx,
-            server_handle,
+            server_handle: Some(server_handle),
         }
     }
 
@@ -106,7 +113,12 @@ impl LiveEnginePipeTestHarness {
         pipe_name: &str,
         session_id: u32,
     ) -> Self {
-        let engine = Arc::new(AppEngine::with_token(session_token));
+        let temp_dir = std::env::temp_dir().join(format!("test_engine_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let engine = Arc::new(AppEngine::with_token_and_config_dir(
+            session_token,
+            &temp_dir,
+        ));
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         let handler = engine.create_ipc_handler(session_id, shutdown_tx.clone());
@@ -122,14 +134,24 @@ impl LiveEnginePipeTestHarness {
             engine,
             pipe_name: pipe_name.to_string(),
             session_token: session_token.to_string(),
+            temp_dir,
             shutdown_tx,
-            server_handle,
+            server_handle: Some(server_handle),
         }
     }
 
-    async fn stop(self) {
+    async fn stop(mut self) {
         let _ = self.shutdown_tx.send(true);
-        let _ = self.server_handle.await;
+        if let Some(h) = self.server_handle.take() {
+            let _ = h.await;
+        }
+        let _ = std::fs::remove_dir_all(&self.temp_dir);
+    }
+}
+
+impl Drop for LiveEnginePipeTestHarness {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.temp_dir);
     }
 }
 
@@ -313,7 +335,10 @@ async fn test_negative_cross_session_caller_rejected_by_production_handler() {
     harness.stop().await;
 
     // 2. Defense-in-depth: test production handler closure directly with cross-session identity
-    let engine = AppEngine::with_token("token_sess_1");
+    let temp_defense_dir =
+        std::env::temp_dir().join(format!("test_engine_defense_{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::create_dir_all(&temp_defense_dir);
+    let engine = AppEngine::with_token_and_config_dir("token_sess_1", &temp_defense_dir);
     let (shutdown_tx, _shutdown_rx) = watch::channel(false);
     let handler = engine.create_ipc_handler(my_session, shutdown_tx);
 
@@ -647,7 +672,13 @@ async fn test_token_rotation_poisoned_lock_fails_closed_without_disk_divergence(
     let mut guard = aethershell_ipc::SessionTokenGuard::with_token(&initial_token)
         .expect("create initial guard");
 
-    let engine = Arc::new(AppEngine::with_token(&initial_token));
+    let temp_engine_dir =
+        std::env::temp_dir().join(format!("test_engine_dir_{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::create_dir_all(&temp_engine_dir);
+    let engine = Arc::new(AppEngine::with_token_and_config_dir(
+        &initial_token,
+        &temp_engine_dir,
+    ));
 
     // Verify initial consistency
     assert_eq!(engine.session_token(), initial_token);
@@ -877,6 +908,133 @@ async fn test_cpp_winui_settings_client_authenticates_privileged_command() {
         let aud = harness.engine.audio().lock().await.is_paused();
         assert!(!aud, "Audio must be resumed by C++ settings client");
     }
+
+    harness.stop().await;
+    drop(guard);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_cpp_winui_settings_client_get_and_set_config() {
+    let cpp_bin = find_cpp_settings_binary();
+    if cpp_bin.is_none() {
+        if std::env::var("REQUIRE_CPP_SETTINGS_TEST").is_ok() {
+            panic!("REQUIRED_CPP_BIN_MISSING: C++/WinUI 3 settings client binary not found at apps/aethershell-settings/x64/Release/aethershell-settings.exe.");
+        } else {
+            eprintln!("STATUS_CPP_BIN_UNAVAILABLE: Real C++ Settings executable not found; skipping C++ get/set_config verification.");
+            return;
+        }
+    }
+    let bin_path = cpp_bin.unwrap();
+
+    let _env_lock = ENV_MUTEX.lock().await;
+    let (_iso_guard, token_file) = TestIsolationGuard::new(
+        "test_cpp_cfg",
+        "AETHERSHELL_SESSION_TOKEN_PATH",
+        "cpp_cfg_session.token",
+    );
+
+    let pipe_name = format!(
+        r"\\.\pipe\aethershell-cpp-cfg-test-{}",
+        uuid::Uuid::new_v4()
+    );
+    let token = format!("cpp_winui_token_{}", uuid::Uuid::new_v4());
+
+    let guard = aethershell_ipc::SessionTokenGuard::with_token(&token)
+        .expect("persist session token for C++ client");
+
+    let harness = LiveEnginePipeTestHarness::start_with_pipe_and_session(
+        &token,
+        &pipe_name,
+        current_session_id(),
+    )
+    .await;
+
+    // 1. Invoke C++/WinUI Settings client binary to execute 'get_config'
+    let output_get = tokio::process::Command::new(&bin_path)
+        .args([
+            "--test-ipc-pipe",
+            &pipe_name,
+            "--test-ipc-token",
+            token_file.to_str().unwrap(),
+            "--test-ipc-command",
+            "get_config",
+        ])
+        .output()
+        .await
+        .expect("execute C++ settings client get_config");
+
+    assert!(
+        output_get.status.success(),
+        "C++ Settings client get_config must succeed: stderr={}",
+        String::from_utf8_lossy(&output_get.stderr)
+    );
+    let stdout_get = String::from_utf8_lossy(&output_get.stdout);
+    assert!(
+        stdout_get.contains("IPC_TEST_SUCCESS:"),
+        "C++ Settings client must report IPC success: {}",
+        stdout_get
+    );
+    let json_prefix = "IPC_TEST_SUCCESS:";
+    let pos = stdout_get.find(json_prefix).unwrap();
+    let json_str = stdout_get[pos + json_prefix.len()..].trim();
+    let parsed: serde_json::Value =
+        serde_json::from_str(json_str).expect("parse C++ get_config response JSON");
+    assert_eq!(parsed["schema_version"], "1.0.0");
+    assert!(parsed.get("config").is_some());
+
+    // 2. Invoke C++/WinUI Settings client binary to execute 'set_config'
+    let set_payload = r#"{"config":{"profile":"cyber_hud"}}"#;
+    let output_set = tokio::process::Command::new(&bin_path)
+        .args([
+            "--test-ipc-pipe",
+            &pipe_name,
+            "--test-ipc-token",
+            token_file.to_str().unwrap(),
+            "--test-ipc-command",
+            "set_config",
+            "--test-ipc-payload",
+            set_payload,
+        ])
+        .output()
+        .await
+        .expect("execute C++ settings client set_config");
+
+    assert!(
+        output_set.status.success(),
+        "C++ Settings client set_config must succeed: stderr={}",
+        String::from_utf8_lossy(&output_set.stderr)
+    );
+    let stdout_set = String::from_utf8_lossy(&output_set.stdout);
+    assert!(
+        stdout_set.contains("IPC_TEST_SUCCESS:"),
+        "C++ Settings client must report IPC success: {}",
+        stdout_set
+    );
+
+    // 3. Verify engine live state changed
+    let current_cfg = harness.engine.config();
+    assert_eq!(current_cfg.profile, "cyber_hud");
+
+    // 4. Verify subsequent get_config reflects updated profile
+    let output_get2 = tokio::process::Command::new(&bin_path)
+        .args([
+            "--test-ipc-pipe",
+            &pipe_name,
+            "--test-ipc-token",
+            token_file.to_str().unwrap(),
+            "--test-ipc-command",
+            "get_config",
+        ])
+        .output()
+        .await
+        .expect("execute C++ settings client get_config after update");
+
+    assert!(output_get2.status.success());
+    let stdout_get2 = String::from_utf8_lossy(&output_get2.stdout);
+    let pos2 = stdout_get2.find(json_prefix).unwrap();
+    let json_str2 = stdout_get2[pos2 + json_prefix.len()..].trim();
+    let parsed2: serde_json::Value = serde_json::from_str(json_str2).expect("parse JSON");
+    assert_eq!(parsed2["config"]["profile"], "cyber_hud");
 
     harness.stop().await;
     drop(guard);
