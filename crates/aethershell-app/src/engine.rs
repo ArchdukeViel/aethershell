@@ -2,8 +2,8 @@ use crate::tray::SystemTray;
 use aethershell_audio::{FpsMode, WasapiLoopbackCapture};
 use aethershell_config::{AppConfig, ConfigManager};
 use aethershell_core::{
-    BindingValue, LayoutDefinition, LifecycleState, NodeType, ProfileDefinition, ThemeDefinition,
-    VerificationStatus,
+    BindingValue, LayoutDefinition, LayoutNode, LifecycleState, NodeType, ProfileDefinition,
+    ThemeDefinition, VerificationStatus,
 };
 use aethershell_desktop::{
     DesktopHost, DesktopWindowManager, InteractionController, InteractiveRegion,
@@ -184,6 +184,22 @@ impl AppEngine {
 
     pub fn is_shutdown_requested(&self) -> bool {
         self.shutdown_flag.load(Ordering::Relaxed)
+    }
+
+    /// Synchronizes the supervised out-of-process Lua worker based on active configuration and profile (PRD Section 13.2 / Q32:B / Gate G10).
+    pub async fn sync_script_worker(
+        &self,
+        pipe_name: &str,
+        is_safe_mode: bool,
+    ) -> Result<Option<u32>, Box<dyn std::error::Error>> {
+        sync_script_worker_internal(
+            &self.script_supervisor,
+            &self.active_config,
+            &self.cached_bindings,
+            pipe_name,
+            is_safe_mode,
+        )
+        .await
     }
 
     /// Primary runtime entry point.
@@ -601,6 +617,14 @@ impl AppEngine {
 
         info!("AetherShell IPC server running on {}", pipe_name);
 
+        // Synchronize on-demand script worker per PRD Section 13.2 / Q32:B / Gate G10
+        if let Err(e) = self.sync_script_worker(&pipe_name, is_safe_mode).await {
+            warn!(
+                "Failed to synchronize on-demand script worker at startup: {}",
+                e
+            );
+        }
+
         // 7. Engine event loop with periodic interaction timeout tick, telemetry polling, and adaptive presentation loop
         let mut last_telemetry_poll = std::time::Instant::now();
         let mut last_watchdog_check = std::time::Instant::now();
@@ -798,6 +822,13 @@ impl AppEngine {
 
         info!("Shutting down AetherShell Engine...");
         let _ = shutdown_tx.send(true);
+        {
+            let mut sup = self.script_supervisor.lock().await;
+            if sup.is_running() {
+                info!("Terminating script worker on engine shutdown");
+                sup.terminate_worker();
+            }
+        }
         self.audio.lock().await.stop();
         shell_monitor.stop();
         let _ = shell_event_task.join();
@@ -1309,6 +1340,17 @@ impl AppEngine {
                         IpcResponse::ok(req.message_id, serde_json::json!({ "active": false }))
                     }
                     "update_layout" | "reload_profile" => {
+                        let is_safe_mode = taskbar.lock().await.is_safe_mode();
+                        let pipe_name = format!(r"\\.\pipe\aethershell-ipc-{}", valid_session_id);
+                        let _ = sync_script_worker_internal(
+                            &supervisor,
+                            &active_config,
+                            &cached_bindings,
+                            &pipe_name,
+                            is_safe_mode,
+                        )
+                        .await;
+
                         let mut win_mgr = desktop_windows.lock().await;
                         let mut rendered_commands = 0;
                         if let Some(primary) = win_mgr.primary_window() {
@@ -1457,6 +1499,21 @@ impl AppEngine {
                             *writer = candidate_cfg.clone();
                         }
 
+                        // Synchronize on-demand script worker with updated configuration
+                        {
+                            let is_safe_mode = taskbar.lock().await.is_safe_mode();
+                            let pipe_name =
+                                format!(r"\\.\pipe\aethershell-ipc-{}", valid_session_id);
+                            let _ = sync_script_worker_internal(
+                                &supervisor,
+                                &active_config,
+                                &cached_bindings,
+                                &pipe_name,
+                                is_safe_mode,
+                            )
+                            .await;
+                        }
+
                         // Propagate changes to live engine subsystems
                         {
                             // 1. Audio and power FPS profile
@@ -1594,7 +1651,7 @@ pub fn compile_live_scene_with_scale(
         .unwrap_or_else(ThemeDefinition::obsidian);
 
     let layout_path = find_asset_file("assets/skins/minimal_type/layout.toml");
-    let layout: LayoutDefinition = layout_path
+    let mut layout: LayoutDefinition = layout_path
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|content| toml::from_str(&content).ok())
         .unwrap_or_else(|| {
@@ -1644,6 +1701,29 @@ pub fn compile_live_scene_with_scale(
         .entry("time.date".into())
         .or_insert_with(|| BindingValue::String(now.format("%A, %B %d").to_string()));
 
+    // When a Lua script publishes script.status or script.* bindings, inject dynamic status node
+    if merged.contains_key("script.status") {
+        layout.nodes.push(LayoutNode {
+            id: "script_status_indicator".into(),
+            node_type: NodeType::Text,
+            parent: None,
+            x: 0.0,
+            y: 114.0,
+            width: None,
+            height: None,
+            background: None,
+            radius: None,
+            value: Some("${script.status}".into()),
+            color: Some("@text.secondary".into()),
+            font_size_dip: Some(12.0),
+            value_source: None,
+            min_value: None,
+            max_value: None,
+            fill: None,
+            action: None,
+        });
+    }
+
     let effective_scale = if scale > 0.0 { scale } else { 1.0 };
     let origin_x = (screen_width * 0.5 - 120.0 * effective_scale).max(40.0 * effective_scale);
     let origin_y = 60.0f32 * effective_scale;
@@ -1688,4 +1768,211 @@ fn find_asset_file(rel_path: &str) -> Option<PathBuf> {
         PathBuf::from("../").join(rel_path),
     ];
     candidates.into_iter().find(|candidate| candidate.exists())
+}
+
+/// Helper to locate the script host executable (`aethershell-script-host.exe`).
+pub fn find_script_host_binary(configured: &str) -> Option<PathBuf> {
+    let direct = PathBuf::from(configured);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    if let Ok(mut current) = std::env::current_exe() {
+        current.set_file_name(configured);
+        if current.is_file() {
+            return Some(current);
+        }
+    }
+    let candidates = [
+        format!("target/debug/{}", configured),
+        format!("target/release/{}", configured),
+        format!("../../target/debug/{}", configured),
+        format!("../../target/release/{}", configured),
+        format!("../target/debug/{}", configured),
+        format!("../target/release/{}", configured),
+    ];
+    for candidate in &candidates {
+        let p = PathBuf::from(candidate);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Core synchronization logic for the supervised out-of-process Lua 5.4 child worker process.
+pub async fn sync_script_worker_internal(
+    supervisor: &Arc<Mutex<ScriptSupervisor>>,
+    active_config: &Arc<RwLock<AppConfig>>,
+    cached_bindings: &Arc<RwLock<HashMap<String, BindingValue>>>,
+    pipe_name: &str,
+    is_safe_mode: bool,
+) -> Result<Option<u32>, Box<dyn std::error::Error>> {
+    let (scripting_enabled, worker_exe_name, require_trust, active_script, trusted_digests) = {
+        if let Ok(cfg) = active_config.read() {
+            (
+                cfg.scripting.enabled,
+                cfg.scripting.worker_executable.clone(),
+                cfg.scripting.require_explicit_trust_for_imported_scripts,
+                cfg.scripting.active_script.clone(),
+                cfg.scripting.trusted_digests.clone(),
+            )
+        } else {
+            (
+                true,
+                "aethershell-script-host.exe".into(),
+                true,
+                None,
+                HashMap::new(),
+            )
+        }
+    };
+
+    // 1. Safe Mode or Scripting Disabled -> terminate worker and clean bindings
+    if is_safe_mode || !scripting_enabled {
+        let mut sup = supervisor.lock().await;
+        if sup.is_running() {
+            info!("Terminating script worker due to safe mode or scripting disabled");
+            sup.terminate_worker();
+        }
+        if let Ok(mut cache) = cached_bindings.write() {
+            cache.retain(|k, _| !k.starts_with("script."));
+        }
+        return Ok(None);
+    }
+
+    // 2. Discover target script path
+    let script_to_run = if let Some(ref s) = active_script {
+        Some(s.clone())
+    } else {
+        // Inspect active profile for widget skin script declarations
+        let profile_path = find_asset_file("assets/profiles/signature_minimal.toml");
+        let profile: ProfileDefinition = profile_path
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|c| toml::from_str(&c).ok())
+            .unwrap_or_else(ProfileDefinition::signature_minimal);
+
+        let mut found = None;
+        for widget in &profile.widgets {
+            let manifest_path = format!("assets/skins/{}/manifest.toml", widget.skin);
+            if let Some(p) = find_asset_file(&manifest_path) {
+                if let Ok(content) = std::fs::read_to_string(&p) {
+                    if let Ok(manifest) = toml::from_str::<aethershell_core::SkinManifest>(&content)
+                    {
+                        if let Some(script_file) = manifest.script {
+                            let candidate = if let Some(parent) = p.parent() {
+                                parent.join(&script_file)
+                            } else {
+                                PathBuf::from(&script_file)
+                            };
+                            if candidate.is_file() {
+                                found = Some(candidate.to_string_lossy().to_string());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        found
+    };
+
+    // 3. If no script is required, terminate any running worker and purge script bindings
+    let script_path_str = match script_to_run {
+        Some(s) if !s.trim().is_empty() => s,
+        _ => {
+            let mut sup = supervisor.lock().await;
+            if sup.is_running() {
+                info!("No scripted widgets active; stopping on-demand script worker per PRD Section 13.2");
+                sup.terminate_worker();
+            }
+            if let Ok(mut cache) = cached_bindings.write() {
+                cache.retain(|k, _| !k.starts_with("script."));
+            }
+            return Ok(None);
+        }
+    };
+
+    let script_path = if let Some(found_asset) = find_asset_file(&script_path_str) {
+        found_asset
+    } else {
+        PathBuf::from(&script_path_str)
+    };
+
+    if !script_path.is_file() {
+        warn!("Target script file does not exist: {:?}", script_path);
+        return Ok(None);
+    }
+
+    // 4. Read script and compute SHA-256 digest
+    let script_bytes = std::fs::read(&script_path)?;
+    let actual_digest = aethershell_script_host::sha256_hex(&script_bytes);
+
+    // 5. Enforce explicit user trust grant (PRD Section 13.2 / Q32:B / Gate G10)
+    if require_trust {
+        let file_name = script_path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("");
+        let is_trusted = trusted_digests.iter().any(|(k, v)| {
+            v.eq_ignore_ascii_case(&actual_digest)
+                || k.eq_ignore_ascii_case(&actual_digest)
+                || k == &script_path_str
+                || k == file_name
+        });
+
+        if !is_trusted {
+            warn!(
+                "Security violation: script '{:?}' with digest {} lacks explicit user trust grant. Worker launch blocked per PRD Section 13.2.",
+                script_path, actual_digest
+            );
+            return Ok(None);
+        }
+    }
+
+    // 6. Supervisor checks
+    let mut sup = supervisor.lock().await;
+    if sup.is_quarantined() {
+        warn!(
+            "Script worker is quarantined ({:?}); launch aborted",
+            sup.state()
+        );
+        return Ok(None);
+    }
+
+    if sup.is_child_alive() {
+        if sup.current_script() == Some(script_path.as_path()) {
+            tracing::debug!(
+                "Script worker already running and alive for {:?} (PID: {:?})",
+                script_path,
+                sup.active_child_pid()
+            );
+            return Ok(sup.active_child_pid());
+        } else {
+            info!(
+                "Active script changed from {:?} to {:?}; restarting worker",
+                sup.current_script(),
+                script_path
+            );
+            sup.terminate_worker();
+            if let Ok(mut cache) = cached_bindings.write() {
+                cache.retain(|k, _| !k.starts_with("script."));
+            }
+        }
+    }
+
+    // 7. Locate worker executable binary
+    let host_bin = find_script_host_binary(&worker_exe_name)
+        .ok_or_else(|| format!("Could not locate script host binary '{}'", worker_exe_name))?;
+
+    // 8. Spawn worker with Job Object containment
+    let pid = sup
+        .spawn_worker(&host_bin, &script_path, &actual_digest, pipe_name)
+        .map_err(|e| format!("Supervisor spawn_worker error: {}", e))?;
+
+    info!(
+        "Successfully launched supervised on-demand Lua worker (PID: {}) for script {:?}",
+        pid, script_path
+    );
+
+    Ok(Some(pid))
 }
