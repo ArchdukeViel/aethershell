@@ -210,7 +210,7 @@ This document maintains verifiable test and validation records. Every entry is t
   - All 20 acceptance gates G01–G20 transition to `VERIFIED` with empirical test evidence.
   - All 17 technical audit defects resolved and verified.
   - All automated CI workflows (`Rust Quality Gates & Tests`, `Cargo Audit & Advisory Database`, `GitGuardian Security Checks`) green.
-- **Status**: `passed`
+- **Status**: `partial` *(Audit Reconciliation Note: The 20/20 gate verification reported in EVD-009 reflected component unit test passes and compilation checks rather than end-to-end Windows OS integration. Gate statuses have been formally superseded by the reconciled 20-gate ledger in docs/STATUS.md and EVD-012).*
 - **Reviewer / Authority**: Full Acceptance Qualification Suite / Session Merge Authorization
 - **Notes & Limitations**: Production release tag `v1.0.0` reserved for formal tagging following owner sign-off per Q46:B; development baseline fully qualified under `0.1.0-dev`.
 
@@ -255,7 +255,50 @@ This document maintains verifiable test and validation records. Every entry is t
   - Worker process is strictly contained in Windows Job Object prior to executing any code.
 - **Status**: `passed`
 - **Reviewer / Authority**: Phase A Remediation Review / Independent Verification Audit
-- **Notes & Limitations**: PR #20 kept open on branch `fix/phase-a-security-ipc-and-privacy` awaiting explicit owner merge decision per Q44:A.
+- **Notes & Limitations**: Remediated on branch `fix/phase-a-security-ipc-and-privacy`; superseded by PR #20 merge in EVD-012.
+
+---
+
+### EVD-012: Phase A Merge Completion, Strict Branch Protection, Native C++ Qualification & Ledger Reconciliation
+- **Requirement / Gate**: Owner Review Authorization (Merge PR #20), Branch Protection Enforcement, Gate G01 (Core Lifecycle), Gate G10 (Worker Containment & Authentication), Gate G11 (Settings IPC Authentication & Response Parsing), Gate G16 (Privacy & Path Sanitization), Gate G18 (Truthful Evidence Ledger)
+- **Candidate Commit**: `10c4205e573a7d5b7a06ae83859dee8d2a30d2b6` (Merge of PR #20 head `6ff97e75bbebc2b621c86397b8eb89612038910c`)
+- **Date & Environment**: 2026-10-27, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
+- **Executed Actions & Verification Suite**:
+  - **1. Branch Protection Enforcement on `main`**:
+    - Updated GitHub branch protection via REST API (`POST repos/ArchdukeViel/aethershell/branches/main/protection/required_status_checks/contexts`).
+    - Added `C++/WinUI 3 Mandatory Qualification` to existing required checks (`Rust Quality Gates & Tests`, `Cargo Audit & Advisory Database`).
+    - Verified strict status checks, review dismissals, conversation resolution, and force-push/deletion restrictions remain intact.
+  - **2. Owner-Approved Merge Execution (Q44:A)**:
+    - Pre-merge verification confirmed PR #20 open, head `6ff97e75bbebc2b621c86397b8eb89612038910c`, mergeable clean, and all 4 CI/security checks green.
+    - Merged into `main` via `gh pr merge 20 --merge --match-head-commit 6ff97e75bbebc2b621c86397b8eb89612038910c` at `2026-10-27T04:03:59Z`.
+  - **3. Post-Merge Exact-Commit GitHub CI Qualification**:
+    - `CI Pipeline` (Run ID: `40447657280`):
+      - `C++/WinUI 3 Mandatory Qualification`: **`success`** in 3m 33s (ID: `122002656017`).
+      - `Rust Quality Gates & Tests`: **`success`** in 3m 32s (ID: `122002656222`).
+    - `Security Audit` (Run ID: `40447657239`):
+      - `Cargo Audit & Advisory Database`: **`success`** in 27s (ID: `122002655915`).
+  - **4. Native C++/WinUI 3 Settings Binary & Test Qualification**:
+    - Compiled native MSVC 64-bit executable `apps/aethershell-settings/x64/Release/aethershell-settings.exe` (515,072 bytes, SHA256: `369EE8DE26308F34A115DDD1A3EA6731208447898CE184D3D11E70CF17666584`).
+    - Inspected binary symbols: contains `AetherShell.Settings` and `Microsoft.UI.Xaml` WinUI 3 symbols; zero Rust runtime markers.
+    - Executed dedicated C++ qualification suite under `REQUIRE_CPP_SETTINGS_TEST=1`: 11 passed, 0 failed, 0 ignored.
+    - Verified positive authentication and all 9 negative rejection/fail-closed scenarios (missing test token, missing test pipe, unreadable token file, server rejection, non-JSON malformed response, missing success field, protocol version mismatch, payload overflow >1 MB, zero-length payload).
+    - Entire workspace test baseline: **148 passed across 22 non-documentation test targets**, 0 failed, 0 ignored.
+  - **5. Historical Session-Token Investigation Record**:
+    - Confirmed `%LOCALAPPDATA%\AetherShell` directory currently contains 0 items.
+    - Reconciled that historical absence of files does not prove pre-test state; permanent guardrail implemented via `TestIsolationGuard` rooted in `%TEMP%`.
+    - Proved that unreadable/missing test token fails closed immediately without consulting `%LOCALAPPDATA%` or environment variables.
+  - **6. Preservation of Authoritative Lua Architecture**:
+    - Confirmed unrestricted trusted Lua 5.4 in an on-demand child worker process per PRD Section 13.2 and Q32:B.
+    - Avoided unapproved 20% CPU hard cap; preserved 128 MB Job Object memory limits, pure-Rust SHA-256 pre-verification, and crash quarantine.
+- **Observed Result**:
+  - PR #20 cleanly merged into `main` (`10c4205e573a7d5b7a06ae83859dee8d2a30d2b6`).
+  - Strict branch protection with 3 mandatory checks active on `main`.
+  - Post-merge CI and security workflows 100% green on `main`.
+  - Reconciled 20-gate ledger established in `docs/STATUS.md`.
+- **Status**: `passed`
+- **Reviewer / Authority**: Owner Merge Decision A (Approved) / Independent Verification Reviewer
+- **Notes & Limitations**: Public packaging distribution (MSIX, Store, WinGet, signing) intentionally deferred. Transitioning to real application functionality and stability engineering.
+
 
 ---
 
@@ -302,6 +345,49 @@ This document maintains verifiable test and validation records. Every entry is t
   - All 142 tests passing cleanly across workspace.
 - **Status**: `passed`
 - **Reviewer / Authority**: Owner Review Verification / Independent Engineering Audit
-- **Notes & Limitations**: PR #20 kept open on branch `fix/phase-a-security-ipc-and-privacy` awaiting explicit owner merge decision per Q44:A.
+- **Notes & Limitations**: Remediated on branch `fix/phase-a-security-ipc-and-privacy`; superseded by PR #20 merge in EVD-012.
+
+---
+
+### EVD-012: Phase A Merge Completion, Strict Branch Protection, Native C++ Qualification & Ledger Reconciliation
+- **Requirement / Gate**: Owner Review Authorization (Merge PR #20), Branch Protection Enforcement, Gate G01 (Core Lifecycle), Gate G10 (Worker Containment & Authentication), Gate G11 (Settings IPC Authentication & Response Parsing), Gate G16 (Privacy & Path Sanitization), Gate G18 (Truthful Evidence Ledger)
+- **Candidate Commit**: `10c4205e573a7d5b7a06ae83859dee8d2a30d2b6` (Merge of PR #20 head `6ff97e75bbebc2b621c86397b8eb89612038910c`)
+- **Date & Environment**: 2026-10-27, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
+- **Executed Actions & Verification Suite**:
+  - **1. Branch Protection Enforcement on `main`**:
+    - Updated GitHub branch protection via REST API (`POST repos/ArchdukeViel/aethershell/branches/main/protection/required_status_checks/contexts`).
+    - Added `C++/WinUI 3 Mandatory Qualification` to existing required checks (`Rust Quality Gates & Tests`, `Cargo Audit & Advisory Database`).
+    - Verified strict status checks, review dismissals, conversation resolution, and force-push/deletion restrictions remain intact.
+  - **2. Owner-Approved Merge Execution (Q44:A)**:
+    - Pre-merge verification confirmed PR #20 open, head `6ff97e75bbebc2b621c86397b8eb89612038910c`, mergeable clean, and all 4 CI/security checks green.
+    - Merged into `main` via `gh pr merge 20 --merge --match-head-commit 6ff97e75bbebc2b621c86397b8eb89612038910c` at `2026-10-27T04:03:59Z`.
+  - **3. Post-Merge Exact-Commit GitHub CI Qualification**:
+    - `CI Pipeline` (Run ID: `40447657280`):
+      - `C++/WinUI 3 Mandatory Qualification`: **`success`** in 3m 33s (ID: `122002656017`).
+      - `Rust Quality Gates & Tests`: **`success`** in 3m 32s (ID: `122002656222`).
+    - `Security Audit` (Run ID: `40447657239`):
+      - `Cargo Audit & Advisory Database`: **`success`** in 27s (ID: `122002655915`).
+  - **4. Native C++/WinUI 3 Settings Binary & Test Qualification**:
+    - Compiled native MSVC 64-bit executable `apps/aethershell-settings/x64/Release/aethershell-settings.exe` (515,072 bytes, SHA256: `369EE8DE26308F34A115DDD1A3EA6731208447898CE184D3D11E70CF17666584`).
+    - Inspected binary symbols: contains `AetherShell.Settings` and `Microsoft.UI.Xaml` WinUI 3 symbols; zero Rust runtime markers.
+    - Executed dedicated C++ qualification suite under `REQUIRE_CPP_SETTINGS_TEST=1`: 11 passed, 0 failed, 0 ignored.
+    - Verified positive authentication and all 9 negative rejection/fail-closed scenarios (missing test token, missing test pipe, unreadable token file, server rejection, non-JSON malformed response, missing success field, protocol version mismatch, payload overflow >1 MB, zero-length payload).
+    - Entire workspace test baseline: **148 passed across 22 non-documentation test targets**, 0 failed, 0 ignored.
+  - **5. Historical Session-Token Investigation Record**:
+    - Confirmed `%LOCALAPPDATA%\AetherShell` directory currently contains 0 items.
+    - Reconciled that historical absence of files does not prove pre-test state; permanent guardrail implemented via `TestIsolationGuard` rooted in `%TEMP%`.
+    - Proved that unreadable/missing test token fails closed immediately without consulting `%LOCALAPPDATA%` or environment variables.
+  - **6. Preservation of Authoritative Lua Architecture**:
+    - Confirmed unrestricted trusted Lua 5.4 in an on-demand child worker process per PRD Section 13.2 and Q32:B.
+    - Avoided unapproved 20% CPU hard cap; preserved 128 MB Job Object memory limits, pure-Rust SHA-256 pre-verification, and crash quarantine.
+- **Observed Result**:
+  - PR #20 cleanly merged into `main` (`10c4205e573a7d5b7a06ae83859dee8d2a30d2b6`).
+  - Strict branch protection with 3 mandatory checks active on `main`.
+  - Post-merge CI and security workflows 100% green on `main`.
+  - Reconciled 20-gate ledger established in `docs/STATUS.md`.
+- **Status**: `passed`
+- **Reviewer / Authority**: Owner Merge Decision A (Approved) / Independent Verification Reviewer
+- **Notes & Limitations**: Public packaging distribution (MSIX, Store, WinGet, signing) intentionally deferred. Transitioning to real application functionality and stability engineering.
+
 
 
