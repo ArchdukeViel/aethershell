@@ -10,7 +10,9 @@ pub mod taskbar_probe;
 pub mod window_state;
 
 pub use conflict_detector::{detect_taskbar_conflicts, ConflictInfo};
-pub use desktop_probe::{probe_desktop_hierarchy, DesktopHierarchyProbe};
+pub use desktop_probe::{
+    probe_desktop_hierarchy, register_taskbar_created_message, DesktopHierarchyProbe,
+};
 pub use monitor::{enumerate_monitors, MonitorInfo};
 pub use os_version::{WindowsBuildFamily, WindowsVersionInfo};
 pub use shell_events::{ShellEvent, ShellEventMonitor};

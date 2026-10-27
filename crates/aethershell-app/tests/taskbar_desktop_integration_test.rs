@@ -116,3 +116,37 @@ fn test_phase2_non_invasive_conflict_detection_execution() {
         println!("Active customizer detected: {} ({})", c.name, c.description);
     }
 }
+
+#[test]
+fn test_explorer_restart_and_tray_recovery_end_to_end() {
+    use aethershell_app::{taskbar_created_msg, SystemTray};
+    use aethershell_desktop::DesktopWindowManager;
+    use aethershell_win::DesktopHierarchyProbe;
+
+    // 1. Dynamic TaskbarCreated message verification
+    let msg_id = taskbar_created_msg();
+    assert!(
+        msg_id >= 0xC000,
+        "TaskbarCreated dynamic message must be in range >= 0xC000, got: 0x{:04X}",
+        msg_id
+    );
+
+    // 2. Desktop hierarchy re-probing and stale handle verification
+    let mut win_mgr = DesktopWindowManager::new();
+    let initial_probe = DesktopHierarchyProbe::probe();
+    let _ = win_mgr.initialize(&initial_probe);
+
+    let restarted_probe = win_mgr.handle_explorer_restart();
+    assert_eq!(restarted_probe, DesktopHierarchyProbe::probe());
+    assert!(!win_mgr.has_stale_windows());
+
+    // 3. Tray recovery and debounce verification
+    if let Ok(mut tray) = SystemTray::new() {
+        assert_eq!(tray.reconnect_count(), 0);
+
+        // Explicit Explorer restart handling
+        let re_registered = tray.handle_taskbar_created();
+        println!("Tray re-registered on Explorer restart: {}", re_registered);
+        assert_eq!(tray.reconnect_count(), 1);
+    }
+}

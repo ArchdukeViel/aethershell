@@ -4,7 +4,7 @@ use crate::host::{DesktopHost, DesktopHostError};
 use crate::interaction::DismissalReason;
 use aethershell_win::{enumerate_monitors, DesktopHierarchyProbe};
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -13,18 +13,33 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::RemoteDesktop::{
     WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
 };
+use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetWindowLongPtrW,
-    LoadCursorW, PeekMessageW, RegisterClassExW, SetWindowLongPtrW, SetWindowPos, TranslateMessage,
-    CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST,
-    IDC_ARROW, MSG, PM_REMOVE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SWP_NOZORDER, SWP_SHOWWINDOW, WINDOW_EX_STYLE, WM_ACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_QUIT,
-    WNDCLASSEXW, WS_POPUP, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetWindowLongPtrW, IsWindow,
+    LoadCursorW, PeekMessageW, RegisterClassExW, RegisterWindowMessageW, SetWindowLongPtrW,
+    SetWindowPos, TranslateMessage, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA,
+    GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST, IDC_ARROW, MSG, PM_REMOVE, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WINDOW_EX_STYLE,
+    WM_ACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS,
+    WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_QUIT, WNDCLASSEXW, WS_POPUP, WS_VISIBLE,
 };
 
 static CLASS_REGISTERED: AtomicBool = AtomicBool::new(false);
 const DESKTOP_HOST_CLASS_NAME: windows::core::PCWSTR = w!("AetherShellDesktopHostWindow");
+
+/// Registers or retrieves the dynamic `TaskbarCreated` message broadcast when Explorer restarts.
+pub fn taskbar_created_msg() -> u32 {
+    static CACHED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let id = CACHED.load(Ordering::Relaxed);
+    if id != 0 {
+        return id;
+    }
+    unsafe {
+        let msg = RegisterWindowMessageW(w!("TaskbarCreated"));
+        CACHED.store(msg, Ordering::Relaxed);
+        msg
+    }
+}
 
 fn register_desktop_host_class() -> Result<(), DesktopHostError> {
     if CLASS_REGISTERED.load(Ordering::SeqCst) {
@@ -65,13 +80,18 @@ fn register_desktop_host_class() -> Result<(), DesktopHostError> {
 
 pub type DismissCallback = Arc<dyn Fn(DismissalReason) + Send + Sync>;
 pub type PaintCallback = Arc<dyn Fn(HWND) + Send + Sync>;
+pub type ExplorerRestartCallback = Arc<dyn Fn() + Send + Sync>;
 
 /// Internal state stored on the Win32 HWND via GWLP_USERDATA.
 pub struct DesktopWindowState {
     pub is_interactive: Arc<AtomicBool>,
     pub shelldll_defview: Option<HWND>,
+    pub worker_w: Option<HWND>,
     pub on_dismiss: std::sync::Mutex<Option<DismissCallback>>,
     pub on_paint: std::sync::Mutex<Option<PaintCallback>>,
+    pub on_explorer_restart: std::sync::Mutex<Option<ExplorerRestartCallback>>,
+    pub explorer_restart_count: Arc<AtomicUsize>,
+    pub last_restart_tick: Arc<AtomicU64>,
 }
 
 /// Represents a real Win32 desktop overlay window for a specific monitor.
@@ -82,6 +102,8 @@ pub struct DesktopHostWindow {
     pub dpi: u32,
     pub is_interactive: Arc<AtomicBool>,
     pub shelldll_defview_hwnd: Option<HWND>,
+    pub worker_w_hwnd: Option<HWND>,
+    pub explorer_restart_count: Arc<AtomicUsize>,
     state_ptr: *mut DesktopWindowState,
 }
 
@@ -104,12 +126,18 @@ impl DesktopHostWindow {
         let ex_styles = WINDOW_EX_STYLE(DesktopHost::surface_extended_styles(false));
         let parent = worker_w.unwrap_or_default();
         let is_interactive = Arc::new(AtomicBool::new(false));
+        let explorer_restart_count = Arc::new(AtomicUsize::new(0));
+        let last_restart_tick = Arc::new(AtomicU64::new(0));
 
         let state = Box::new(DesktopWindowState {
             is_interactive: Arc::clone(&is_interactive),
             shelldll_defview,
+            worker_w,
             on_dismiss: std::sync::Mutex::new(None),
             on_paint: std::sync::Mutex::new(None),
+            on_explorer_restart: std::sync::Mutex::new(None),
+            explorer_restart_count: Arc::clone(&explorer_restart_count),
+            last_restart_tick,
         });
         let state_ptr = Box::into_raw(state);
 
@@ -168,6 +196,8 @@ impl DesktopHostWindow {
                 dpi: 96,
                 is_interactive,
                 shelldll_defview_hwnd: shelldll_defview,
+                worker_w_hwnd: worker_w,
+                explorer_restart_count,
                 state_ptr,
             })
         }
@@ -280,6 +310,73 @@ impl DesktopHostWindow {
             let _ = InvalidateRect(self.hwnd, None, false);
         }
     }
+
+    /// Re-probes the desktop shell hierarchy, invalidates stale shell handles,
+    /// and restores correct passive stacking order.
+    pub fn handle_explorer_restart(&mut self) -> DesktopHierarchyProbe {
+        let probe = DesktopHierarchyProbe::probe();
+        let fresh_defview = probe.shelldll_defview_hwnd.map(|h| HWND(h as *mut _));
+        let fresh_worker_w = probe.worker_w_hwnd.map(|h| HWND(h as *mut _));
+
+        self.shelldll_defview_hwnd = fresh_defview;
+        self.worker_w_hwnd = fresh_worker_w;
+
+        if !self.state_ptr.is_null() {
+            unsafe {
+                (*self.state_ptr).shelldll_defview = fresh_defview;
+                (*self.state_ptr).worker_w = fresh_worker_w;
+                (*self.state_ptr)
+                    .explorer_restart_count
+                    .fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        // Restore passive stacking order if not in interactive mode
+        if !self.is_interactive() {
+            let behind = fresh_defview.unwrap_or(HWND_BOTTOM);
+            unsafe {
+                let _ = SetWindowPos(
+                    self.hwnd,
+                    behind,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE,
+                );
+                let _ = InvalidateRect(self.hwnd, None, false);
+            }
+        }
+
+        probe
+    }
+
+    /// Sets an auto-dismissal / recovery callback invoked when Explorer restarts.
+    pub fn set_on_explorer_restart<F>(&mut self, cb: F)
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(mut guard) = (*self.state_ptr).on_explorer_restart.lock() {
+                    *guard = Some(Arc::new(cb));
+                }
+            }
+        }
+    }
+
+    /// Returns the number of times this window processed an Explorer restart recovery.
+    pub fn explorer_restart_count(&self) -> usize {
+        self.explorer_restart_count.load(Ordering::SeqCst)
+    }
+
+    /// Checks if the underlying Win32 HWND is still a valid OS window.
+    pub fn is_window_valid(&self) -> bool {
+        if self.hwnd.0.is_null() {
+            return false;
+        }
+        unsafe { IsWindow(self.hwnd).as_bool() }
+    }
 }
 
 impl Drop for DesktopHostWindow {
@@ -306,6 +403,58 @@ unsafe extern "system" fn desktop_host_wnd_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    let taskbar_created = taskbar_created_msg();
+    if taskbar_created != 0 && msg == taskbar_created {
+        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
+        if !ptr.is_null() {
+            let state = &mut *ptr;
+            let now_tick = GetTickCount64();
+            let prev_tick = state.last_restart_tick.load(Ordering::Relaxed);
+            // Debounce: prevent duplicate rapid handling / restart loops within 300ms
+            if now_tick >= prev_tick && now_tick - prev_tick < 300 {
+                return LRESULT(0);
+            }
+            state.last_restart_tick.store(now_tick, Ordering::Relaxed);
+
+            tracing::info!(
+                "DesktopHostWindow (HWND {:?}): Processing TaskbarCreated (Explorer restart)",
+                hwnd.0
+            );
+
+            // Re-probe desktop hierarchy non-invasively
+            let fresh_probe = DesktopHierarchyProbe::probe();
+            let fresh_defview = fresh_probe.shelldll_defview_hwnd.map(|h| HWND(h as *mut _));
+            let fresh_worker_w = fresh_probe.worker_w_hwnd.map(|h| HWND(h as *mut _));
+
+            // Invalidate stale handles safely
+            state.shelldll_defview = fresh_defview;
+            state.worker_w = fresh_worker_w;
+            state.explorer_restart_count.fetch_add(1, Ordering::SeqCst);
+
+            // Restore correct passive desktop stacking order if not in interactive mode
+            if !state.is_interactive.load(Ordering::SeqCst) {
+                let behind = fresh_defview.unwrap_or(HWND_BOTTOM);
+                let _ = SetWindowPos(
+                    hwnd,
+                    behind,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE,
+                );
+                let _ = InvalidateRect(hwnd, None, false);
+            }
+
+            if let Ok(guard) = state.on_explorer_restart.lock() {
+                if let Some(ref cb) = *guard {
+                    cb();
+                }
+            }
+        }
+        return LRESULT(0);
+    }
+
     match msg {
         WM_NCCREATE => {
             let cs = lparam.0 as *const CREATESTRUCTW;
@@ -585,6 +734,53 @@ impl DesktopWindowManager {
         }
     }
 
+    /// Handles Explorer restart across all managed desktop host overlay windows.
+    ///
+    /// Re-probes the desktop shell hierarchy, invalidates stale shell handles,
+    /// recreates destroyed/orphaned overlay windows safely, and restores passive stacking.
+    pub fn handle_explorer_restart(&mut self) -> DesktopHierarchyProbe {
+        let probe = DesktopHierarchyProbe::probe();
+        let fresh_defview = probe.shelldll_defview_hwnd.map(|h| HWND(h as *mut _));
+        let fresh_worker_w = probe.worker_w_hwnd.map(|h| HWND(h as *mut _));
+
+        self.shelldll_defview = fresh_defview;
+        self.worker_w = fresh_worker_w;
+
+        let any_invalid = self.windows.iter().any(|w| !w.is_window_valid());
+        if any_invalid || self.windows.is_empty() {
+            tracing::warn!(
+                "Desktop host window invalidated during Explorer restart; safely recreating windows"
+            );
+            self.windows.clear();
+            let _ = self.initialize(&probe);
+        } else {
+            for win in &mut self.windows {
+                win.handle_explorer_restart();
+            }
+        }
+
+        probe
+    }
+
+    /// Sets an Explorer restart callback across all managed desktop host windows.
+    pub fn set_on_explorer_restart<F>(&mut self, cb: F)
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        let cb_arc = Arc::new(cb);
+        for win in &mut self.windows {
+            let cb_clone = Arc::clone(&cb_arc);
+            win.set_on_explorer_restart(move || {
+                cb_clone();
+            });
+        }
+    }
+
+    /// Returns whether any managed desktop host window has become an invalid or stale OS window.
+    pub fn has_stale_windows(&self) -> bool {
+        self.windows.iter().any(|w| !w.is_window_valid())
+    }
+
     /// Drains and dispatches pending Win32 messages (WM_PAINT, WM_KEYDOWN, WM_ACTIVATE, etc.).
     pub fn pump_messages() {
         unsafe {
@@ -715,5 +911,70 @@ mod tests {
 
         // Test pump_messages does not panic
         DesktopWindowManager::pump_messages();
+    }
+
+    #[test]
+    fn test_explorer_restart_taskbar_created_handling() {
+        let taskbar_created = taskbar_created_msg();
+        assert!(taskbar_created >= 0xC000);
+
+        let mut win = DesktopHostWindow::create("test-mon-restart", 0, 0, 300, 200, None, None)
+            .expect("Failed to create test window");
+
+        assert_eq!(win.explorer_restart_count(), 0);
+        assert!(win.is_window_valid());
+
+        let restart_fired = Arc::new(AtomicBool::new(false));
+        let restart_clone = Arc::clone(&restart_fired);
+        win.set_on_explorer_restart(move || {
+            restart_clone.store(true, Ordering::SeqCst);
+        });
+
+        // 1. Simulate TaskbarCreated broadcast to wnd_proc
+        unsafe {
+            let res = desktop_host_wnd_proc(win.hwnd, taskbar_created, WPARAM(0), LPARAM(0));
+            assert_eq!(res, LRESULT(0));
+        }
+
+        assert_eq!(win.explorer_restart_count(), 1);
+        assert!(restart_fired.load(Ordering::SeqCst));
+
+        // 2. Test restart loop / debounce protection:
+        // Immediate second message within 300ms must be debounced and ignored
+        unsafe {
+            let res = desktop_host_wnd_proc(win.hwnd, taskbar_created, WPARAM(0), LPARAM(0));
+            assert_eq!(res, LRESULT(0));
+        }
+        // Count should still be 1 due to debounce
+        assert_eq!(win.explorer_restart_count(), 1);
+
+        // 3. Test handle_explorer_restart explicit invocation
+        let probe = win.handle_explorer_restart();
+        assert_eq!(win.explorer_restart_count(), 2);
+        println!("Re-probed desktop hierarchy: {:?}", probe);
+    }
+
+    #[test]
+    fn test_desktop_window_manager_explorer_restart_recovery() {
+        let probe = DesktopHierarchyProbe {
+            progman_hwnd: None,
+            worker_w_hwnd: None,
+            shelldll_defview_hwnd: None,
+            syslistview32_hwnd: None,
+        };
+
+        let mut manager = DesktopWindowManager::new();
+        let _ = manager.initialize(&probe);
+        assert!(!manager.has_stale_windows());
+
+        let restart_count = Arc::new(AtomicUsize::new(0));
+        let rc_clone = Arc::clone(&restart_count);
+        manager.set_on_explorer_restart(move || {
+            rc_clone.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let fresh_probe = manager.handle_explorer_restart();
+        assert_eq!(fresh_probe, DesktopHierarchyProbe::probe());
+        assert!(!manager.has_stale_windows());
     }
 }

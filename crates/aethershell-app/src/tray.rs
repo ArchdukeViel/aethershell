@@ -1,16 +1,18 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, GetCursorPos, LoadIconW, PeekMessageW, PostMessageW, PostQuitMessage,
-    RegisterClassW, SetForegroundWindow, TrackPopupMenuEx, IDI_APPLICATION, MF_SEPARATOR,
-    MF_STRING, MSG, PM_REMOVE, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE,
-    WM_COMMAND, WM_DESTROY, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
+    DispatchMessageW, GetCursorPos, GetWindowLongPtrW, LoadIconW, PeekMessageW, PostMessageW,
+    PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow,
+    SetWindowLongPtrW, TrackPopupMenuEx, GWLP_USERDATA, IDI_APPLICATION, MF_SEPARATOR, MF_STRING,
+    MSG, PM_REMOVE, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_COMMAND,
+    WM_DESTROY, WM_NCDESTROY, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
 };
 
 pub const WM_TRAYICON: u32 = WM_APP + 1;
@@ -27,12 +29,42 @@ static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 static AUDIO_IS_PAUSED: AtomicBool = AtomicBool::new(false);
 static TRAY_PIPE_NAME: RwLock<Option<String>> = RwLock::new(None);
 
+/// Registers or retrieves the dynamic `TaskbarCreated` message broadcast when Explorer restarts.
+pub fn taskbar_created_msg() -> u32 {
+    static CACHED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let id = CACHED.load(Ordering::Relaxed);
+    if id != 0 {
+        return id;
+    }
+    unsafe {
+        let msg = RegisterWindowMessageW(w!("TaskbarCreated"));
+        CACHED.store(msg, Ordering::Relaxed);
+        msg
+    }
+}
+
+pub type ExplorerRestartCallback = Arc<dyn Fn() + Send + Sync>;
+
+/// State stored in GWLP_USERDATA of the hidden tray window.
+pub struct TrayWindowState {
+    pub nid: NOTIFYICONDATAW,
+    pub is_active: Arc<AtomicBool>,
+    pub reconnect_count: Arc<AtomicUsize>,
+    pub last_reconnect_tick: Arc<AtomicU64>,
+    pub on_explorer_restart: std::sync::Mutex<Option<ExplorerRestartCallback>>,
+}
+
 /// System Tray controller for managing Windows shell notification icons.
 pub struct SystemTray {
     hwnd: HWND,
     nid: NOTIFYICONDATAW,
-    is_active: bool,
+    is_active: Arc<AtomicBool>,
+    reconnect_count: Arc<AtomicUsize>,
+    state_ptr: *mut TrayWindowState,
 }
+
+unsafe impl Send for SystemTray {}
+unsafe impl Sync for SystemTray {}
 
 impl SystemTray {
     pub fn new() -> Result<Self, String> {
@@ -66,6 +98,9 @@ impl SystemTray {
             )
             .map_err(|e| format!("Failed to create hidden tray window: {}", e))?;
 
+            // Register TaskbarCreated message dynamically
+            let _ = taskbar_created_msg();
+
             let mut nid = NOTIFYICONDATAW {
                 cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
                 hWnd: hwnd,
@@ -85,18 +120,72 @@ impl SystemTray {
             nid.szTip = tip_chars;
 
             let is_active = Shell_NotifyIconW(NIM_ADD, &nid).as_bool();
+            let is_active_atomic = Arc::new(AtomicBool::new(is_active));
+            let reconnect_count = Arc::new(AtomicUsize::new(0));
+            let last_reconnect_tick = Arc::new(AtomicU64::new(0));
+
+            let state = Box::new(TrayWindowState {
+                nid,
+                is_active: Arc::clone(&is_active_atomic),
+                reconnect_count: Arc::clone(&reconnect_count),
+                last_reconnect_tick,
+                on_explorer_restart: std::sync::Mutex::new(None),
+            });
+            let state_ptr = Box::into_raw(state);
+
+            let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, state_ptr as isize);
 
             Ok(Self {
                 hwnd,
                 nid,
-                is_active,
+                is_active: is_active_atomic,
+                reconnect_count,
+                state_ptr,
             })
         }
     }
 
-    #[allow(dead_code)]
     pub fn is_active(&self) -> bool {
-        self.is_active
+        self.is_active.load(Ordering::Relaxed)
+    }
+
+    pub fn reconnect_count(&self) -> usize {
+        self.reconnect_count.load(Ordering::SeqCst)
+    }
+
+    /// Explicitly triggers tray icon re-registration upon Explorer restart.
+    ///
+    /// Safely cleans up any stale shell icon registration first to prevent duplicates,
+    /// then registers the notification icon into the fresh taskbar.
+    pub fn handle_taskbar_created(&mut self) -> bool {
+        unsafe {
+            let _ = Shell_NotifyIconW(NIM_DELETE, &self.nid);
+            let added = Shell_NotifyIconW(NIM_ADD, &self.nid).as_bool();
+            self.is_active.store(added, Ordering::SeqCst);
+            self.reconnect_count.fetch_add(1, Ordering::SeqCst);
+
+            if !self.state_ptr.is_null() {
+                (*self.state_ptr).is_active.store(added, Ordering::SeqCst);
+                (*self.state_ptr)
+                    .last_reconnect_tick
+                    .store(GetTickCount64(), Ordering::Relaxed);
+            }
+            added
+        }
+    }
+
+    /// Sets a callback invoked when Explorer restarts (`TaskbarCreated`).
+    pub fn set_on_explorer_restart<F>(&mut self, cb: F)
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(mut guard) = (*self.state_ptr).on_explorer_restart.lock() {
+                    *guard = Some(Arc::new(cb));
+                }
+            }
+        }
     }
 
     pub fn hwnd(&self) -> HWND {
@@ -186,11 +275,15 @@ impl SystemTray {
 impl Drop for SystemTray {
     fn drop(&mut self) {
         unsafe {
-            if self.is_active {
+            if self.is_active() {
                 let _ = Shell_NotifyIconW(NIM_DELETE, &self.nid);
             }
             if !self.hwnd.0.is_null() {
                 let _ = DestroyWindow(self.hwnd);
+            }
+            if !self.state_ptr.is_null() {
+                drop(Box::from_raw(self.state_ptr));
+                self.state_ptr = std::ptr::null_mut();
             }
         }
     }
@@ -308,6 +401,42 @@ unsafe extern "system" fn tray_window_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    let taskbar_created = taskbar_created_msg();
+    if taskbar_created != 0 && msg == taskbar_created {
+        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut TrayWindowState;
+        if !ptr.is_null() {
+            let state = &mut *ptr;
+            let now_tick = GetTickCount64();
+            let prev_tick = state.last_reconnect_tick.load(Ordering::Relaxed);
+            // Debounce: prevent duplicate handling / restart loops within 300ms
+            if now_tick >= prev_tick && now_tick - prev_tick < 300 {
+                return LRESULT(0);
+            }
+            state.last_reconnect_tick.store(now_tick, Ordering::Relaxed);
+
+            tracing::info!(
+                "Tray (HWND {:?}): Processing TaskbarCreated (Explorer restart); re-registering notification tray icon",
+                hwnd.0
+            );
+
+            // Clean up stale registration first to eliminate duplicate icons
+            let _ = Shell_NotifyIconW(NIM_DELETE, &state.nid);
+            // Re-add icon to newly created taskbar notification area
+            let added = Shell_NotifyIconW(NIM_ADD, &state.nid).as_bool();
+            state.is_active.store(added, Ordering::SeqCst);
+            state.reconnect_count.fetch_add(1, Ordering::SeqCst);
+
+            tracing::info!("Tray: Re-registered notification icon (added={})", added);
+
+            if let Ok(guard) = state.on_explorer_restart.lock() {
+                if let Some(ref cb) = *guard {
+                    cb();
+                }
+            }
+        }
+        return LRESULT(0);
+    }
+
     match msg {
         WM_TRAYICON => {
             if lparam.0 as u32 == WM_RBUTTONUP {
@@ -362,6 +491,10 @@ unsafe extern "system" fn tray_window_proc(
         WM_CLOSE | WM_DESTROY => {
             PostQuitMessage(0);
             LRESULT(0)
+        }
+        WM_NCDESTROY => {
+            let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
@@ -460,5 +593,53 @@ mod tests {
 
         // Test export diagnostics offline fallback execution
         handle_export_diagnostics();
+    }
+
+    #[test]
+    fn test_tray_taskbar_created_reconnect_and_debounce() {
+        let msg = taskbar_created_msg();
+        assert!(
+            msg >= 0xC000,
+            "TaskbarCreated dynamic message must be >= 0xC000, got 0x{:04X}",
+            msg
+        );
+
+        let mut tray = match SystemTray::new() {
+            Ok(t) => t,
+            Err(e) => {
+                println!("SystemTray creation skipped or failed in test env: {}", e);
+                return;
+            }
+        };
+
+        assert_eq!(tray.reconnect_count(), 0);
+
+        let restart_fired = Arc::new(AtomicBool::new(false));
+        let rf_clone = Arc::clone(&restart_fired);
+        tray.set_on_explorer_restart(move || {
+            rf_clone.store(true, Ordering::SeqCst);
+        });
+
+        // 1. Dispatch TaskbarCreated message to tray_window_proc
+        unsafe {
+            let res = tray_window_proc(tray.hwnd(), msg, WPARAM(0), LPARAM(0));
+            assert_eq!(res, LRESULT(0));
+        }
+
+        assert_eq!(tray.reconnect_count(), 1);
+        assert!(restart_fired.load(Ordering::SeqCst));
+
+        // 2. Immediate duplicate TaskbarCreated message within 300ms must be debounced
+        unsafe {
+            let res = tray_window_proc(tray.hwnd(), msg, WPARAM(0), LPARAM(0));
+            assert_eq!(res, LRESULT(0));
+        }
+        // Count remains 1 due to debounce loop prevention
+        assert_eq!(tray.reconnect_count(), 1);
+
+        // 3. Explicit handle_taskbar_created invocation
+        let added = tray.handle_taskbar_created();
+        println!("Explicit handle_taskbar_created added: {}", added);
+        assert_eq!(tray.reconnect_count(), 2);
     }
 }
