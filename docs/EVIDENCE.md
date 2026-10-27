@@ -383,6 +383,42 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Reviewer / Authority**: Independent Adversarial Reviewer / Delegated Autonomous Authority
 - **Notes & Limitations**: Gate G01–G20 transition to stability campaign implementation (PR #22–#31).
 
+---
 
-
-
+### EVD-014: Explorer Restart Recovery, Dynamic Tray Re-Registration & Stacking Order Resilience (PR #23)
+- **Requirement / Gate**: Gates G01 (Core Startup & Lifecycle Recovery), G04 (Taskbar & Shell Recovery), G06 (Desktop Layering & Passive Stacking), PRD Section 5.1/5.2/5.3
+- **Candidate Commit**: `32d05314b8ac1f984d30226e8d2dc9ba626ae7db` (PR #23 Head)
+- **Main Merge Commit**: `d3a0b40e793e7b166db2bc7659e59be39e1451f2` (Merge pull request #23)
+- **Date & Environment**: 2026-10-27, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
+- **Executed Actions & Verification Suite**:
+  - **1. Pre-Merge Verification on PR #23 (`32d0531`)**:
+    - Pre-merge verification confirmed all 4 mandatory GitHub checks passed at head:
+      - `C++/WinUI 3 Mandatory Qualification`: **`success`** in 2m 2s (Run ID `40461849509`, Job `122048057291`).
+      - `Cargo Audit & Advisory Database`: **`success`** in 29s (Run ID `40461849508`, Job `122048056749`).
+      - `Rust Quality Gates & Tests`: **`success`** in 1m 45s (Run ID `40461849509`, Job `122048057007`).
+      - `GitGuardian Security Checks`: **`pass`** in 2s.
+  - **2. Delegated Merge Execution (Section 1 & 3)**:
+    - Merged PR #23 into `main` via `gh pr merge 23 --merge` at `2026-10-27T06:36:58Z`.
+    - Generated `main` merge commit SHA: `d3a0b40e793e7b166db2bc7659e59be39e1451f2`.
+  - **3. Post-Merge Exact-Commit GitHub CI Verification on `main`**:
+    - `CI Pipeline` (Run ID: `40462162137`):
+      - `C++/WinUI 3 Mandatory Qualification`: **`success`** in 2m 38s (Job `122048995724`).
+      - `Rust Quality Gates & Tests`: **`success`** in 2m 23s (Job `122048995536`).
+    - `Security Audit` (Run ID: `40462162061`):
+      - `Cargo Audit & Advisory Database`: **`success`** in 30s (Job `122048995325`).
+  - **4. Dynamic Windows Message Registration & Shell Recovery**:
+    - Dynamic message `TaskbarCreated` registered via `RegisterWindowMessageW(w!("TaskbarCreated"))` in `crates/aethershell-win/src/desktop_probe.rs`, `crates/aethershell-desktop/src/window.rs`, and `crates/aethershell-app/src/tray.rs`.
+    - Tray recovery in `tray_window_proc`: In response to `TaskbarCreated`, stale notification icon registrations are deleted via `Shell_NotifyIconW(NIM_DELETE, ...)` to eliminate duplicate tray icons before re-adding via `Shell_NotifyIconW(NIM_ADD, ...)`. Enforces 300ms debounce protection against restart loops.
+    - Desktop hierarchy re-probing: Implemented `DesktopHierarchyProbe::probe()`, `is_stale()`, and `is_layering_viable()`. Stale handles to `WorkerW`, `Progman`, and `SHELLDLL_DefView` are safely detected and invalidated.
+    - Passive stacking restoration: Desktop host windows re-probe the hierarchy and re-assert passive bottom stacking behind fresh `SHELLDLL_DefView` (or `HWND_BOTTOM`). Recreates destroyed/orphaned overlay windows and re-synchronizes `D2D1CanvasRenderer` to the fresh HWND.
+  - **5. Automated Test Accounting**:
+    - `aethershell-win`: 14 passed (including `test_desktop_probe_stale_handle_detection`, `test_taskbar_created_message_registration`).
+    - `aethershell-desktop`: 11 passed (including `test_explorer_restart_taskbar_created_handling`, `test_desktop_window_manager_explorer_restart_recovery`).
+    - `aethershell-app`: 4 unit tests + 8 integration test suites passed (including `test_tray_taskbar_created_reconnect_and_debounce`, `test_explorer_restart_and_tray_recovery_end_to_end`).
+- **Observed Result**:
+  - PR #23 merged cleanly into `main` at `d3a0b40e793e7b166db2bc7659e59be39e1451f2`.
+  - Dynamic `TaskbarCreated` registration, tray icon re-registration, stale shell handle invalidation, passive stacking restoration, Direct2D surface re-synchronization, and debounce restart-loop protection fully operational and verified.
+  - Post-merge CI and security workflows 100% green on `main`.
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
+- **Notes & Limitations**: Physical Explorer termination testing remains restricted to isolated disposable Windows VMs per AGENTS.md safety boundaries. Active next stability workstream is PR #24 (Real Telemetry & WASAPI Spectrum Presentation Loop).

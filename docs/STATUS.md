@@ -44,10 +44,10 @@ In accordance with owner guidance, gates are classified using the truthful vocab
 
 | Gate | PRD Pass Condition | Current Status | Concrete Reason & Evidence References | Outstanding Acceptance Requirements |
 |:---|:---|:---:|:---|:---|
-| **G01 Core startup** | Non-elevated core without mandatory driver/service/Explorer injection, session-scoped singleton, safe shutdown | `PARTIALLY_VERIFIED` | Session-scoped singleton mutex (`Local\AetherShell_Singleton_{SessionId}`), dedicated tray message pump, desktop host window lifecycle, and clean process exit work. Verified in `lifecycle_ipc_test.rs` and EVD-001/EVD-012. However, Explorer restart recovery is missing (`TaskbarCreated` is not registered), and system shutdown/logoff session handling requires verification. | Register and handle `TaskbarCreated` message to recreate tray icon and re-discover shell handles on Explorer restart; test clean shutdown under `WM_ENDSESSION`. |
+| **G01 Core startup** | Non-elevated core without mandatory driver/service/Explorer injection, session-scoped singleton, safe shutdown | `PARTIALLY_VERIFIED` | Session-scoped singleton mutex (`Local\AetherShell_Singleton_{SessionId}`), dedicated tray message pump, desktop host window lifecycle, and clean process exit work. Dynamic Explorer restart recovery and tray re-registration verified via `TaskbarCreated` in PR #23 (EVD-014). Verified in `lifecycle_ipc_test.rs` and EVD-001/EVD-012/EVD-014. However, system shutdown/logoff session handling under `WM_ENDSESSION` requires further physical/VM test records. | Test clean shutdown under `WM_ENDSESSION` in disposable Windows VM. |
 | **G02 Windows compatibility** | Required Windows 10/11 x64 matrix; honest fallback on unsupported effects | `PARTIALLY_VERIFIED` | OS build and UBR detection via registry is implemented and tested for Win10 19045+ through Win11 26H2. Direct2D 1.1 / DirectWrite runtime functions on target platforms (`crates/aethershell-win/src/os_version.rs`, EVD-002). However, execution has only been validated on GitHub CI runners (Windows Server 2022) and a single local Windows 11 host. Full multi-build OS matrix testing across differing GPU drivers has not been executed. | Execute automated matrix tests across clean VMs representing each target Windows build family (Win10 22H2, Win11 22H2/23H2/24H2/26H2) and GPU driver tier. |
 | **G03 Shell isolation** | All stable binaries and packages contain no Explorer extension; no hooks into critical protected processes | `PARTIALLY_VERIFIED` | Source-level non-injection architecture is implemented (zero DLL injection hooks, detours, or Explorer extensions across workspace crates), and compiled binary inspection confirms no external injection modules (`crates/aethershell-app/tests/taskbar_desktop_integration_test.rs`, EVD-003, EVD-012). However, because packaging and distribution channels (MSI, MSIX, Store, WinGet, portable) are deferred, a full package artifact audit and module scan across all qualified distribution packages remains an outstanding requirement. | Perform module and artifact audits on all five final distribution packages (MSI, MSIX, Store, WinGet, portable ZIP) to verify zero injected extensions. |
-| **G04 Taskbar recovery** | External effects gated; native fallback; no repeated fighting or Explorer loop | `PARTIALLY_VERIFIED` | Non-invasive conflict detection (`detect_taskbar_conflicts`) yields cleanly to competing customizers (TranslucentTB, StartAllBack, RetroBar). Safe mode enforces `NativeNoopBackend`. `ExternalAppearanceBackend` gates on verified capabilities and falls back safely to no-op on Windows 11 XAML taskbars (`crates/aethershell-taskbar/src/coordinator.rs`, EVD-004). However, dynamic recovery when Explorer crashes/restarts is not yet wired. | Dynamic recovery upon `TaskbarCreated` notification; VM pixel capture proving clean fallback without visual stutter or loops. |
+| **G04 Taskbar recovery** | External effects gated; native fallback; no repeated fighting or Explorer loop | `PARTIALLY_VERIFIED` | Non-invasive conflict detection (`detect_taskbar_conflicts`) yields cleanly to competing customizers (TranslucentTB, StartAllBack, RetroBar). Safe mode enforces `NativeNoopBackend`. `ExternalAppearanceBackend` gates on verified capabilities and falls back safely to no-op on Windows 11 XAML taskbars (`crates/aethershell-taskbar/src/coordinator.rs`, EVD-004). Dynamic shell recovery upon `TaskbarCreated` notification implemented and verified in PR #23 (EVD-014). However, visual verification in disposable VM across Explorer restart remains an outstanding operational record. | Disposable VM pixel capture proving clean fallback without visual stutter or loops across Explorer restart. |
 | **G05 Experimental qualification** | Any opt-in Explorer extension: disposable-VM tests, then dedicated recoverable hardware qualification before limited experimental distribution (not stable gate if absent) | `NOT_APPLICABLE` | No experimental Explorer extension, XAML bridge DLL, or in-process injection module is included in the codebase or built by default. Per PRD Section 18.2 note ("not stable gate if absent") and owner decisions Q02:C / Q35:B, this gate is N/A until an experimental Explorer extension is developed and qualified. | None for stable core. If an opt-in experimental bridge is created in the future, disposable VM and recoverable hardware qualification reports will be required. |
 | **G06 Desktop layering** | Wallpaper below passive widgets below desktop icons on qualifying builds; otherwise visibly unsupported/disabled | `PARTIALLY_VERIFIED` | `DesktopHostWindow` discovers `SHELLDLL_DefView` / `WorkerW` / `Progman` and positions the overlay surface behind desktop icons (`WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_LAYERED`). Clicks pass through to desktop icons (`crates/aethershell-desktop/src/window.rs`, EVD-005). However, pressing `Win+D` (Show Desktop) causes unowned `WS_POPUP` windows to lose Z-order or minimize, and there is no active shell event listener re-asserting bottom stacking. Recovery must rely exclusively on non-invasive shell monitoring (e.g. `RegisterShellHookWindow` or `EVENT_SYSTEM_FOREGROUND`), never Explorer injection. | Handle `Win+D` stacking re-assertion via approved non-invasive shell hooks / foreground event monitoring; verify layering across live wallpaper and desktop icon lasso selection in VM tests. |
 | **G07 Temporary Interactive Mode** | Tray/hotkey opens bounded overlay, user action works; Escape/timeout/focus change restores passive icon input | `PARTIALLY_VERIFIED` | Dismissal triggers (Escape key, 8-second inactivity timeout, focus change, session lock) are implemented in `InteractionController`. Tray menu item "Unlock Layout" can trigger interactive mode (`crates/aethershell-desktop/src/interaction.rs`, EVD-005). However, no global hotkey (`RegisterHotKey`) is implemented, `desktop_host_wnd_proc` lacks mouse hit-testing (`WM_LBUTTONDOWN`) to interact with widget controls, and the mode toggles styles on the full-screen window rather than a bounded overlay. | Register configurable global hotkey; implement spatial pointer hit-testing for interactive widget controls; record VM focus/hit-test video demonstrating interactive control clicks and automatic return to passive icon selection. |
@@ -120,35 +120,39 @@ The proposed sequence of focused, independently reviewable pull requests is:
 
 1. **PR #21: Acceptance Ledger & Evidence Reconciliation** *(Completed & Merged into main at `e21c344` — see [EVD-013](EVIDENCE.md#evd-013-pr-21-merge-completion-post-merge-ci-verification--documentation-architecture-reconciliation))*
    - Update `docs/STATUS.md`, `docs/EVIDENCE.md`, and `README.md` with verified PR #20 merge evidence, truthful gate statuses, and the session-token historical record.
-2. **PR #22: Explorer Restart Recovery & Notification Tray Restoration** *(Active Next Workstream)*
-   - Register dynamic Windows message `TaskbarCreated` in `tray.rs` and `DesktopHostWindow`.
-   - Re-register tray icon via `Shell_NotifyIconW(NIM_ADD, ...)` and re-probe desktop hierarchy (`WorkerW`/`Progman`) upon Explorer restart.
-3. **PR #23: Real-Time Telemetry & WASAPI Spectrum Presentation Loop**
+2. **PR #22: Post-Merge Verification & Architecture Decision Record (ADR) Index** *(Completed & Merged into main at `1e25f30` — see [EVD-013](EVIDENCE.md#evd-013-pr-21-merge-completion-post-merge-ci-verification--documentation-architecture-reconciliation))*
+   - Establish formal ADR directory (`docs/adr/README.md`) indexing ADR-001 through ADR-009 resolving root `README.md` link.
+3. **PR #23: Explorer Restart Recovery & Notification Tray Restoration** *(Completed & Merged into main at `d3a0b40` — see [EVD-014](EVIDENCE.md#evd-014-explorer-restart-recovery-dynamic-tray-re-registration--stacking-order-resilience-pr-23))*
+   - Register dynamic Windows message `TaskbarCreated` in `tray.rs`, `desktop_probe.rs`, and `DesktopHostWindow`.
+   - Re-register notification tray icon via `Shell_NotifyIconW(NIM_ADD, ...)` with duplicate prevention and debounce loop protection.
+   - Re-probe desktop hierarchy (`WorkerW`/`Progman`/`SHELLDLL_DefView`), safely invalidate stale shell handles, and restore passive stacking order.
+   - Re-synchronize Direct2D canvas renderer on recreated HWND.
+4. **PR #24: Real-Time Telemetry & WASAPI Spectrum Presentation Loop** *(Active Next Workstream)*
    - Wire an adaptive presentation timer loop in `AppEngine` (15/30/60 FPS based on power/audio state).
    - Feed live `telemetry.poll_all()` and `audio.current_bands()` into layout bindings, replacing hardcoded dummy values.
-4. **PR #24: Core Configuration IPC Endpoints (`get_config` / `set_config`)**
+5. **PR #25: Core Configuration IPC Endpoints (`get_config` / `set_config`)**
    - Wire `ConfigManager` into `AppEngine` to load `config.toml` at startup.
    - Implement authenticated IPC handlers with schema validation, transactional updates, and atomic persistence.
-5. **PR #25: Functional WinUI 3 Settings Controls & State Persistence**
+6. **PR #26: Functional WinUI 3 Settings Controls & State Persistence**
    - In `apps/aethershell-settings/MainWindow.xaml.cpp`, query `get_config` on load to populate all switches, sliders, and combo boxes.
    - Wire control event handlers to emit `set_config` updates over IPC and persist changes atomically.
-6. **PR #26: Direct2D DXGI Device Loss & GPU Recovery**
+7. **PR #27: Direct2D DXGI Device Loss & GPU Recovery**
    - Expand device loss detection to handle `DXGI_ERROR_DEVICE_REMOVED`, `DXGI_ERROR_DEVICE_RESET`, and `DXGI_ERROR_DEVICE_HUNG`.
    - Implement bounded recreation with exponential backoff, preventing infinite recursion on driver crashes.
-7. **PR #27: `IMMNotificationClient` Audio Device Migration & Power-Aware Operation**
+8. **PR #28: `IMMNotificationClient` Audio Device Migration & Power-Aware Operation**
    - Implement `IMMNotificationClient` in Rust to seamlessly migrate capture when default playback device changes.
    - Dynamically adjust polling intervals based on AC/battery status and audio silence.
-8. **PR #28: Interactive Mode Global Hotkey & Pointer Hit-Testing**
+9. **PR #29: Interactive Mode Global Hotkey & Pointer Hit-Testing**
    - Register a configurable global hotkey via `RegisterHotKey` for Temporary Interactive Mode.
    - Implement mouse message handling (`WM_LBUTTONDOWN`) in `desktop_host_wnd_proc` to hit-test against interactive widget nodes.
-9. **PR #29: `PerMonitorV2` DPI Awareness & Multi-Monitor Topology Handling**
-   - Declare `PerMonitorV2` DPI awareness in `aethershell-app`.
-   - Handle `WM_DPICHANGED` dynamically resizing Direct2D targets and updating layout scale.
-   - Handle `WM_DISPLAYCHANGE` refreshing overlay windows across monitor attach/detach events.
-10. **PR #30: Supervised On-Demand Lua Worker Integration & Real Widget Update Flow**
+10. **PR #30: `PerMonitorV2` DPI Awareness & Multi-Monitor Topology Handling**
+    - Declare `PerMonitorV2` DPI awareness in `aethershell-app`.
+    - Handle `WM_DPICHANGED` dynamically resizing Direct2D targets and updating layout scale.
+    - Handle `WM_DISPLAYCHANGE` refreshing overlay windows across monitor attach/detach events.
+11. **PR #31: Supervised On-Demand Lua Worker Integration & Real Widget Update Flow**
     - Wire on-demand child worker spawn in `AppEngine` only when an explicitly trusted Lua widget profile is loaded. Standard bundled widgets remain declarative and never require Lua.
     - Expose `aether.set_binding(key, value)` to Lua scripts to push computed state back to Core.
     - Bundle optional example Lua widget scripts under `assets/widgets/` for testing explicitly trusted scripts. Zero CPU hard caps imposed; process containment relies on 128 MB Job Object memory limits, pure-Rust SHA-256 pre-verification, heartbeat watchdog, and crash quarantine.
-11. **PR #31: Representative Whole-Application Performance & Stability Qualification**
+12. **PR #32: Representative Whole-Application Performance & Stability Qualification**
     - Measure live running AetherShell processes under representative widget, audio, and scripting workloads.
     - Compare measured CPU, RAM, GPU, and battery drain against PRD Section 14 budgets.
