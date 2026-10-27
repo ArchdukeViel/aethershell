@@ -422,3 +422,40 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Status**: `passed`
 - **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
 - **Notes & Limitations**: Physical Explorer termination testing remains restricted to isolated disposable Windows VMs per AGENTS.md safety boundaries. Active next stability workstream is PR #24 (Real Telemetry & WASAPI Spectrum Presentation Loop).
+
+---
+
+### EVD-015: Explorer Restart Edge Case Hardening, Callback Preservation & Stacking Fallback (PR #25)
+- **Requirement / Gate**: Gates G01 (Core Startup & Lifecycle Recovery), G04 (Taskbar & Shell Recovery), G06 (Desktop Layering & Passive Stacking), PRD Section 5.1/5.2/5.3
+- **Candidate Commit**: `508e483448bc39259229b1b2610d7b9d76f8e1da` (PR #25 Head)
+- **Main Merge Commit**: `07efb0a03463a5626da7d7d5e46bfb067d0a51be` (Merge pull request #25)
+- **Date & Environment**: 2026-10-27, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
+- **Executed Actions & Verification Suite**:
+  - **1. Pre-Merge Verification on PR #25 (`508e483`)**:
+    - Confirmed all mandatory GitHub checks passed at head:
+      - `C++/WinUI 3 Mandatory Qualification`: **`success`** in 3m 32s (Run ID `40465360433`, Job `122059316479`).
+      - `Cargo Audit & Advisory Database`: **`success`** in 34s (Run ID `40465360388`, Job `122059316040`).
+      - `Rust Quality Gates & Tests`: **`success`** in 2m 18s (Run ID `40465360433`, Job `122059316145`).
+      - `GitGuardian Security Checks`: **`pass`** in 2s.
+  - **2. Delegated Merge Execution**:
+    - Merged PR #25 into `main` via `gh pr merge 25 --merge` under delegated owner authorization.
+    - Generated `main` merge commit SHA: `07efb0a03463a5626da7d7d5e46bfb067d0a51be`.
+  - **3. Post-Merge Exact-Commit GitHub CI Verification on `main`**:
+    - `CI Pipeline` (Run ID `40465750511`): **`success`** in 2m 47s.
+    - `Security Audit` (Run ID `40465750521`): **`success`** in 39s.
+  - **4. Hardened Behaviors & Edge Cases Resolved**:
+    - **Callback Preservation**: `DesktopWindowManager` retains `on_dismiss`, `on_paint`, and `on_explorer_restart` callbacks across handle invalidation and window recreation, preventing lost scene repaints and unhandled dismissals.
+    - **Safe Stacking Target Fallback**: Implemented `safe_stacking_target()` checking `IsWindow()` before passing window handles to `SetWindowPos`, falling back safely to `HWND_BOTTOM` when `SHELLDLL_DefView` is invalid or destroyed during shell crashes.
+    - **Debounce Double-Counting Prevention**: Synchronized debounce protection across `desktop_host_wnd_proc` and `handle_explorer_restart_with_probe` so engine recovery callbacks do not double-increment `explorer_restart_count`.
+    - **Redundant Probing Elimination**: Reused a single hierarchy probe across multi-monitor window updates rather than re-traversing the window tree per monitor.
+    - **Tray Icon Re-Registration Retries**: Added bounded retry loops (3 attempts with 50ms interval) to `Shell_NotifyIconW(NIM_ADD)` to tolerate momentary taskbar notification area startup delay.
+  - **5. Automated Test Accounting**:
+    - `aethershell-desktop`: 13 passed (including new `test_safe_stacking_target_fallback`, `test_desktop_window_manager_callback_preservation_across_recreation`, `test_explorer_restart_taskbar_created_handling`).
+    - `aethershell-app`: 4 unit tests + 8 integration test suites passed (including `test_tray_taskbar_created_reconnect_and_debounce`, `test_explorer_restart_and_tray_recovery_end_to_end`).
+- **Observed Result**:
+    - PR #25 merged cleanly into `main` at `07efb0a03463a5626da7d7d5e46bfb067d0a51be`.
+    - Post-merge CI and security workflows 100% green on `main`.
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
+- **Notes & Limitations**: Gate G01, G04, and G06 shell recovery contracts verified against all automated edge cases. Ready to advance to the next stability milestone: Real Telemetry & WASAPI Spectrum Presentation Loop.
+
