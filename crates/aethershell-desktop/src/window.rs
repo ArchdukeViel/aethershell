@@ -4,7 +4,7 @@ use crate::host::{DesktopHost, DesktopHostError};
 use crate::interaction::{DismissalReason, InteractiveRegion};
 use aethershell_win::{enumerate_monitors, DesktopHierarchyProbe};
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -90,6 +90,8 @@ pub type PaintCallback = Arc<dyn Fn(HWND) + Send + Sync>;
 pub type ExplorerRestartCallback = Arc<dyn Fn() + Send + Sync>;
 pub type ActionCallback = Arc<dyn Fn(&InteractiveRegion, f32, f32) + Send + Sync>;
 pub type HotkeyCallback = Arc<dyn Fn(bool) + Send + Sync>;
+pub type DpiChangedCallback = Arc<dyn Fn(HWND, u32, &RECT) + Send + Sync>;
+pub type DisplayChangedCallback = Arc<dyn Fn() + Send + Sync>;
 
 /// Returns a verified safe Z-order target HWND.
 /// If `target` is Some and is still a valid OS window, returns it;
@@ -111,7 +113,11 @@ pub struct DesktopWindowState {
     pub on_explorer_restart: std::sync::Mutex<Option<ExplorerRestartCallback>>,
     pub on_action: std::sync::Mutex<Option<ActionCallback>>,
     pub on_hotkey: std::sync::Mutex<Option<HotkeyCallback>>,
+    pub on_dpi_changed: std::sync::Mutex<Option<DpiChangedCallback>>,
+    pub on_display_change: std::sync::Mutex<Option<DisplayChangedCallback>>,
     pub interactive_regions: std::sync::Mutex<Vec<InteractiveRegion>>,
+    pub current_dpi: Arc<AtomicU32>,
+    pub current_bounds: std::sync::Mutex<[i32; 4]>,
     pub explorer_restart_count: Arc<AtomicUsize>,
     pub last_restart_tick: Arc<AtomicU64>,
     pub last_activity_tick: Arc<AtomicU64>,
@@ -155,6 +161,10 @@ impl DesktopHostWindow {
         let last_activity_tick = Arc::new(AtomicU64::new(0));
         let is_hotkey_registered = Arc::new(AtomicBool::new(false));
 
+        let initial_dpi = 96u32;
+        let current_dpi = Arc::new(AtomicU32::new(initial_dpi));
+        let current_bounds = std::sync::Mutex::new([x, y, width, height]);
+
         let state = Box::new(DesktopWindowState {
             is_interactive: Arc::clone(&is_interactive),
             shelldll_defview,
@@ -164,7 +174,11 @@ impl DesktopHostWindow {
             on_explorer_restart: std::sync::Mutex::new(None),
             on_action: std::sync::Mutex::new(None),
             on_hotkey: std::sync::Mutex::new(None),
+            on_dpi_changed: std::sync::Mutex::new(None),
+            on_display_change: std::sync::Mutex::new(None),
             interactive_regions: std::sync::Mutex::new(Vec::new()),
+            current_dpi: Arc::clone(&current_dpi),
+            current_bounds,
             explorer_restart_count: Arc::clone(&explorer_restart_count),
             last_restart_tick,
             last_activity_tick,
@@ -205,6 +219,10 @@ impl DesktopHostWindow {
             // Ensure GWLP_USERDATA is set in case WM_NCCREATE didn't run synchronously
             let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, state_ptr as isize);
 
+            // Query actual initial window DPI
+            let real_dpi = aethershell_win::get_window_dpi(hwnd);
+            (*state_ptr).current_dpi.store(real_dpi, Ordering::Relaxed);
+
             // Register session notifications (WM_WTSSESSION_CHANGE)
             let _ = WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION);
 
@@ -224,7 +242,7 @@ impl DesktopHostWindow {
                 hwnd,
                 monitor_id: monitor_id.to_string(),
                 bounds: [x, y, width, height],
-                dpi: 96,
+                dpi: real_dpi,
                 is_interactive,
                 shelldll_defview_hwnd: shelldll_defview,
                 worker_w_hwnd: worker_w,
@@ -288,6 +306,61 @@ impl DesktopHostWindow {
                 }
             }
         }
+    }
+
+    /// Sets a DPI change callback invoked when PerMonitorV2 DPI changes (`WM_DPICHANGED`).
+    pub fn set_on_dpi_changed<F>(&mut self, cb: F)
+    where
+        F: Fn(HWND, u32, &RECT) + Send + Sync + 'static,
+    {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(mut guard) = (*self.state_ptr).on_dpi_changed.lock() {
+                    *guard = Some(Arc::new(cb));
+                }
+            }
+        }
+    }
+
+    /// Sets a display change callback invoked when monitor resolution or topology changes (`WM_DISPLAYCHANGE`).
+    pub fn set_on_display_change<F>(&mut self, cb: F)
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(mut guard) = (*self.state_ptr).on_display_change.lock() {
+                    *guard = Some(Arc::new(cb));
+                }
+            }
+        }
+    }
+
+    /// Returns the current DPI of this window.
+    pub fn dpi(&self) -> u32 {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                return (*self.state_ptr).current_dpi.load(Ordering::Relaxed);
+            }
+        }
+        self.dpi
+    }
+
+    /// Returns the DPI scale factor (1.0 = 96 DPI / 100%, 1.25 = 120 DPI / 125%, 1.5 = 144 DPI / 150%, etc.).
+    pub fn scale_factor(&self) -> f32 {
+        aethershell_win::dpi_to_scale_factor(self.dpi())
+    }
+
+    /// Returns the current bounds of this window [x, y, width, height].
+    pub fn bounds(&self) -> [i32; 4] {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(guard) = (*self.state_ptr).current_bounds.lock() {
+                    return *guard;
+                }
+            }
+        }
+        self.bounds
     }
 
     /// Sets the list of active interactive regions on this window surface.
@@ -415,6 +488,13 @@ impl DesktopHostWindow {
     /// Handles display resolution or monitor layout change (`WM_DISPLAYCHANGE`).
     pub fn handle_display_change(&mut self, x: i32, y: i32, width: i32, height: i32) {
         self.bounds = [x, y, width, height];
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(mut guard) = (*self.state_ptr).current_bounds.lock() {
+                    *guard = [x, y, width, height];
+                }
+            }
+        }
         unsafe {
             let _ = SetWindowPos(
                 self.hwnd,
@@ -432,10 +512,24 @@ impl DesktopHostWindow {
     /// Handles per-monitor DPI change (`WM_DPICHANGED`).
     pub fn handle_dpi_change(&mut self, new_dpi: u32, suggested_rect: Option<RECT>) {
         self.dpi = new_dpi;
+        if !self.state_ptr.is_null() {
+            unsafe {
+                (*self.state_ptr)
+                    .current_dpi
+                    .store(new_dpi, Ordering::Relaxed);
+            }
+        }
         if let Some(rect) = suggested_rect {
             let w = rect.right - rect.left;
             let h = rect.bottom - rect.top;
             self.bounds = [rect.left, rect.top, w, h];
+            if !self.state_ptr.is_null() {
+                unsafe {
+                    if let Ok(mut guard) = (*self.state_ptr).current_bounds.lock() {
+                        *guard = [rect.left, rect.top, w, h];
+                    }
+                }
+            }
             unsafe {
                 let _ = SetWindowPos(
                     self.hwnd,
@@ -648,21 +742,49 @@ unsafe extern "system" fn desktop_host_wnd_proc(
             LRESULT(0)
         }
         WM_DISPLAYCHANGE => {
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
+            if !ptr.is_null() {
+                let state = &*ptr;
+                if let Ok(guard) = state.on_display_change.lock() {
+                    if let Some(ref cb) = *guard {
+                        cb();
+                    }
+                }
+            }
             let _ = InvalidateRect(hwnd, None, false);
             LRESULT(0)
         }
         WM_DPICHANGED => {
+            let new_dpi = (wparam.0 & 0xFFFF) as u32;
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
             if lparam.0 != 0 {
                 let rect = *(lparam.0 as *const RECT);
+                let w = rect.right - rect.left;
+                let h = rect.bottom - rect.top;
+                if !ptr.is_null() {
+                    let state = &*ptr;
+                    state.current_dpi.store(new_dpi, Ordering::Relaxed);
+                    if let Ok(mut bounds) = state.current_bounds.lock() {
+                        *bounds = [rect.left, rect.top, w, h];
+                    }
+                    if let Ok(guard) = state.on_dpi_changed.lock() {
+                        if let Some(ref cb) = *guard {
+                            cb(hwnd, new_dpi, &rect);
+                        }
+                    }
+                }
                 let _ = SetWindowPos(
                     hwnd,
                     HWND::default(),
                     rect.left,
                     rect.top,
-                    rect.right - rect.left,
-                    rect.bottom - rect.top,
+                    w,
+                    h,
                     SWP_NOZORDER | SWP_NOACTIVATE,
                 );
+            } else if !ptr.is_null() {
+                let state = &*ptr;
+                state.current_dpi.store(new_dpi, Ordering::Relaxed);
             }
             let _ = InvalidateRect(hwnd, None, false);
             LRESULT(0)
@@ -878,6 +1000,8 @@ pub struct DesktopWindowManager {
     on_explorer_restart_cb: Option<ExplorerRestartCallback>,
     on_action_cb: Option<ActionCallback>,
     on_hotkey_cb: Option<HotkeyCallback>,
+    on_dpi_changed_cb: Option<DpiChangedCallback>,
+    on_display_changed_cb: Option<DisplayChangedCallback>,
     interactive_regions: Vec<InteractiveRegion>,
     is_hotkey_registered: bool,
 }
@@ -896,6 +1020,8 @@ impl DesktopWindowManager {
             on_explorer_restart_cb: None,
             on_action_cb: None,
             on_hotkey_cb: None,
+            on_dpi_changed_cb: None,
+            on_display_changed_cb: None,
             interactive_regions: Vec::new(),
             is_hotkey_registered: false,
         }
@@ -942,6 +1068,14 @@ impl DesktopWindowManager {
                     if let Some(ref cb) = self.on_hotkey_cb {
                         let cb_clone = Arc::clone(cb);
                         win.set_on_hotkey(move |active| cb_clone(active));
+                    }
+                    if let Some(ref cb) = self.on_dpi_changed_cb {
+                        let cb_clone = Arc::clone(cb);
+                        win.set_on_dpi_changed(move |h, dpi, rect| cb_clone(h, dpi, rect));
+                    }
+                    if let Some(ref cb) = self.on_display_changed_cb {
+                        let cb_clone = Arc::clone(cb);
+                        win.set_on_display_change(move || cb_clone());
                     }
                     win.set_interactive_regions(self.interactive_regions.clone());
 
@@ -997,6 +1131,16 @@ impl DesktopWindowManager {
         }
     }
 
+    /// Returns the primary desktop window DPI, defaulting to 96 if uninitialized.
+    pub fn primary_dpi(&self) -> u32 {
+        self.primary_window().map(|w| w.dpi()).unwrap_or(96)
+    }
+
+    /// Returns the primary desktop window DPI scale factor, defaulting to 1.0 if uninitialized.
+    pub fn primary_scale_factor(&self) -> f32 {
+        aethershell_win::dpi_to_scale_factor(self.primary_dpi())
+    }
+
     /// Refreshes monitor geometry when displays are added, removed, or resized.
     pub fn refresh_monitors(&mut self) {
         let monitors = enumerate_monitors();
@@ -1008,6 +1152,39 @@ impl DesktopWindowManager {
                 let height = (mon.bounds[3] - mon.bounds[1]).max(100);
                 win.handle_display_change(x, y, width, height);
             }
+        }
+        if let Some(ref cb) = self.on_display_changed_cb {
+            cb();
+        }
+    }
+
+    /// Sets a DPI change callback across all managed desktop host windows.
+    pub fn set_on_dpi_changed<F>(&mut self, cb: F)
+    where
+        F: Fn(HWND, u32, &RECT) + Send + Sync + 'static,
+    {
+        let cb_arc: DpiChangedCallback = Arc::new(cb);
+        self.on_dpi_changed_cb = Some(Arc::clone(&cb_arc));
+        for win in &mut self.windows {
+            let cb_clone = Arc::clone(&cb_arc);
+            win.set_on_dpi_changed(move |h, dpi, rect| {
+                cb_clone(h, dpi, rect);
+            });
+        }
+    }
+
+    /// Sets a display change callback across all managed desktop host windows.
+    pub fn set_on_display_change<F>(&mut self, cb: F)
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        let cb_arc: DisplayChangedCallback = Arc::new(cb);
+        self.on_display_changed_cb = Some(Arc::clone(&cb_arc));
+        for win in &mut self.windows {
+            let cb_clone = Arc::clone(&cb_arc);
+            win.set_on_display_change(move || {
+                cb_clone();
+            });
         }
     }
 

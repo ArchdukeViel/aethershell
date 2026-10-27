@@ -10,6 +10,9 @@ use std::process::ExitCode;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // Declare PerMonitorV2 DPI awareness per PRD Section 5.4 & Q01:B
+    let _ = aethershell_win::set_per_monitor_v2_dpi_awareness();
+
     let args: Vec<String> = env::args().collect();
 
     if args.iter().any(|a| a == "--version" || a == "-v") {

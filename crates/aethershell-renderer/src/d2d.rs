@@ -293,6 +293,29 @@ impl D2D1CanvasRenderer {
         Ok(())
     }
 
+    /// Returns the current DPI of the render target (dpi_x, dpi_y), defaulting to 96.0 if unattached.
+    pub fn dpi(&self) -> (f32, f32) {
+        if let Some(ref rt) = self.render_target {
+            let mut dpi_x = 96.0f32;
+            let mut dpi_y = 96.0f32;
+            unsafe {
+                rt.GetDpi(&mut dpi_x, &mut dpi_y);
+            }
+            (dpi_x, dpi_y)
+        } else {
+            (96.0, 96.0)
+        }
+    }
+
+    /// Sets the DPI of the Direct2D render target dynamically on PerMonitorV2 DPI change.
+    pub fn set_dpi(&mut self, dpi_x: f32, dpi_y: f32) {
+        if let Some(ref rt) = self.render_target {
+            unsafe {
+                rt.SetDpi(dpi_x, dpi_y);
+            }
+        }
+    }
+
     /// Sets the canvas clear color (transparent or semi-transparent background).
     pub fn set_clear_color(&mut self, color: ColorRgba) {
         self.clear_color = to_d2d_color(&color);
