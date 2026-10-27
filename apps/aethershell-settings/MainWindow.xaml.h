@@ -1,6 +1,7 @@
 #pragma once
 #include "MainWindow.g.h"
 #include "MainWindow.xaml.g.h"
+#include <winrt/Windows.Data.Json.h>
 
 namespace winrt::AetherShell::Settings::implementation
 {
@@ -23,6 +24,16 @@ namespace winrt::AetherShell::Settings::implementation
         winrt::Microsoft::UI::Xaml::UIElement CreateWidgetsView();
         winrt::Microsoft::UI::Xaml::UIElement CreateAudioView();
         winrt::Microsoft::UI::Xaml::UIElement CreateScriptsView();
+
+        winrt::Windows::Data::Json::JsonObject m_config{ nullptr };
+        bool m_isLoading{ false };
+
+        void LoadConfiguration();
+        bool SaveConfiguration();
+        void EnsureDefaultConfig();
+
+        winrt::Windows::Data::Json::JsonObject GetOrCreateSection(winrt::hstring const& sectionName);
+        void SetSection(winrt::hstring const& sectionName, winrt::Windows::Data::Json::JsonObject const& section);
     };
 }
 

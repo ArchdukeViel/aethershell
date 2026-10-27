@@ -26,8 +26,15 @@ fn test_settings_ipc_on_demand_lifecycle_and_exit_gate_g11() {
         assert!(status.success());
     }
 
-    // 1. Launch primary Core Engine in background
+    // 1. Launch primary Core Engine in background with isolated config and token directories
+    let temp_dir =
+        std::env::temp_dir().join(format!("aethershell_g11_test_{}", uuid::Uuid::new_v4()));
+    let _ = fs::create_dir_all(&temp_dir);
+    let token_path = temp_dir.join("session_1.token");
+
     let mut core_child = Command::new(app_bin)
+        .env("AETHERSHELL_CONFIG_DIR", &temp_dir)
+        .env("AETHERSHELL_SESSION_TOKEN_PATH", &token_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -37,6 +44,8 @@ fn test_settings_ipc_on_demand_lifecycle_and_exit_gate_g11() {
 
     // 2. Launch Settings with --status: connects over IPC, prints diagnostics, exits cleanly (Gate G11)
     let status_output = Command::new(&settings_bin)
+        .env("AETHERSHELL_CONFIG_DIR", &temp_dir)
+        .env("AETHERSHELL_SESSION_TOKEN_PATH", &token_path)
         .arg("--status")
         .output()
         .expect("launch settings --status");
@@ -53,6 +62,8 @@ fn test_settings_ipc_on_demand_lifecycle_and_exit_gate_g11() {
 
     // 3. Launch Settings with --capabilities
     let caps_output = Command::new(&settings_bin)
+        .env("AETHERSHELL_CONFIG_DIR", &temp_dir)
+        .env("AETHERSHELL_SESSION_TOKEN_PATH", &token_path)
         .arg("--capabilities")
         .output()
         .expect("launch settings --capabilities");
@@ -62,6 +73,8 @@ fn test_settings_ipc_on_demand_lifecycle_and_exit_gate_g11() {
 
     // 4. Launch Settings with --telemetry
     let telem_output = Command::new(&settings_bin)
+        .env("AETHERSHELL_CONFIG_DIR", &temp_dir)
+        .env("AETHERSHELL_SESSION_TOKEN_PATH", &token_path)
         .arg("--telemetry")
         .output()
         .expect("launch settings --telemetry");
@@ -69,6 +82,8 @@ fn test_settings_ipc_on_demand_lifecycle_and_exit_gate_g11() {
 
     // 5. Cleanly shut down Core Engine via Settings --shutdown-core
     let shutdown_output = Command::new(&settings_bin)
+        .env("AETHERSHELL_CONFIG_DIR", &temp_dir)
+        .env("AETHERSHELL_SESSION_TOKEN_PATH", &token_path)
         .arg("--shutdown-core")
         .output()
         .expect("launch settings --shutdown-core");
@@ -76,6 +91,8 @@ fn test_settings_ipc_on_demand_lifecycle_and_exit_gate_g11() {
 
     let exit_status = core_child.wait().expect("core exit");
     assert!(exit_status.success());
+
+    let _ = fs::remove_dir_all(&temp_dir);
 }
 
 #[test]
