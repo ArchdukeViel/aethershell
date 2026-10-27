@@ -519,18 +519,36 @@ impl AppEngine {
                 _ => false,
             };
 
-            let fps_mode = if is_on_battery {
-                FpsMode::BatterySaver // 15 FPS
-            } else if let Ok(aud) = self.audio.try_lock() {
-                aud.fps_mode()
+            let configured_fps_mode = if let Ok(cfg) = self.active_config.read() {
+                match cfg.power.profile.as_str() {
+                    "performance" => FpsMode::Performance,
+                    "power_saver" => FpsMode::BatterySaver,
+                    _ => {
+                        if cfg.audio.render_fps >= 60 {
+                            FpsMode::Performance
+                        } else if cfg.audio.render_fps <= 15 {
+                            FpsMode::BatterySaver
+                        } else {
+                            FpsMode::AcBalanced
+                        }
+                    }
+                }
             } else {
-                FpsMode::AcBalanced // 30 FPS default
+                FpsMode::AcBalanced
             };
 
-            // Dynamically synchronize audio loopback capture power profile with power state
+            let target_fps_mode = if is_on_battery {
+                FpsMode::BatterySaver // 15 FPS
+            } else {
+                configured_fps_mode // Restores configured FPS (e.g. 30 FPS or 60 FPS) when on AC power
+            };
+
+            let fps_mode = target_fps_mode;
+
+            // Dynamically synchronize audio loopback capture power profile bidirectionally
             if let Ok(aud) = self.audio.try_lock() {
-                if is_on_battery && aud.fps_mode() != FpsMode::BatterySaver {
-                    aud.set_fps_mode(FpsMode::BatterySaver);
+                if aud.fps_mode() != target_fps_mode {
+                    aud.set_fps_mode(target_fps_mode);
                 }
             }
 

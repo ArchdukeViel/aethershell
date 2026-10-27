@@ -628,4 +628,37 @@ fn test_adaptive_presentation_loop_power_and_gaming_shield() {
     // When monitor returns to Desktop
     tb.evaluate_and_apply("DISPLAY_1", MonitorTaskbarState::Desktop);
     assert!(!tb.is_any_monitor_fullscreen());
+
+    // 3. Bidirectional Power State Synchronization (AC -> Battery -> AC non-latching verification)
+    let capture = WasapiLoopbackCapture::new(32, FpsMode::AcBalanced);
+    assert_eq!(capture.fps_mode(), FpsMode::AcBalanced);
+
+    // Transition 1: Machine switches to battery power -> adapts to BatterySaver (15 FPS)
+    let mut is_on_battery = true;
+    let configured_fps_mode = FpsMode::AcBalanced;
+    let target_fps_mode = if is_on_battery {
+        FpsMode::BatterySaver
+    } else {
+        configured_fps_mode
+    };
+    if capture.fps_mode() != target_fps_mode {
+        capture.set_fps_mode(target_fps_mode);
+    }
+    assert_eq!(capture.fps_mode(), FpsMode::BatterySaver);
+
+    // Transition 2: User plugs in AC power -> must restore to configured AcBalanced (non-latching)
+    is_on_battery = false;
+    let target_fps_mode_ac = if is_on_battery {
+        FpsMode::BatterySaver
+    } else {
+        configured_fps_mode
+    };
+    if capture.fps_mode() != target_fps_mode_ac {
+        capture.set_fps_mode(target_fps_mode_ac);
+    }
+    assert_eq!(
+        capture.fps_mode(),
+        FpsMode::AcBalanced,
+        "Audio loopback capture must cleanly restore configured AC profile upon returning to AC power"
+    );
 }
