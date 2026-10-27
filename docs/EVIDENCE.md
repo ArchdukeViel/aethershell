@@ -636,6 +636,56 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
 - **Notes & Limitations**: Ready to advance to the next stability milestone: PR #35 (`IMMNotificationClient` Audio Device Migration & Power-Aware Operation).
 
+---
+
+### EVD-020: `IMMNotificationClient` Audio Device Migration, Power-Aware Operation & RAII COM Teardown (PR #35)
+- **Requirement / Gate**: Gate G09 (Local Adaptive Audio & Dynamic Endpoint Migration), Gate G08 (Sensor Honesty & Power Adaptation), PRD Section 12, Section 18.2
+- **Candidate Commit**: `605aaf4088e265713b629a8dc06693979e3f1f1a` (PR #35 Head)
+- **Main Merge Commit**: `978db87c688fe2b3430fe7a359b105bd79517a7c` (Merge pull request #35)
+- **Date & Environment**: 2026-10-27, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
+- **Executed Actions & Verification Suite**:
+  - **1. Pre-Merge Verification on PR #35 (`605aaf4`)**:
+    - `C++/WinUI 3 Mandatory Qualification`: **`pass`** in 2m 27s (Run ID `40489641796`, Job `122140038631`).
+    - `Cargo Audit & Advisory Database`: **`pass`** in 26s (Run ID `40489641813`, Job `122140038716`).
+    - `GitGuardian Security Checks`: **`pass`** in 12s.
+    - `Rust Quality Gates & Tests`: **`pass`** in 4m 15s (Run ID `40489641796`, Job `122140039016`).
+  - **2. Delegated Merge Execution (Section 1 & 3)**:
+    - Merged PR #35 into `main` via `gh pr merge 35 --merge --match-head-commit 605aaf4088e265713b629a8dc06693979e3f1f1a` at `2026-10-27T10:39:46Z`.
+    - Generated `main` merge commit SHA: `978db87c688fe2b3430fe7a359b105bd79517a7c`.
+  - **3. Post-Merge Exact-Commit GitHub CI Verification on `main`**:
+    - `CI Pipeline` (Run ID: `40490241142`):
+      - `Rust Quality Gates & Tests` (Job `122142075829`): **`pass`** in 3m 50s.
+      - `C++/WinUI 3 Mandatory Qualification` (Job `122142076337`): **`pass`** in 3m 28s.
+    - `Security Audit` (Run ID: `40490241063`):
+      - `Cargo Audit & Advisory Database` (Job `122142075398`): **`pass`** in 31s.
+  - **4. Independent Adversarial Audit**:
+    - Conducted by Independent Verification Reviewer Subagent (`732550a9-cc5a-4e63-9da7-5d09fc5a00ae`).
+    - Audit Verdict: **`PASS`** across COM apartment teardown, bidirectional AC/Battery power profile synchronization, device migration, memory management (`pwfx_ptr` / `CoTaskMemFree`), and host test isolation (0 items in `%LOCALAPPDATA%\AetherShell`).
+  - **5. `IMMNotificationClient` & Audio Power Capabilities**:
+    - **`AudioEndpointNotificationClient` Implementation**: Implemented `IMMNotificationClient` COM interface using `windows::core::implement` in `crates/aethershell-audio/src/notification.rs`. Registered notification callbacks on `IMMDeviceEnumerator` to detect default render audio device changes (`OnDefaultDeviceChanged`) and hardware unplug/state change events (`OnDeviceStateChanged`).
+    - **Dynamic Endpoint Migration Recovery**: Attached atomic migration flags to the capture loop. When a default audio device change or hardware endpoint invalidation occurs, `run_wasapi_capture_loop` releases existing stream resources and re-enumerates the active default multimedia render endpoint without restarting the application or dropping presentation.
+    - **Tiered Power-Aware Polling (`FpsMode`)**: Implemented dynamic polling backoff based on power profile and audio signal state:
+      - `Performance`: 10ms active / 33ms idle / 50ms silence
+      - `AcBalanced`: 15ms active / 50ms idle / 100ms silence
+      - `BatterySaver`: 33ms active / 100ms idle / 200ms silence
+    - **Bidirectional AC and Battery Power Profile Synchronization**: In `AppEngine::run()`, synchronized `target_fps_mode` bidirectionally based on battery state and configured power profile (`active_config.system.power_profile`), eliminating the latching defect where reconnecting to AC power failed to restore high-performance capture.
+    - **COM Apartment Teardown & RAII Resource Management**: Implemented `Drop` for `WasapiStream` to stop audio clients and invoke `CoTaskMemFree` on `WAVEFORMATEX` pointers. Explicitly scoped and dropped `IMMDeviceEnumerator` and `IMMNotificationClient` COM pointers prior to calling `CoUninitialize()`, preventing `STATUS_ACCESS_VIOLATION` (`0xc0000005`) on strict Windows Server runners.
+    - **Automated Tests**:
+      - `aethershell-audio`: 4 passed (`test_device_migration_atomic_flag_roundtrip`, `test_audio_capture_stream_loopback_initialization`, `test_fps_mode_sleep_durations`, `test_imm_notification_client_instantiation_and_callbacks`).
+      - `aethershell-app`: 4 unit tests + 9 integration test suites passed (including bidirectional power synchronization test `test_engine_bidirectional_power_profile_synchronization_and_audio_fps_mode`).
+  - **6. Automated Test Accounting**:
+    - `aethershell-audio`: 4 unit tests passed.
+    - `aethershell-app`: 4 unit tests + 9 integration test suites passed.
+    - Entire workspace tests: 100% passed with zero items in `%LOCALAPPDATA%\AetherShell`.
+- **Observed Result**:
+  - PR #35 cleanly merged into `main` at `978db87c688fe2b3430fe7a359b105bd79517a7c`.
+  - `IMMNotificationClient` audio device migration, power-aware polling, and RAII COM teardown are fully operational.
+  - Post-merge CI and security workflows 100% green on `main`.
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
+- **Notes & Limitations**: Ready to advance to the next stability milestone: PR #37 (Interactive Mode Global Hotkey & Pointer Hit-Testing).
+
+
 
 
 
