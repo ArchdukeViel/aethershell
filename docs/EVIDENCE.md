@@ -545,4 +545,52 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
 - **Notes & Limitations**: Ready to advance to the next stability milestone: Functional WinUI 3 Settings Controls & State Persistence.
 
+---
+
+### EVD-018: Functional WinUI 3 Settings Controls, Two-Way State Synchronization & Rigorous Host Test Isolation (PR #31)
+- **Requirement / Gate**: Gate G11 (WinUI Settings Independence & IPC), Gate G12 (Schema / Backup & Atomic Storage), Gate G20 (Packaging Identity & Storage Hygiene), PRD Section 10, Section 16, Section 18.2
+- **Candidate Commit**: `4a8b5283ec5ca6596375330e4b67bef8749a5c8f` (PR #31 Head)
+- **Main Merge Commit**: `3635edb12da7e49077a3ab48b0783488e94aaaeb` (Merge pull request #31)
+- **Date & Environment**: 2026-10-27, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
+- **Executed Actions & Verification Suite**:
+  - **1. Pre-Merge Verification on PR #31 (`4a8b528`)**:
+    - `C++/WinUI 3 Mandatory Qualification`: **`pass`** in 2m 38s (Run ID `40479005231`, Job `122104283714`).
+    - `Cargo Audit & Advisory Database`: **`pass`** in 30s (Run ID `40479005229`, Job `122104283353`).
+    - `GitGuardian Security Checks`: **`pass`** in 1s.
+    - `Rust Quality Gates & Tests`: **`pass`** in 2m 31s (Run ID `40479005231`, Job `122104283991`).
+  - **2. Delegated Merge Execution (Section 1 & 3)**:
+    - Merged PR #31 into `main` via `gh pr merge 31 --merge --match-head-commit 4a8b5283ec5ca6596375330e4b67bef8749a5c8f` at `2026-10-27T09:17:38Z`.
+    - Generated `main` merge commit SHA: `3635edb12da7e49077a3ab48b0783488e94aaaeb`.
+  - **3. Post-Merge Exact-Commit GitHub CI Verification on `main`**:
+    - `CI Pipeline` (Run ID: `40479681271`):
+      - `Rust Quality Gates & Tests` (Job `122106552660`): **`pass`** in 2m 24s.
+      - `C++/WinUI 3 Mandatory Qualification` (Job `122106552537`): **`pass`** in 2m 33s.
+    - `Security Audit` (Run ID: `40479681269`):
+      - `Cargo Audit & Advisory Database` (Job `122106552643`): **`pass`** in 41s.
+  - **4. Independent Adversarial Audit**:
+    - Conducted by Independent Verification Subagent (`90893ea7-6ad8-4f9e-a623-613b043075c6`).
+    - Audit Verdict: **`PASS`** across architectural integrity, two-way reactive wiring across all 6 views, Gate G11 zero resident RAM footprint on window close, host test isolation, and native C++ qualification.
+  - **5. Functional WinUI 3 Capabilities & End-to-End Persistence**:
+    - **Functional WinUI 3 Controls (`MainWindow.xaml.cpp`)**: Replaced non-functional XAML placeholder controls with full two-way synchronization to `m_config` (WinRT `JsonObject`). On startup, `LoadConfiguration()` queries `get_config` over authenticated IPC; on control change, `SaveConfiguration()` serializes the active state and invokes `set_config`.
+    - **Reactive Core Subsystem Actions**:
+      - General: Terminate Core button dispatches `shutdown` IPC command; queries `get_status` for active core engine health display.
+      - Desktop: "Enter Temporary Interactive Mode" button dispatches `enter_interactive_mode` with 8-second timeout.
+      - Widgets: Changing Profile Archetype combo box updates configuration and emits `reload_profile` to hot-reload widget scenes.
+      - Audio: Toggling audio capture switch triggers live `resume_audio` or `pause_audio`.
+    - **Gate G11 RAM Footprint Guarantee**: `OnWindowClosed` invokes `Application::Current().Exit()`, guaranteeing that no background process remains active, maintaining a strict 0 MB resident RAM footprint when closed.
+    - **C++ CLI Test Expansion (`App.xaml.cpp`)**: Added `--test-ipc-payload` CLI parameter to enable native C++ testing of complex JSON payloads.
+    - **C++ Integration Qualification Test (`test_cpp_winui_settings_client_get_and_set_config`)**: Added dedicated integration test in `ipc_security_authorization_test.rs` validating that native `aethershell-settings.exe` connects to the real engine over an isolated test pipe, reads initial profile via `get_config`, updates profile to `cyber_hud` via `set_config`, and verifies in-memory engine update and round-trip retrieval.
+    - **Bulletproof Host Test Isolation**: Eliminated host filesystem contamination by hardening `LiveEnginePipeTestHarness`, `test_settings_ipc_on_demand_lifecycle_and_exit_gate_g11`, and `test_phase4_engine_ipc_integration` with isolated temporary config directories. Confirmed `%LOCALAPPDATA%\AetherShell` maintains strictly 0 items across all unit, integration, and doc tests.
+  - **6. Automated Test Accounting**:
+    - `aethershell-app`: 4 unit tests + 9 integration test suites passed (including 3 native C++ qualification tests under `REQUIRE_CPP_SETTINGS_TEST=1`: `test_cpp_winui_settings_client_get_and_set_config`, `test_cpp_winui_settings_client_authenticates_privileged_command`, `test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_commands`).
+    - Entire workspace tests: 100% passed with zero items in `%LOCALAPPDATA%\AetherShell`.
+- **Observed Result**:
+  - PR #31 cleanly merged into `main` at `3635edb12da7e49077a3ab48b0783488e94aaaeb`.
+  - C++/WinUI 3 Settings application is fully wired, interactive, and persistently synchronized with Core Engine.
+  - Post-merge CI and security workflows 100% green on `main`.
+- **Status**: `passed`
+- **Reviewer / Authority**: Independent Verification Reviewer / Delegated Autonomous Authority
+- **Notes & Limitations**: Ready to advance to the next stability milestone: PR #32 (Direct2D DXGI Device Loss & GPU Recovery).
+
+
 
