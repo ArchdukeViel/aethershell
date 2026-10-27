@@ -659,6 +659,9 @@ impl AppEngine {
                                 sup.crash_count()
                             );
                         }
+                        if let Ok(mut cache) = self.cached_bindings.write() {
+                            cache.retain(|k, _| !k.starts_with("script."));
+                        }
                     }
                     if sup.is_quarantined() {
                         warn!("Script worker is quarantined: {:?}", sup.state());
@@ -758,8 +761,12 @@ impl AppEngine {
                             let width = bounds[2].max(100) as f32;
                             let height = bounds[3].max(100) as f32;
                             let scale = primary.scale_factor();
-                            let (scene, _) =
-                                compile_live_scene_with_scale(width, height, &bindings_snapshot, scale);
+                            let (scene, _) = compile_live_scene_with_scale(
+                                width,
+                                height,
+                                &bindings_snapshot,
+                                scale,
+                            );
 
                             if let Ok(mut r_lock) = self.desktop_renderer.try_lock() {
                                 if let Some(ref mut renderer) = *r_lock {
