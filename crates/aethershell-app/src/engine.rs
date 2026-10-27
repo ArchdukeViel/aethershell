@@ -1781,12 +1781,27 @@ pub fn find_script_host_binary(configured: &str) -> Option<PathBuf> {
         if current.is_file() {
             return Some(current);
         }
+        let mut parent = current.clone();
+        parent.pop(); // pop configured file name
+        if parent.file_name().map(|n| n == "deps").unwrap_or(false) {
+            parent.pop(); // pop deps
+            let candidate = parent.join(configured);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
     }
     let candidates = [
+        format!("target/x86_64-pc-windows-msvc/debug/{}", configured),
+        format!("target/x86_64-pc-windows-msvc/release/{}", configured),
         format!("target/debug/{}", configured),
         format!("target/release/{}", configured),
+        format!("../../target/x86_64-pc-windows-msvc/debug/{}", configured),
+        format!("../../target/x86_64-pc-windows-msvc/release/{}", configured),
         format!("../../target/debug/{}", configured),
         format!("../../target/release/{}", configured),
+        format!("../target/x86_64-pc-windows-msvc/debug/{}", configured),
+        format!("../target/x86_64-pc-windows-msvc/release/{}", configured),
         format!("../target/debug/{}", configured),
         format!("../target/release/{}", configured),
     ];
