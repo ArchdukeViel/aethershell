@@ -1,14 +1,14 @@
 {
   "profile": "minimal_idle",
   "target_budget": {
-    "classification": "ratified_target",
+    "classification": "preliminary_design_target",
     "max_core_cpu_pct": 0.1,
     "max_core_working_set_mb": 30.0,
     "max_combined_cpu_pct": 0.1,
     "max_combined_working_set_mb": 30.0,
     "max_gpu_pct": 0.0,
     "max_wakeups_per_sec": 2,
-    "rationale": "Ratified PRD Section 14.2 baseline: Core working set <= 30 MiB median, steady CPU <= 0.1% on reference desktop hardware."
+    "rationale": "Preliminary design target per PRD Section 14.2 (GOALS, not observed values; pending multi-environment ratification per PRD Section 14.4): Core working set <= 30 MiB measured median, steady CPU <= 0.1% on named reference hardware."
   },
   "environment": {
     "os_family": "Windows 11 26H2 (Build 26300)",
@@ -82,7 +82,7 @@
       "anomalies": [],
       "verdict": {
         "failed": {
-          "reason": "Core CPU median 0.52% exceeds ratified budget 0.10%"
+          "reason": "Core CPU median 0.52% exceeds preliminary design target 0.10%"
         }
       }
     },
@@ -133,7 +133,7 @@
       "anomalies": [],
       "verdict": {
         "failed": {
-          "reason": "Core CPU median 0.52% exceeds ratified budget 0.10%"
+          "reason": "Core CPU median 0.52% exceeds preliminary design target 0.10%"
         }
       }
     },
@@ -184,7 +184,7 @@
       "anomalies": [],
       "verdict": {
         "failed": {
-          "reason": "Core CPU median 0.52% exceeds ratified budget 0.10%"
+          "reason": "Core CPU median 0.52% exceeds preliminary design target 0.10%"
         }
       }
     },
@@ -235,7 +235,7 @@
       "anomalies": [],
       "verdict": {
         "failed": {
-          "reason": "Core CPU median 0.52% exceeds ratified budget 0.10%"
+          "reason": "Core CPU median 0.52% exceeds preliminary design target 0.10%"
         }
       }
     },
@@ -286,7 +286,7 @@
       "anomalies": [],
       "verdict": {
         "failed": {
-          "reason": "Core CPU median 0.52% exceeds ratified budget 0.10%"
+          "reason": "Core CPU median 0.52% exceeds preliminary design target 0.10%"
         }
       }
     }
@@ -300,6 +300,6 @@
     "Measurements capture resident WorkingSetSize and PrivateUsage via Win32 K32GetProcessMemoryInfo.",
     "CPU load normalized across logical cores via GetProcessTimes, isolating target processes from measurement overhead.",
     "Combined multi-process percentiles computed from synchronized timestamp samples.",
-    "Budget is ratified PRD Section 14.2 requirement."
+    "Budget is preliminary design target per PRD Section 14.2 (GOALS, not yet ratified across multi-environment test matrix per PRD Section 14.4)."
   ]
 }

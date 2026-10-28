@@ -167,7 +167,8 @@ impl WorkloadProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BudgetClassification {
-    /// Ratified PRD Section 14.2 requirement.
+    /// Ratified PRD Section 14.2 requirement (or preliminary design target pending ratification).
+    #[serde(alias = "preliminary_design_target")]
     RatifiedTarget,
     /// Provisional diagnostic proposal per PRD Section 14.2 (subject to empirical qualification).
     ProvisionalProposal,

@@ -647,3 +647,40 @@ fn test_provisional_profile_verdict_preserves_distinction() {
         ledger.overall_verdict
     );
 }
+
+#[test]
+fn test_deserialize_ryzen5_5500u_benchmark_ledger_json() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let ledger_path =
+        manifest_dir.join("../../docs/qualification/ryzen5_5500u_benchmark_ledger.json");
+    if !ledger_path.exists() {
+        return;
+    }
+    let content =
+        std::fs::read_to_string(&ledger_path).expect("read ryzen5_5500u_benchmark_ledger.json");
+    let ledger: aethershell_diagnostics::RuntimeBenchmarkLedger =
+        serde_json::from_str(&content).expect("deserialize ryzen5_5500u_benchmark_ledger.json");
+
+    assert_eq!(ledger.profile, WorkloadProfile::MinimalIdle);
+    assert_eq!(
+        ledger.target_budget.classification,
+        BudgetClassification::RatifiedTarget
+    );
+    assert_eq!(ledger.target_budget.max_core_working_set_mb, 30.0);
+    assert_eq!(ledger.target_budget.max_core_cpu_pct, 0.1);
+    assert_eq!(ledger.repetitions.len(), 5);
+    for rep in &ledger.repetitions {
+        assert!(matches!(
+            rep.gpu_status,
+            aethershell_diagnostics::GpuMetricStatus::Unavailable { .. }
+        ));
+        assert!(matches!(
+            rep.wakeup_status,
+            aethershell_diagnostics::WakeupMetricStatus::Unavailable { .. }
+        ));
+        assert!(matches!(
+            rep.presentation_status,
+            aethershell_diagnostics::PresentationMetricStatus::Unavailable { .. }
+        ));
+    }
+}
