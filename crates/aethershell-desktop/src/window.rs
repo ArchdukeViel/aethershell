@@ -252,6 +252,21 @@ impl DesktopHostWindow {
         }
     }
 
+    #[doc(hidden)]
+    pub fn create_dummy_for_test(monitor_id: &str, bounds: [i32; 4]) -> Self {
+        Self {
+            hwnd: HWND(std::ptr::null_mut()),
+            monitor_id: monitor_id.to_string(),
+            bounds,
+            dpi: 96,
+            is_interactive: Arc::new(AtomicBool::new(false)),
+            shelldll_defview_hwnd: None,
+            worker_w_hwnd: None,
+            explorer_restart_count: Arc::new(AtomicUsize::new(0)),
+            state_ptr: std::ptr::null_mut(),
+        }
+    }
+
     /// Sets an auto-dismissal callback invoked when user presses Escape, focus is lost, or session is locked.
     pub fn set_on_dismiss<F>(&mut self, cb: F)
     where
@@ -1115,6 +1130,11 @@ impl DesktopWindowManager {
 
     pub fn primary_window_mut(&mut self) -> Option<&mut DesktopHostWindow> {
         self.windows.first_mut()
+    }
+
+    #[doc(hidden)]
+    pub fn push_window_for_test(&mut self, window: DesktopHostWindow) {
+        self.windows.push(window);
     }
 
     /// Enters temporary interactive mode across all desktop windows.

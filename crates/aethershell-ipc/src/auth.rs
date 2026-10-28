@@ -100,16 +100,12 @@ impl SessionToken {
         // 1. Explicit token path override: AETHERSHELL_SESSION_TOKEN_PATH
         if let Ok(override_path) = std::env::var("AETHERSHELL_SESSION_TOKEN_PATH") {
             let trimmed = override_path.trim();
-            if !trimmed.is_empty() {
-                return PathBuf::from(trimmed);
-            }
+            return PathBuf::from(trimmed);
         }
         // 2. Explicit isolated AppData directory: AETHERSHELL_APP_DATA_DIR
         if let Ok(appdata_override) = std::env::var("AETHERSHELL_APP_DATA_DIR") {
             let trimmed = appdata_override.trim();
-            if !trimmed.is_empty() {
-                return PathBuf::from(trimmed).join(format!("session_{}.token", session_id));
-            }
+            return PathBuf::from(trimmed).join(format!("session_{}.token", session_id));
         }
         // 3. Default production path: %LOCALAPPDATA%\AetherShell
         if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
@@ -146,9 +142,9 @@ impl SessionToken {
                         return Some(token);
                     }
                 }
-                // Fail-closed: Explicit token path override specified; never fall back
-                return None;
             }
+            // Fail-closed: Explicit token path override specified (including empty or whitespace); never fall back
+            return None;
         }
 
         // 2. Explicit isolated AppData directory: AETHERSHELL_APP_DATA_DIR
@@ -170,9 +166,9 @@ impl SessionToken {
                         return Some(token);
                     }
                 }
-                // Fail-closed: Explicit isolated AppData directory specified; NEVER fall back to %LOCALAPPDATA%
-                return None;
             }
+            // Fail-closed: Explicit isolated AppData directory specified (including empty or whitespace); NEVER fall back to %LOCALAPPDATA%
+            return None;
         }
 
         // 3. Default production path: %LOCALAPPDATA%\AetherShell\session_{session_id}.token
@@ -530,5 +526,77 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(prod_dir);
         let _ = std::fs::remove_dir_all(isolated_dir);
+    }
+
+    #[test]
+    fn test_empty_and_whitespace_token_overrides_never_fallback_to_production() {
+        let _lock = ENV_LOCK.lock().unwrap();
+
+        // Setup a mock production LOCALAPPDATA directory containing a real token
+        let prod_dir = std::env::temp_dir().join(format!(
+            "test_prod_appdata_malformed_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let prod_aethershell = prod_dir.join("AetherShell");
+        std::fs::create_dir_all(&prod_aethershell).unwrap();
+        let prod_token_file = prod_aethershell.join("session_99.token");
+        std::fs::write(&prod_token_file, "SECRET_REAL_USER_TOKEN").unwrap();
+
+        let orig_localappdata = std::env::var("LOCALAPPDATA").ok();
+        std::env::set_var("LOCALAPPDATA", &prod_dir);
+
+        // 1. Whitespace in AETHERSHELL_SESSION_TOKEN_PATH
+        std::env::set_var("AETHERSHELL_SESSION_TOKEN_PATH", "   \t\r\n   ");
+        std::env::remove_var("AETHERSHELL_APP_DATA_DIR");
+        assert_eq!(
+            SessionToken::load_for_session(99),
+            None,
+            "Whitespace token path override must fail closed and NEVER fall back to production LOCALAPPDATA"
+        );
+        let p1 = SessionToken::token_path_for_session(99);
+        assert!(
+            !p1.starts_with(&prod_dir),
+            "Whitespace token path override must not resolve into production directory"
+        );
+
+        // 2. Empty string in AETHERSHELL_SESSION_TOKEN_PATH
+        std::env::set_var("AETHERSHELL_SESSION_TOKEN_PATH", "");
+        assert_eq!(
+            SessionToken::load_for_session(99),
+            None,
+            "Empty token path override must fail closed and NEVER fall back to production LOCALAPPDATA"
+        );
+
+        // 3. Whitespace in AETHERSHELL_APP_DATA_DIR
+        std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
+        std::env::set_var("AETHERSHELL_APP_DATA_DIR", "   ");
+        assert_eq!(
+            SessionToken::load_for_session(99),
+            None,
+            "Whitespace AppData directory override must fail closed and NEVER fall back to production LOCALAPPDATA"
+        );
+        let p2 = SessionToken::token_path_for_session(99);
+        assert!(
+            !p2.starts_with(&prod_dir),
+            "Whitespace AppData directory override must not resolve into production directory"
+        );
+
+        // 4. Empty string in AETHERSHELL_APP_DATA_DIR
+        std::env::set_var("AETHERSHELL_APP_DATA_DIR", "");
+        assert_eq!(
+            SessionToken::load_for_session(99),
+            None,
+            "Empty AppData directory override must fail closed and NEVER fall back to production LOCALAPPDATA"
+        );
+
+        // Cleanup
+        std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
+        std::env::remove_var("AETHERSHELL_APP_DATA_DIR");
+        if let Some(orig) = orig_localappdata {
+            std::env::set_var("LOCALAPPDATA", orig);
+        } else {
+            std::env::remove_var("LOCALAPPDATA");
+        }
+        let _ = std::fs::remove_dir_all(prod_dir);
     }
 }

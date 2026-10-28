@@ -298,6 +298,11 @@ impl ScriptSupervisor {
         self.current_script = None;
     }
 
+    #[doc(hidden)]
+    pub fn clear_current_digest_for_test(&mut self) {
+        self.current_digest = None;
+    }
+
     pub fn record_start(&mut self, pid: u32) {
         self.state = SupervisorState::Running { pid };
         self.last_heartbeat = Some(Instant::now());
@@ -548,7 +553,7 @@ impl ScriptSupervisor {
             return Ok(());
         }
 
-        // b) Active child worker with missing script path is an inconsistent state (Fail-closed / A1)
+        // b) Active child worker with missing script path or missing running digest is an inconsistent state (Fail-closed / A1)
         let script_path = match self.current_script.clone() {
             Some(path) => path,
             None => {
@@ -561,9 +566,7 @@ impl ScriptSupervisor {
             Some(d) => d.to_string(),
             None => {
                 self.invalidate_worker();
-                return Err(WorkerIntegrityError::TrustRevoked(
-                    "Missing running digest for active worker".into(),
-                ));
+                return Err(WorkerIntegrityError::NoActiveScript);
             }
         };
 
@@ -573,7 +576,7 @@ impl ScriptSupervisor {
             return Err(WorkerIntegrityError::ScriptNotFound(script_path));
         }
 
-        // d) Computes its actual SHA-256 digest
+        // d) Computes its actual SHA-256 digest in a single disk read
         let script_bytes = match std::fs::read(&script_path) {
             Ok(bytes) => bytes,
             Err(e) => {
@@ -611,7 +614,12 @@ impl ScriptSupervisor {
             .as_deref()
             .unwrap_or_else(|| script_path.to_str().unwrap_or(""));
 
-        match crate::trust::authorize_script_trust(&script_path, configured_str, digests) {
+        match crate::trust::authorize_script_digest_trust(
+            &script_path,
+            configured_str,
+            &actual_digest,
+            digests,
+        ) {
             Ok(approved_digest) => {
                 if !approved_digest.eq_ignore_ascii_case(&actual_digest) {
                     self.invalidate_worker();
@@ -1135,6 +1143,44 @@ mod tests {
             res.unwrap_err(),
             WorkerIntegrityError::NoActiveScript,
             "Must return WorkerIntegrityError::NoActiveScript"
+        );
+        assert!(
+            !supervisor.has_active_child(),
+            "Worker must be terminated fail-closed"
+        );
+    }
+
+    #[test]
+    fn test_verify_active_worker_integrity_active_child_missing_digest_fails_closed() {
+        let mut supervisor = ScriptSupervisor::new(2);
+        let child_proc = Command::new("cmd.exe")
+            .args(["/c", "ping", "-n", "10", "127.0.0.1"])
+            .spawn()
+            .expect("spawn dummy child");
+
+        let supervised_child =
+            SupervisedChild::new(HANDLE(child_proc.as_raw_handle()), child_proc.id());
+        supervisor.assign_supervised_child(supervised_child);
+        supervisor.set_current_script_for_test(
+            PathBuf::from("dummy.lua"),
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+        );
+        // Explicitly clear current_digest while current_script is present
+        supervisor.clear_current_digest_for_test();
+        assert!(supervisor.has_active_child());
+        assert!(supervisor.current_script().is_some());
+
+        let trust_ledger = HashMap::new();
+        let res = supervisor.verify_active_worker_integrity(Some(&trust_ledger));
+
+        assert!(
+            res.is_err(),
+            "Active child with missing running digest metadata must fail closed"
+        );
+        assert_eq!(
+            res.unwrap_err(),
+            WorkerIntegrityError::NoActiveScript,
+            "Must return WorkerIntegrityError::NoActiveScript when digest is missing"
         );
         assert!(
             !supervisor.has_active_child(),

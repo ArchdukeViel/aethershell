@@ -43,32 +43,40 @@ namespace AetherShell::Settings
         }
 
         // 2. Check override environment variable AETHERSHELL_SESSION_TOKEN_PATH
-        wchar_t overridePath[MAX_PATH] = { 0 };
-        DWORD len = GetEnvironmentVariableW(L"AETHERSHELL_SESSION_TOKEN_PATH", overridePath, MAX_PATH);
-        if (len > 0 && len < MAX_PATH)
+        DWORD tokenPathLen = GetEnvironmentVariableW(L"AETHERSHELL_SESSION_TOKEN_PATH", nullptr, 0);
+        bool hasTokenOverride = (tokenPathLen > 0) || (GetLastError() != ERROR_ENVVAR_NOT_FOUND);
+        if (hasTokenOverride)
         {
-            std::wstring pathStr(overridePath);
-            size_t first = pathStr.find_first_not_of(L" \t\r\n");
-            if (first != std::wstring::npos)
+            if (tokenPathLen > 0 && tokenPathLen < 32768)
             {
-                size_t last = pathStr.find_last_not_of(L" \t\r\n");
-                std::wstring trimmed = pathStr.substr(first, last - first + 1);
-                if (!trimmed.empty())
+                std::vector<wchar_t> buf(tokenPathLen);
+                DWORD actual = GetEnvironmentVariableW(L"AETHERSHELL_SESSION_TOKEN_PATH", buf.data(), tokenPathLen);
+                if (actual > 0 && actual < tokenPathLen)
                 {
-                    std::ifstream file(trimmed);
-                    if (file.is_open())
+                    std::wstring pathStr(buf.data(), actual);
+                    size_t first = pathStr.find_first_not_of(L" \t\r\n");
+                    if (first != std::wstring::npos)
                     {
-                        std::string tok;
-                        if (std::getline(file, tok))
+                        size_t last = pathStr.find_last_not_of(L" \t\r\n");
+                        std::wstring trimmed = pathStr.substr(first, last - first + 1);
+                        if (!trimmed.empty())
                         {
-                            while (!tok.empty() && (tok.back() == '\r' || tok.back() == '\n' || tok.back() == ' ')) tok.pop_back();
-                            if (!tok.empty()) return tok;
+                            std::ifstream file(trimmed);
+                            if (file.is_open())
+                            {
+                                std::string tok;
+                                if (std::getline(file, tok))
+                                {
+                                    while (!tok.empty() && (tok.back() == '\r' || tok.back() == '\n' || tok.back() == ' ')) tok.pop_back();
+                                    if (!tok.empty()) return tok;
+                                }
+                            }
                         }
                     }
-                    // Fail-closed: Explicit token path override specified; never fall back
-                    return "";
                 }
             }
+            // Fail-closed: Explicit token path override specified; never fall back
+            return "";
         }
 
         // Resolve current Windows session ID
@@ -76,52 +84,59 @@ namespace AetherShell::Settings
         ProcessIdToSessionId(GetCurrentProcessId(), &sessionId);
 
         // 3. Check override environment variable AETHERSHELL_APP_DATA_DIR
-        wchar_t appDataDir[MAX_PATH] = { 0 };
-        DWORD appDataLen = GetEnvironmentVariableW(L"AETHERSHELL_APP_DATA_DIR", appDataDir, MAX_PATH);
-        if (appDataLen > 0 && appDataLen < MAX_PATH)
+        DWORD appDataLen = GetEnvironmentVariableW(L"AETHERSHELL_APP_DATA_DIR", nullptr, 0);
+        bool hasAppDataOverride = (appDataLen > 0) || (GetLastError() != ERROR_ENVVAR_NOT_FOUND);
+        if (hasAppDataOverride)
         {
-            std::wstring dirStr(appDataDir);
-            size_t first = dirStr.find_first_not_of(L" \t\r\n");
-            if (first != std::wstring::npos)
+            if (appDataLen > 0 && appDataLen < 32768)
             {
-                size_t last = dirStr.find_last_not_of(L" \t\r\n");
-                std::wstring trimmed = dirStr.substr(first, last - first + 1);
-                if (!trimmed.empty())
+                std::vector<wchar_t> buf(appDataLen);
+                DWORD actual = GetEnvironmentVariableW(L"AETHERSHELL_APP_DATA_DIR", buf.data(), appDataLen);
+                if (actual > 0 && actual < appDataLen)
                 {
-                    std::wstring sessionPath = trimmed + L"\\session_" + std::to_wstring(sessionId) + L".token";
-                    std::ifstream file(sessionPath);
-                    if (file.is_open())
+                    std::wstring dirStr(buf.data(), actual);
+                    size_t first = dirStr.find_first_not_of(L" \t\r\n");
+                    if (first != std::wstring::npos)
                     {
-                        std::string tok;
-                        if (std::getline(file, tok))
+                        size_t last = dirStr.find_last_not_of(L" \t\r\n");
+                        std::wstring trimmed = dirStr.substr(first, last - first + 1);
+                        if (!trimmed.empty())
                         {
-                            while (!tok.empty() && (tok.back() == '\r' || tok.back() == '\n' || tok.back() == ' ')) tok.pop_back();
-                            if (!tok.empty()) return tok;
+                            std::wstring sessionPath = trimmed + L"\\session_" + std::to_wstring(sessionId) + L".token";
+                            std::ifstream file(sessionPath);
+                            if (file.is_open())
+                            {
+                                std::string tok;
+                                if (std::getline(file, tok))
+                                {
+                                    while (!tok.empty() && (tok.back() == '\r' || tok.back() == '\n' || tok.back() == ' ')) tok.pop_back();
+                                    if (!tok.empty()) return tok;
+                                }
+                            }
+
+                            // Fallback check for session.token directly in AETHERSHELL_APP_DATA_DIR
+                            std::wstring legacyPath = trimmed + L"\\session.token";
+                            std::ifstream legacyFile(legacyPath);
+                            if (legacyFile.is_open())
+                            {
+                                std::string tok;
+                                if (std::getline(legacyFile, tok))
+                                {
+                                    while (!tok.empty() && (tok.back() == '\r' || tok.back() == '\n' || tok.back() == ' ')) tok.pop_back();
+                                    if (!tok.empty()) return tok;
+                                }
+                            }
                         }
                     }
-
-                    // Fallback check for session.token directly in AETHERSHELL_APP_DATA_DIR
-                    std::wstring legacyPath = trimmed + L"\\session.token";
-                    std::ifstream legacyFile(legacyPath);
-                    if (legacyFile.is_open())
-                    {
-                        std::string tok;
-                        if (std::getline(legacyFile, tok))
-                        {
-                            while (!tok.empty() && (tok.back() == '\r' || tok.back() == '\n' || tok.back() == ' ')) tok.pop_back();
-                            if (!tok.empty()) return tok;
-                        }
-                    }
-
-                    // Fail-closed: Explicit isolated AppData directory specified; NEVER fall back to %LOCALAPPDATA%
-                    return "";
                 }
             }
+            // Fail-closed: Explicit isolated AppData directory specified; NEVER fall back to %LOCALAPPDATA%
+            return "";
         }
 
         // 4. Default production resolution: %LOCALAPPDATA%\AetherShell\session_{sessionId}.token
         wchar_t localAppData[MAX_PATH] = { 0 };
-        len = GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH);
+        DWORD len = GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH);
         if (len > 0 && len < MAX_PATH)
         {
             std::wstring sessionPath = std::wstring(localAppData) + L"\\AetherShell\\session_" + std::to_wstring(sessionId) + L".token";
@@ -393,6 +408,11 @@ namespace AetherShell::Settings
                         payloadObj.GetNamedValue(L"applied").ValueType() == winrt::Windows::Data::Json::JsonValueType::Boolean)
                     {
                         result.applied = payloadObj.GetNamedBoolean(L"applied");
+                    }
+                    if (payloadObj.HasKey(L"success") &&
+                        payloadObj.GetNamedValue(L"success").ValueType() == winrt::Windows::Data::Json::JsonValueType::Boolean)
+                    {
+                        result.success = payloadObj.GetNamedBoolean(L"success");
                     }
                     if (payloadObj.HasKey(L"persisted") &&
                         payloadObj.GetNamedValue(L"persisted").ValueType() == winrt::Windows::Data::Json::JsonValueType::Boolean)
