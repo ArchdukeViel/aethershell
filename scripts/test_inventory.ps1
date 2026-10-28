@@ -160,7 +160,7 @@ foreach ($m in $matchesFound) {
     $crate = ""
     $suiteType = "Unit"
 
-    if ($target -match '^tests\\([^\\]+)\.rs$') {
+    if ($target -match '^[tT]ests[\\/]([^\\/]+)\.rs$') {
         $suiteType = "Integration"
         if ($exeName -match '^runtime_benchmark_integration_test-') {
             $crate = "aethershell-diagnostics"
