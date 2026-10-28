@@ -165,6 +165,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Dedicated sleep test mode for multi-process runtime benchmark sampling tests
+    if let Some(pos) = args.iter().position(|a| a == "--test-sleep-secs") {
+        if let Some(s) = args.get(pos + 1).and_then(|s| s.parse::<u64>().ok()) {
+            println!("WORKER_STARTED:{}", std::process::id());
+            std::thread::sleep(std::time::Duration::from_secs(s));
+            std::process::exit(0);
+        }
+    }
+
     if args.contains(&"--version".to_string()) {
         println!("aethershell-script-host 1.0.0");
         return Ok(());

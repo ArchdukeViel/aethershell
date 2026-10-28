@@ -227,9 +227,25 @@ fn test_multi_process_live_sampling_and_ledger_generation() {
     let mut session = RuntimeBenchmarkSession::new(WorkloadProfile::LuaWorkerActive);
     session.set_allow_self_pid(true);
 
-    // Spawn a lightweight child worker process to exercise genuine multi-process sampling
-    let mut child = std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 5"])
+    let worker_bin = {
+        let mut p = std::env::current_exe().unwrap();
+        p.pop();
+        if p.file_name().map(|n| n == "deps").unwrap_or(false) {
+            p.pop();
+        }
+        let candidate = p.join("aethershell-script-host.exe");
+        if candidate.is_file() {
+            candidate
+        } else {
+            std::path::PathBuf::from(
+                "target/x86_64-pc-windows-msvc/debug/aethershell-script-host.exe",
+            )
+        }
+    };
+
+    // Spawn a genuine child worker process to exercise multi-process sampling
+    let mut child = std::process::Command::new(&worker_bin)
+        .args(["--test-sleep-secs", "5"])
         .spawn()
         .expect("spawn test child process");
 
@@ -295,7 +311,8 @@ fn test_multi_process_live_sampling_and_ledger_generation() {
     assert_eq!(ledger.repetitions.len(), 2);
     assert!(matches!(
         ledger.overall_verdict,
-        BenchmarkVerdict::Passed
+        BenchmarkVerdict::ProvisionalDiagnostic { .. }
+            | BenchmarkVerdict::Passed
             | BenchmarkVerdict::PartiallyVerified { .. }
             | BenchmarkVerdict::Failed { .. }
     ));
@@ -386,4 +403,247 @@ fn test_percentile_sorting_edge_cases() {
     assert_eq!(calculate_percentile(&data, 50.0), 3.0);
     assert_eq!(calculate_percentile(&data, 0.0), 1.0);
     assert_eq!(calculate_percentile(&data, 100.0), 5.0);
+}
+
+#[test]
+fn test_zero_repetitions_rejected_fail_closed() {
+    let mut session = RuntimeBenchmarkSession::new(WorkloadProfile::MinimalIdle);
+    session.set_allow_self_pid(true);
+    session
+        .track_process(std::process::id(), ProcessRole::Core)
+        .expect("track core");
+
+    let res = session.execute_full_procedure(
+        0,
+        Duration::from_millis(10),
+        Duration::from_millis(50),
+        Duration::from_millis(10),
+    );
+    assert!(res.is_err(), "Zero repetitions must fail closed");
+    let err = res.unwrap_err();
+    assert!(
+        err.contains("repetitions must be >= 1"),
+        "Error should explain minimum repetition requirement: {}",
+        err
+    );
+}
+
+#[test]
+fn test_zero_duration_rejected_fail_closed() {
+    let mut session = RuntimeBenchmarkSession::new(WorkloadProfile::MinimalIdle);
+    session.set_allow_self_pid(true);
+    session
+        .track_process(std::process::id(), ProcessRole::Core)
+        .expect("track core");
+
+    let res = session.execute_full_procedure(
+        1,
+        Duration::from_millis(10),
+        Duration::ZERO,
+        Duration::from_millis(10),
+    );
+    assert!(res.is_err(), "Zero duration must fail closed");
+    let err = res.unwrap_err();
+    assert!(
+        err.contains("recording duration must be positive"),
+        "Error should explain positive duration requirement: {}",
+        err
+    );
+}
+
+#[test]
+fn test_invalid_sample_interval_rejected_fail_closed() {
+    let mut session = RuntimeBenchmarkSession::new(WorkloadProfile::MinimalIdle);
+    session.set_allow_self_pid(true);
+    session
+        .track_process(std::process::id(), ProcessRole::Core)
+        .expect("track core");
+
+    // Sample interval = 0
+    let res1 = session.execute_full_procedure(
+        1,
+        Duration::from_millis(10),
+        Duration::from_millis(50),
+        Duration::ZERO,
+    );
+    assert!(res1.is_err(), "Zero sample interval must fail closed");
+
+    // Sample interval > recording duration
+    let res2 = session.execute_full_procedure(
+        1,
+        Duration::from_millis(10),
+        Duration::from_millis(50),
+        Duration::from_millis(100),
+    );
+    assert!(res2.is_err(), "Sample interval > duration must fail closed");
+    let err = res2.unwrap_err();
+    assert!(
+        err.contains("cannot exceed recording duration"),
+        "Error detail: {}",
+        err
+    );
+}
+
+#[test]
+fn test_self_override_strictly_scoped_to_current_pid_and_rejects_external_pids() {
+    let mut child = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 5"])
+        .spawn()
+        .expect("spawn test child");
+
+    let mut session = RuntimeBenchmarkSession::new(WorkloadProfile::MinimalIdle);
+    // Even when allow_self_pid is true:
+    session.set_allow_self_pid(true);
+
+    // Tracking external PID as Core (which expects aethershell.exe) MUST fail with ExecutableMismatch
+    let res_external = session.track_process(child.id(), ProcessRole::Core);
+    assert!(
+        res_external.is_err(),
+        "allow_self_pid must NOT bypass executable name validation for external PIDs"
+    );
+    let err = res_external.unwrap_err();
+    assert!(
+        err.contains("Executable mismatch"),
+        "Expected executable mismatch, got: {}",
+        err
+    );
+
+    // But tracking the current process itself (which is std::process::id()) succeeds
+    let res_self = session.track_process(std::process::id(), ProcessRole::Core);
+    assert!(
+        res_self.is_ok(),
+        "allow_self_pid must permit attaching to std::process::id() for simulation tests"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+fn test_diagnostic_simulation_labeling_on_self_override() {
+    let mut session = RuntimeBenchmarkSession::new(WorkloadProfile::MinimalIdle);
+    session.set_allow_self_pid(true);
+    session
+        .track_process(std::process::id(), ProcessRole::Core)
+        .expect("track core");
+
+    let ledger = session
+        .execute_full_procedure(
+            1,
+            Duration::from_millis(10),
+            Duration::from_millis(50),
+            Duration::from_millis(25),
+        )
+        .expect("execute procedure");
+
+    assert_eq!(
+        ledger.execution_mode,
+        aethershell_diagnostics::BenchmarkExecutionMode::DiagnosticSimulation,
+        "Ledger must be explicitly marked as DiagnosticSimulation when self-PID override is active"
+    );
+    assert!(
+        ledger
+            .notes
+            .iter()
+            .any(|n| n.contains("DIAGNOSTIC SIMULATION")),
+        "Ledger notes must include explicit DIAGNOSTIC SIMULATION disclosure"
+    );
+}
+
+#[test]
+fn test_formal_qualification_enforcements() {
+    let mut session = RuntimeBenchmarkSession::new(WorkloadProfile::MinimalIdle);
+    session.set_formal_qualification(true);
+
+    // 1. Self PID rejected for formal qualification
+    session.set_allow_self_pid(true);
+    session
+        .track_process(std::process::id(), ProcessRole::Core)
+        .expect("track core");
+
+    let res_self = session.execute_full_procedure(
+        5,
+        Duration::from_secs(5),
+        Duration::from_secs(60),
+        Duration::from_millis(500),
+    );
+    assert!(
+        res_self.is_err(),
+        "Formal qualification must reject self-PID attachment"
+    );
+    assert!(res_self.unwrap_err().contains("self-PID attachment"));
+
+    // 2. Reject < 5 repetitions
+    let mut session2 = RuntimeBenchmarkSession::new(WorkloadProfile::MinimalIdle);
+    session2.set_formal_qualification(true);
+    let res_reps = session2.execute_full_procedure(
+        4,
+        Duration::from_secs(5),
+        Duration::from_secs(60),
+        Duration::from_millis(500),
+    );
+    assert!(
+        res_reps.is_err(),
+        "Formal qualification must require at least 5 repetitions"
+    );
+    assert!(res_reps.unwrap_err().contains("at least 5"));
+
+    // 3. Reject < 60s recording duration
+    let mut session3 = RuntimeBenchmarkSession::new(WorkloadProfile::MinimalIdle);
+    session3.set_formal_qualification(true);
+    let res_dur = session3.execute_full_procedure(
+        5,
+        Duration::from_secs(5),
+        Duration::from_secs(30),
+        Duration::from_millis(500),
+    );
+    assert!(
+        res_dur.is_err(),
+        "Formal qualification must require duration >= 60s"
+    );
+    assert!(res_dur.unwrap_err().contains(">= 60 seconds"));
+
+    // 4. Reject provisional profile for formal qualification
+    let mut session4 = RuntimeBenchmarkSession::new(WorkloadProfile::DefaultWidgets);
+    session4.set_formal_qualification(true);
+    let res_prof = session4.execute_full_procedure(
+        5,
+        Duration::from_secs(5),
+        Duration::from_secs(60),
+        Duration::from_millis(500),
+    );
+    assert!(
+        res_prof.is_err(),
+        "Formal qualification must reject provisional profiles"
+    );
+    assert!(res_prof
+        .unwrap_err()
+        .contains("only applies to ratified target budgets"));
+}
+
+#[test]
+fn test_provisional_profile_verdict_preserves_distinction() {
+    let mut session = RuntimeBenchmarkSession::new(WorkloadProfile::DefaultWidgets);
+    session.set_allow_self_pid(true);
+    session
+        .track_process(std::process::id(), ProcessRole::Core)
+        .expect("track core");
+
+    let ledger = session
+        .execute_full_procedure(
+            1,
+            Duration::from_millis(10),
+            Duration::from_millis(50),
+            Duration::from_millis(25),
+        )
+        .expect("execute procedure");
+
+    assert!(
+        matches!(
+            ledger.overall_verdict,
+            BenchmarkVerdict::ProvisionalDiagnostic { .. }
+        ),
+        "Provisional profile must produce ProvisionalDiagnostic verdict, not hard Pass/Fail: {:?}",
+        ledger.overall_verdict
+    );
 }
