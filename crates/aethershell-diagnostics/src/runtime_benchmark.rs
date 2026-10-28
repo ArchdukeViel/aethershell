@@ -249,7 +249,8 @@ pub fn validate_process_identity(
     role: ProcessRole,
     allow_self: bool,
 ) -> Result<ProcessIdentityInfo, ProcessValidationError> {
-    if !allow_self && pid == std::process::id() {
+    let is_self = pid == std::process::id();
+    if is_self && !allow_self {
         return Err(ProcessValidationError::SelfAttachmentDisallowed { pid });
     }
 
@@ -305,7 +306,8 @@ pub fn validate_process_identity(
         .unwrap_or("")
         .to_string();
 
-    if role != ProcessRole::Auxiliary && !allow_self {
+    let exempt_due_to_self = allow_self && is_self;
+    if role != ProcessRole::Auxiliary && !exempt_due_to_self {
         let expected = role.default_executable_name();
         if !exe_name.eq_ignore_ascii_case(expected) {
             unsafe {
@@ -613,8 +615,25 @@ pub enum BenchmarkVerdict {
     Failed { reason: String },
     /// Core metrics verified within budget; graphics or audio hardware instrumentation unavailable.
     PartiallyVerified { limitation: String },
+    /// Diagnostic profile measured against provisional proposal per PRD Section 14.2; not a ratified acceptance budget.
+    ProvisionalDiagnostic {
+        within_provisional_proposal: bool,
+        detail: String,
+    },
     /// Benchmark could not execute or required processes were unavailable.
     Blocked { reason: String },
+}
+
+/// Execution mode of a runtime benchmark measurement procedure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BenchmarkExecutionMode {
+    /// Formal PRD Section 14 acceptance qualification (>= 5 repetitions, >= 60s steady-state, clean process isolation).
+    FormalAcceptance,
+    /// Diagnostic simulation utilizing self-PID attachment or mock workloads.
+    DiagnosticSimulation,
+    /// Quick diagnostic evaluation (< 5 repetitions or abbreviated duration).
+    QuickDiagnostic,
 }
 
 /// Record of a single steady-state measurement repetition.
@@ -643,6 +662,7 @@ pub struct RuntimeBenchmarkLedger {
     pub profile: WorkloadProfile,
     pub target_budget: ResourceBudget,
     pub environment: EnvironmentMetadata,
+    pub execution_mode: BenchmarkExecutionMode,
     pub warmup_duration_seconds: u32,
     pub repetition_duration_seconds: u32,
     pub repetitions: Vec<RepetitionRecord>,
@@ -888,6 +908,7 @@ pub struct RuntimeBenchmarkSession {
     environment: EnvironmentMetadata,
     samplers: HashMap<ProcessRole, ProcessSampler>,
     allow_self_pid: bool,
+    is_formal_qualification: bool,
 }
 
 impl RuntimeBenchmarkSession {
@@ -899,12 +920,23 @@ impl RuntimeBenchmarkSession {
             environment: EnvironmentMetadata::detect(),
             samplers: HashMap::new(),
             allow_self_pid: false,
+            is_formal_qualification: false,
         }
     }
 
     /// Permits self-attachment for internal test suites.
     pub fn set_allow_self_pid(&mut self, allow: bool) {
         self.allow_self_pid = allow;
+    }
+
+    /// Sets whether this session is executing formal PRD Section 14 qualification.
+    pub fn set_formal_qualification(&mut self, formal: bool) {
+        self.is_formal_qualification = formal;
+    }
+
+    /// Returns whether this session is configured for formal qualification.
+    pub fn is_formal_qualification(&self) -> bool {
+        self.is_formal_qualification
     }
 
     /// Returns a reference to the active target budget.
@@ -1043,9 +1075,11 @@ impl RuntimeBenchmarkSession {
         let mut aggregates = Vec::new();
         let mut core_ws_median = 0.0;
         let mut core_cpu_median = 0.0;
+        let mut total_samples_collected = 0;
 
         for sampler in self.samplers.values() {
             let agg = sampler.aggregate();
+            total_samples_collected += agg.sample_count;
             if agg.role == ProcessRole::Core {
                 core_ws_median = agg.working_set_median_mb;
                 core_cpu_median = agg.cpu_median_pct;
@@ -1068,6 +1102,8 @@ impl RuntimeBenchmarkSession {
         let wakeup_status = self.probe_wakeup_metrics();
         let presentation_status = self.probe_presentation_metrics();
 
+        let is_ratified = self.target_budget.classification == BudgetClassification::RatifiedTarget;
+
         // 4. Verify against PRD Section 14.2 budget
         let verdict = if !anomalies.is_empty() {
             BenchmarkVerdict::Failed {
@@ -1077,46 +1113,68 @@ impl RuntimeBenchmarkSession {
                     anomalies[0].detail
                 ),
             }
-        } else if core_cpu_median > self.target_budget.max_core_cpu_pct {
+        } else if combined_ws_samples.is_empty() || total_samples_collected == 0 {
             BenchmarkVerdict::Failed {
-                reason: format!(
-                    "Core CPU median {:.2}% exceeds budget {:.2}%",
-                    core_cpu_median, self.target_budget.max_core_cpu_pct
-                ),
+                reason: "No valid samples collected during recording period; empty dataset cannot substantiate benchmark verification".into(),
             }
-        } else if core_ws_median > self.target_budget.max_core_working_set_mb {
-            BenchmarkVerdict::Failed {
-                reason: format!(
-                    "Core working set {:.2} MB exceeds budget {:.2} MB",
-                    core_ws_median, self.target_budget.max_core_working_set_mb
-                ),
-            }
-        } else if combined_cpu_median > self.target_budget.max_combined_cpu_pct {
-            BenchmarkVerdict::Failed {
-                reason: format!(
-                    "Combined CPU median {:.2}% exceeds budget {:.2}%",
-                    combined_cpu_median, self.target_budget.max_combined_cpu_pct
-                ),
-            }
-        } else if combined_ws_median > self.target_budget.max_combined_working_set_mb {
-            BenchmarkVerdict::Failed {
-                reason: format!(
-                    "Combined working set {:.2} MB exceeds budget {:.2} MB",
-                    combined_ws_median, self.target_budget.max_combined_working_set_mb
-                ),
-            }
-        } else if matches!(gpu_status, GpuMetricStatus::Unavailable { .. })
-            || matches!(wakeup_status, WakeupMetricStatus::Unavailable { .. })
-            || matches!(
-                presentation_status,
-                PresentationMetricStatus::Unavailable { .. }
-            )
-        {
-            BenchmarkVerdict::PartiallyVerified {
-                limitation: "Process CPU and RAM budgets verified; GPU, kernel wakeups, or presentation instrumentation unavailable in environment".into(),
+        } else if is_ratified {
+            if core_cpu_median > self.target_budget.max_core_cpu_pct {
+                BenchmarkVerdict::Failed {
+                    reason: format!(
+                        "Core CPU median {:.2}% exceeds ratified budget {:.2}%",
+                        core_cpu_median, self.target_budget.max_core_cpu_pct
+                    ),
+                }
+            } else if core_ws_median > self.target_budget.max_core_working_set_mb {
+                BenchmarkVerdict::Failed {
+                    reason: format!(
+                        "Core working set {:.2} MB exceeds ratified budget {:.2} MB",
+                        core_ws_median, self.target_budget.max_core_working_set_mb
+                    ),
+                }
+            } else if combined_cpu_median > self.target_budget.max_combined_cpu_pct {
+                BenchmarkVerdict::Failed {
+                    reason: format!(
+                        "Combined CPU median {:.2}% exceeds ratified budget {:.2}%",
+                        combined_cpu_median, self.target_budget.max_combined_cpu_pct
+                    ),
+                }
+            } else if combined_ws_median > self.target_budget.max_combined_working_set_mb {
+                BenchmarkVerdict::Failed {
+                    reason: format!(
+                        "Combined working set {:.2} MB exceeds ratified budget {:.2} MB",
+                        combined_ws_median, self.target_budget.max_combined_working_set_mb
+                    ),
+                }
+            } else if matches!(gpu_status, GpuMetricStatus::Unavailable { .. })
+                || matches!(wakeup_status, WakeupMetricStatus::Unavailable { .. })
+                || matches!(
+                    presentation_status,
+                    PresentationMetricStatus::Unavailable { .. }
+                )
+            {
+                BenchmarkVerdict::PartiallyVerified {
+                    limitation: "Process CPU and RAM budgets verified within ratified PRD Section 14.2; GPU, kernel wakeups, or presentation instrumentation unavailable in environment".into(),
+                }
+            } else {
+                BenchmarkVerdict::Passed
             }
         } else {
-            BenchmarkVerdict::Passed
+            // Provisional diagnostic proposal: preserve separation from ratified budgets per PRD Section 14.2
+            let within_provisional = core_cpu_median <= self.target_budget.max_core_cpu_pct
+                && core_ws_median <= self.target_budget.max_core_working_set_mb
+                && combined_cpu_median <= self.target_budget.max_combined_cpu_pct
+                && combined_ws_median <= self.target_budget.max_combined_working_set_mb;
+
+            BenchmarkVerdict::ProvisionalDiagnostic {
+                within_provisional_proposal: within_provisional,
+                detail: format!(
+                    "Measured Core WS: {:.2} MB (prop: {:.2} MB), Core CPU: {:.2}% (prop: {:.2}%), Combined WS: {:.2} MB, Combined CPU: {:.2}%. Evaluated against provisional diagnostic proposal per PRD Section 14.2.",
+                    core_ws_median, self.target_budget.max_core_working_set_mb,
+                    core_cpu_median, self.target_budget.max_core_cpu_pct,
+                    combined_ws_median, combined_cpu_median
+                ),
+            }
         };
 
         Ok(RepetitionRecord {
@@ -1146,6 +1204,63 @@ impl RuntimeBenchmarkSession {
         recording_duration: Duration,
         sample_interval: Duration,
     ) -> Result<RuntimeBenchmarkLedger, String> {
+        // 1. Parameter Validation
+        if repetition_count == 0 {
+            return Err("Invalid benchmark parameters: repetitions must be >= 1 (got 0)".into());
+        }
+        if recording_duration.is_zero() {
+            return Err(
+                "Invalid benchmark parameters: recording duration must be positive (> 0)".into(),
+            );
+        }
+        if sample_interval.is_zero() {
+            return Err("Invalid benchmark parameters: sample interval must be positive".into());
+        }
+        if sample_interval > recording_duration {
+            return Err(format!(
+                "Invalid benchmark parameters: sample interval ({:?}) cannot exceed recording duration ({:?})",
+                sample_interval, recording_duration
+            ));
+        }
+        if repetition_count > 100 {
+            return Err(
+                "Invalid benchmark parameters: repetitions exceeds upper bound of 100".into(),
+            );
+        }
+        if recording_duration > Duration::from_secs(3600) {
+            return Err("Invalid benchmark parameters: recording duration exceeds upper bound of 3600 seconds".into());
+        }
+
+        // 2. Formal Qualification Gate Enforcements (PRD Section 14)
+        let uses_self = self.allow_self_pid
+            || self
+                .samplers
+                .values()
+                .any(|s| s.pid() == std::process::id());
+        if self.is_formal_qualification {
+            if uses_self {
+                return Err("Formal PRD Section 14 acceptance qualification cannot be executed with self-PID attachment".into());
+            }
+            if self.target_budget.classification != BudgetClassification::RatifiedTarget {
+                return Err(format!(
+                    "Formal PRD Section 14 acceptance qualification only applies to ratified target budgets (WorkloadProfile::MinimalIdle), but {:?} has provisional proposals",
+                    self.profile
+                ));
+            }
+            if repetition_count < 5 {
+                return Err(format!(
+                    "Formal PRD Section 14 acceptance qualification requires at least 5 qualifying repetitions (got {})",
+                    repetition_count
+                ));
+            }
+            if recording_duration < Duration::from_secs(60) {
+                return Err(format!(
+                    "Formal PRD Section 14 acceptance qualification requires recording duration >= 60 seconds per repetition (got {}s)",
+                    recording_duration.as_secs()
+                ));
+            }
+        }
+
         let mut repetitions = Vec::with_capacity(repetition_count as usize);
 
         for i in 1..=repetition_count {
@@ -1153,24 +1268,54 @@ impl RuntimeBenchmarkSession {
             repetitions.push(record);
         }
 
-        // Derive overall ledger verdict
+        if repetitions.is_empty() {
+            return Err("Runtime benchmark execution yielded 0 valid repetition records".into());
+        }
+
+        // 3. Overall ledger verdict derivation
         let has_failures = repetitions
             .iter()
             .any(|r| matches!(r.verdict, BenchmarkVerdict::Failed { .. }));
         let has_partial = repetitions
             .iter()
             .any(|r| matches!(r.verdict, BenchmarkVerdict::PartiallyVerified { .. }));
+        let has_provisional = repetitions
+            .iter()
+            .any(|r| matches!(r.verdict, BenchmarkVerdict::ProvisionalDiagnostic { .. }));
 
         let overall_verdict = if has_failures {
             BenchmarkVerdict::Failed {
                 reason: "One or more repetitions exceeded budget targets or experienced process exit anomalies".into(),
             }
+        } else if has_provisional {
+            let all_within = repetitions.iter().all(|r| match &r.verdict {
+                BenchmarkVerdict::ProvisionalDiagnostic {
+                    within_provisional_proposal,
+                    ..
+                } => *within_provisional_proposal,
+                _ => false,
+            });
+            BenchmarkVerdict::ProvisionalDiagnostic {
+                within_provisional_proposal: all_within,
+                detail: format!(
+                    "All {} repetitions completed under provisional diagnostic proposal per PRD Section 14.2.",
+                    repetitions.len()
+                ),
+            }
         } else if has_partial {
             BenchmarkVerdict::PartiallyVerified {
-                limitation: "CPU and memory verified within PRD budget; GPU, wakeup, or presentation hardware instrumentation unavailable in execution context".into(),
+                limitation: "CPU and memory verified within ratified PRD Section 14.2 budget; GPU, wakeup, or presentation hardware instrumentation unavailable in execution context".into(),
             }
         } else {
             BenchmarkVerdict::Passed
+        };
+
+        let execution_mode = if uses_self {
+            BenchmarkExecutionMode::DiagnosticSimulation
+        } else if self.is_formal_qualification {
+            BenchmarkExecutionMode::FormalAcceptance
+        } else {
+            BenchmarkExecutionMode::QuickDiagnostic
         };
 
         let is_ratified = self.target_budget.classification == BudgetClassification::RatifiedTarget;
@@ -1180,20 +1325,27 @@ impl RuntimeBenchmarkSession {
             "Budget thresholds are provisional diagnostic proposals per PRD Section 14.2, not ratified hard acceptance budgets.".into()
         };
 
+        let mut notes = vec![
+            "Measurements capture resident WorkingSetSize and PrivateUsage via Win32 K32GetProcessMemoryInfo.".into(),
+            "CPU load normalized across logical cores via GetProcessTimes, isolating target processes from measurement overhead.".into(),
+            "Combined multi-process percentiles computed from synchronized timestamp samples.".into(),
+            budget_note,
+        ];
+
+        if execution_mode == BenchmarkExecutionMode::DiagnosticSimulation {
+            notes.push("DIAGNOSTIC SIMULATION: Process self-attachment override was active. This run constitutes diagnostic simulation only, never formal PRD Section 14 acceptance evidence.".into());
+        }
+
         Ok(RuntimeBenchmarkLedger {
             profile: self.profile,
             target_budget: self.target_budget.clone(),
             environment: self.environment.clone(),
+            execution_mode,
             warmup_duration_seconds: warmup.as_secs() as u32,
             repetition_duration_seconds: recording_duration.as_secs() as u32,
             repetitions,
             overall_verdict,
-            notes: vec![
-                "Measurements capture resident WorkingSetSize and PrivateUsage via Win32 K32GetProcessMemoryInfo.".into(),
-                "CPU load normalized across logical cores via GetProcessTimes, isolating target processes from measurement overhead.".into(),
-                "Combined multi-process percentiles computed from synchronized timestamp samples.".into(),
-                budget_note,
-            ],
+            notes,
         })
     }
 }

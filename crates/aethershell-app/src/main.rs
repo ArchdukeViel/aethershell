@@ -121,14 +121,54 @@ async fn main() -> ExitCode {
             .unwrap_or(5);
 
         let allow_self_pid = args.iter().any(|a| a == "--allow-self-pid");
+        let is_formal = args
+            .iter()
+            .any(|a| a == "--formal" || a == "--qualification");
+
+        if repetitions == 0 {
+            eprintln!("Error: Benchmark repetitions must be at least 1 (got 0).");
+            return ExitCode::FAILURE;
+        }
+        if duration_secs == 0 {
+            eprintln!("Error: Benchmark recording duration must be positive (> 0 seconds).");
+            return ExitCode::FAILURE;
+        }
+        if is_formal && allow_self_pid {
+            eprintln!(
+                "Error: Cannot run formal PRD Section 14 qualification with --allow-self-pid override."
+            );
+            return ExitCode::FAILURE;
+        }
+        if is_formal && repetitions < 5 {
+            eprintln!(
+                "Error: Formal PRD Section 14 qualification requires --repetitions >= 5 (got {}).",
+                repetitions
+            );
+            return ExitCode::FAILURE;
+        }
+        if is_formal && duration_secs < 60 {
+            eprintln!(
+                "Error: Formal PRD Section 14 qualification requires --duration >= 60 (got {}).",
+                duration_secs
+            );
+            return ExitCode::FAILURE;
+        }
+        if is_formal && profile != aethershell_diagnostics::WorkloadProfile::MinimalIdle {
+            eprintln!(
+                "Error: Formal PRD Section 14 qualification only applies to ratified MinimalIdle profile, but {:?} has provisional proposals.",
+                profile
+            );
+            return ExitCode::FAILURE;
+        }
 
         println!(
-            "Running genuine multi-process runtime benchmark (Profile: {:?}, Repetitions: {}, Duration: {}s, Warmup: {}s)...",
-            profile, repetitions, duration_secs, warmup_secs
+            "Running genuine multi-process runtime benchmark (Profile: {:?}, Repetitions: {}, Duration: {}s, Warmup: {}s, Formal: {})...",
+            profile, repetitions, duration_secs, warmup_secs, is_formal
         );
 
         let mut session = aethershell_diagnostics::RuntimeBenchmarkSession::new(profile);
         session.set_allow_self_pid(allow_self_pid);
+        session.set_formal_qualification(is_formal);
 
         let core_pid: u32 = match args
             .iter()
@@ -274,7 +314,8 @@ async fn main() -> ExitCode {
 
         return match ledger.overall_verdict {
             aethershell_diagnostics::BenchmarkVerdict::Passed
-            | aethershell_diagnostics::BenchmarkVerdict::PartiallyVerified { .. } => {
+            | aethershell_diagnostics::BenchmarkVerdict::PartiallyVerified { .. }
+            | aethershell_diagnostics::BenchmarkVerdict::ProvisionalDiagnostic { .. } => {
                 ExitCode::SUCCESS
             }
             _ => ExitCode::FAILURE,
