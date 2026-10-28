@@ -191,7 +191,7 @@ impl AppEngine {
         &self,
         pipe_name: &str,
         is_safe_mode: bool,
-    ) -> Result<Option<u32>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<u32>, Box<dyn std::error::Error + Send + Sync>> {
         sync_script_worker_internal(
             &self.script_supervisor,
             &self.active_config,
@@ -1342,7 +1342,7 @@ impl AppEngine {
                     "update_layout" | "reload_profile" => {
                         let is_safe_mode = taskbar.lock().await.is_safe_mode();
                         let pipe_name = format!(r"\\.\pipe\aethershell-ipc-{}", valid_session_id);
-                        let _ = sync_script_worker_internal(
+                        let sync_res = sync_script_worker_internal(
                             &supervisor,
                             &active_config,
                             &cached_bindings,
@@ -1350,6 +1350,10 @@ impl AppEngine {
                             is_safe_mode,
                         )
                         .await;
+                        let (worker_synced, worker_err) = match sync_res {
+                            Ok(_) => (true, None),
+                            Err(e) => (false, Some(e.to_string())),
+                        };
 
                         let mut win_mgr = desktop_windows.lock().await;
                         let mut rendered_commands = 0;
@@ -1371,12 +1375,17 @@ impl AppEngine {
                             }
                         }
                         info!(
-                            "Updated layout and re-rendered on live desktop host ({} commands)",
-                            rendered_commands
+                            "Updated layout and re-rendered on live desktop host ({} commands, worker_synced: {})",
+                            rendered_commands, worker_synced
                         );
                         IpcResponse::ok(
                             req.message_id,
-                            serde_json::json!({ "rendered_commands": rendered_commands, "success": true }),
+                            serde_json::json!({
+                                "rendered_commands": rendered_commands,
+                                "success": true,
+                                "worker_synced": worker_synced,
+                                "worker_error": worker_err,
+                            }),
                         )
                     }
                     "get_config" => {
@@ -1500,19 +1509,19 @@ impl AppEngine {
                         }
 
                         // Synchronize on-demand script worker with updated configuration
-                        {
+                        let script_sync_res = {
                             let is_safe_mode = taskbar.lock().await.is_safe_mode();
                             let pipe_name =
                                 format!(r"\\.\pipe\aethershell-ipc-{}", valid_session_id);
-                            let _ = sync_script_worker_internal(
+                            sync_script_worker_internal(
                                 &supervisor,
                                 &active_config,
                                 &cached_bindings,
                                 &pipe_name,
                                 is_safe_mode,
                             )
-                            .await;
-                        }
+                            .await
+                        };
 
                         // Propagate changes to live engine subsystems
                         {
@@ -1554,12 +1563,27 @@ impl AppEngine {
                             }
                         }
 
-                        info!("IPC 'set_config' successfully applied and persisted atomically.");
+                        let (applied, sync_err) = match script_sync_res {
+                            Ok(_) => (true, None),
+                            Err(e) => {
+                                warn!(
+                                    "IPC 'set_config' persisted to disk, but runtime worker synchronization failed: {}",
+                                    e
+                                );
+                                (false, Some(e.to_string()))
+                            }
+                        };
+
+                        info!(
+                            "IPC 'set_config' processed (applied: {}, sync_err: {:?})",
+                            applied, sync_err
+                        );
                         IpcResponse::ok(
                             req.message_id,
                             serde_json::json!({
-                                "applied": true,
+                                "applied": applied,
                                 "config": candidate_cfg,
+                                "worker_sync_error": sync_err,
                             }),
                         )
                     }
@@ -1821,7 +1845,7 @@ pub async fn sync_script_worker_internal(
     cached_bindings: &Arc<RwLock<HashMap<String, BindingValue>>>,
     pipe_name: &str,
     is_safe_mode: bool,
-) -> Result<Option<u32>, Box<dyn std::error::Error>> {
+) -> Result<Option<u32>, Box<dyn std::error::Error + Send + Sync>> {
     let (scripting_enabled, worker_exe_name, active_script, trusted_digests) = {
         if let Ok(cfg) = active_config.read() {
             (
@@ -1843,7 +1867,7 @@ pub async fn sync_script_worker_internal(
     // 1. Safe Mode or Scripting Disabled -> terminate worker and clean bindings
     if is_safe_mode || !scripting_enabled {
         let mut sup = supervisor.lock().await;
-        if sup.is_running() {
+        if sup.is_running() || sup.has_active_child() {
             info!("Terminating script worker due to safe mode or scripting disabled");
             sup.terminate_worker();
         }
@@ -1894,7 +1918,7 @@ pub async fn sync_script_worker_internal(
         Some(s) if !s.trim().is_empty() => s,
         _ => {
             let mut sup = supervisor.lock().await;
-            if sup.is_running() {
+            if sup.is_running() || sup.has_active_child() {
                 info!("No scripted widgets active; stopping on-demand script worker per PRD Section 13.2");
                 sup.terminate_worker();
             }
@@ -1913,7 +1937,18 @@ pub async fn sync_script_worker_internal(
 
     if !script_path.is_file() {
         warn!("Target script file does not exist: {:?}", script_path);
-        return Ok(None);
+        let mut sup = supervisor.lock().await;
+        if sup.is_running() || sup.has_active_child() {
+            info!(
+                "Terminating running script worker because target script file no longer exists: {:?}",
+                script_path
+            );
+            sup.terminate_worker();
+        }
+        if let Ok(mut cache) = cached_bindings.write() {
+            cache.retain(|k, _| !k.starts_with("script."));
+        }
+        return Err(format!("Target script file does not exist: {:?}", script_path).into());
     }
 
     // 4. Enforce mandatory explicit user trust grant (PRD Section 13.2 / Q32:B / Gate G10)
@@ -1926,10 +1961,18 @@ pub async fn sync_script_worker_internal(
         Ok(digest) => digest,
         Err(e) => {
             warn!(
-                "Security violation: Script '{:?}' rejected by trust authorization: {}. Worker launch blocked per PRD Section 13.2.",
+                "Security violation: Script '{:?}' rejected by trust authorization: {}. Worker launch / execution revoked per PRD Section 13.2.",
                 script_path, e
             );
-            return Ok(None);
+            let mut sup = supervisor.lock().await;
+            if sup.is_running() || sup.has_active_child() {
+                info!("Terminating running script worker due to trust authorization failure / revocation");
+                sup.terminate_worker();
+            }
+            if let Ok(mut cache) = cached_bindings.write() {
+                cache.retain(|k, _| !k.starts_with("script."));
+            }
+            return Err(format!("Script trust authorization rejected: {}", e).into());
         }
     };
 
@@ -1940,23 +1983,47 @@ pub async fn sync_script_worker_internal(
             "Script worker is quarantined ({:?}); launch aborted",
             sup.state()
         );
-        return Ok(None);
+        return Err(format!("Script supervisor is quarantined: {:?}", sup.state()).into());
     }
 
+    let canonical_target = aethershell_script_host::normalize_script_path(&script_path)
+        .unwrap_or_else(|_| script_path.clone());
+
     if sup.is_child_alive() {
-        if sup.current_script() == Some(script_path.as_path()) {
+        let is_same_script = sup
+            .current_script()
+            .map(|p| {
+                let canon_curr = aethershell_script_host::normalize_script_path(p)
+                    .unwrap_or_else(|_| p.to_path_buf());
+                aethershell_script_host::paths_equal(&canon_curr, &canonical_target)
+            })
+            .unwrap_or(false);
+
+        let is_same_digest = sup.current_digest() == Some(&approved_digest);
+
+        if is_same_script && is_same_digest {
             tracing::debug!(
-                "Script worker already running and alive for {:?} (PID: {:?})",
-                script_path,
+                "Script worker already running and alive for {:?} with matching authorized digest {} (PID: {:?})",
+                canonical_target,
+                approved_digest,
                 sup.active_child_pid()
             );
             return Ok(sup.active_child_pid());
         } else {
-            info!(
-                "Active script changed from {:?} to {:?}; restarting worker",
-                sup.current_script(),
-                script_path
-            );
+            if !is_same_script {
+                info!(
+                    "Active script changed from {:?} to {:?}; restarting worker",
+                    sup.current_script(),
+                    canonical_target
+                );
+            } else {
+                info!(
+                    "Active script content digest updated at {:?} (from {:?} to {}); restarting worker with approved new digest",
+                    canonical_target,
+                    sup.current_digest(),
+                    approved_digest
+                );
+            }
             sup.terminate_worker();
             if let Ok(mut cache) = cached_bindings.write() {
                 cache.retain(|k, _| !k.starts_with("script."));
@@ -1970,12 +2037,12 @@ pub async fn sync_script_worker_internal(
 
     // 7. Spawn worker with Job Object containment and verified approved digest
     let pid = sup
-        .spawn_worker(&host_bin, &script_path, &approved_digest, pipe_name)
+        .spawn_worker(&host_bin, &canonical_target, &approved_digest, pipe_name)
         .map_err(|e| format!("Supervisor spawn_worker error: {}", e))?;
 
     info!(
-        "Successfully launched supervised on-demand Lua worker (PID: {}) for script {:?}",
-        pid, script_path
+        "Successfully launched supervised on-demand Lua worker (PID: {}) for script {:?} (digest: {})",
+        pid, canonical_target, approved_digest
     );
 
     Ok(Some(pid))
