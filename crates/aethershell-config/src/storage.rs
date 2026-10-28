@@ -331,6 +331,12 @@ impl ConfigManager {
 /// Per PRD Q38:B: Portable application binaries use canonical AppData settings, not portable settings beside executable.
 /// Consistently resolves configuration to `%LOCALAPPDATA%\AetherShell` (or fallback `./data` if LOCALAPPDATA is unset).
 pub fn resolve_app_data_dir() -> PathBuf {
+    if let Ok(appdata_override) = std::env::var("AETHERSHELL_APP_DATA_DIR") {
+        let path = PathBuf::from(appdata_override);
+        if !path.as_os_str().is_empty() {
+            return path;
+        }
+    }
     if let Ok(override_path) = std::env::var("AETHERSHELL_CONFIG_DIR") {
         let path = PathBuf::from(override_path);
         if !path.as_os_str().is_empty() {

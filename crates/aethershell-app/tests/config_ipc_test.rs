@@ -524,3 +524,176 @@ async fn test_set_config_transactional_rollback_on_disk_persistence_failure() {
     let _ = fs::remove_dir_all(&blocked_path);
     harness.stop().await;
 }
+
+#[tokio::test]
+async fn test_set_config_response_contract_fields() {
+    let harness = ConfigTestHarness::start("secret_test_token_contract_01").await;
+
+    let candidate_cfg = AppConfig {
+        profile: "signature_minimal".into(),
+        ..Default::default()
+    };
+
+    let resp = harness
+        .send(
+            "set_config",
+            serde_json::json!({
+                "session_token": "secret_test_token_contract_01",
+                "config": candidate_cfg
+            }),
+        )
+        .await;
+
+    assert!(resp.success, "set_config envelope must succeed");
+    let payload = &resp.payload;
+    assert_eq!(payload["accepted"], true);
+    assert_eq!(payload["success"], true);
+    assert_eq!(payload["persisted"], true);
+    assert_eq!(payload["applied"], true);
+    assert_eq!(payload["worker_synced"], true);
+    assert!(payload["worker_sync_error"].is_null());
+    assert!(payload["render_error"].is_null());
+    assert!(payload["rendered"].is_boolean());
+    assert!(payload["rendered_commands"].is_number());
+    assert_eq!(payload["config"]["profile"], "signature_minimal");
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_update_layout_response_contract_fields() {
+    let harness = ConfigTestHarness::start("secret_test_token_contract_02").await;
+
+    let resp = harness
+        .send(
+            "update_layout",
+            serde_json::json!({
+                "session_token": "secret_test_token_contract_02"
+            }),
+        )
+        .await;
+
+    assert!(resp.success, "update_layout envelope must succeed");
+    let payload = &resp.payload;
+    assert_eq!(payload["accepted"], true);
+    assert_eq!(payload["success"], true);
+    assert_eq!(payload["persisted"], false);
+    assert_eq!(payload["applied"], true);
+    assert_eq!(payload["worker_synced"], true);
+    assert!(payload["worker_sync_error"].is_null());
+    assert!(payload["render_error"].is_null());
+    assert!(payload["rendered"].is_boolean());
+    assert!(payload["rendered_commands"].is_number());
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_set_config_partial_failure_untrusted_script_sync_fails_applied() {
+    let harness = ConfigTestHarness::start("secret_test_token_contract_03").await;
+
+    let mut candidate_cfg = AppConfig {
+        profile: "signature_minimal".into(),
+        ..Default::default()
+    };
+    candidate_cfg.scripting.enabled = true;
+    candidate_cfg.scripting.active_script = Some("untrusted_script_not_in_ledger.lua".into());
+    candidate_cfg
+        .scripting
+        .require_explicit_trust_for_imported_scripts = true;
+
+    let resp = harness
+        .send(
+            "set_config",
+            serde_json::json!({
+                "session_token": "secret_test_token_contract_03",
+                "config": candidate_cfg
+            }),
+        )
+        .await;
+
+    assert!(
+        resp.success,
+        "IPC transport/request acceptance must succeed"
+    );
+    let payload = &resp.payload;
+    assert_eq!(payload["accepted"], true);
+    assert_eq!(
+        payload["persisted"], true,
+        "Config must be persisted to disk"
+    );
+    assert_eq!(
+        payload["worker_synced"], false,
+        "Worker sync must fail for untrusted script"
+    );
+    assert!(
+        payload["worker_sync_error"].is_string(),
+        "worker_sync_error must record failure detail"
+    );
+    assert_eq!(
+        payload["applied"], false,
+        "Complete application must fail when worker synchronization fails"
+    );
+    assert_eq!(
+        payload["success"], false,
+        "Payload success field must report false on partial failure"
+    );
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_update_layout_missing_render_target_fails_applied() {
+    let harness = ConfigTestHarness::start("secret_test_token_contract_04").await;
+
+    // Simulate primary desktop window present, but desktop renderer missing
+    {
+        let dummy_win = aethershell_desktop::DesktopHostWindow::create_dummy_for_test(
+            "test-primary-mon",
+            [0, 0, 1920, 1080],
+        );
+        let win_mgr = harness.engine.desktop_windows();
+        let mut mgr = win_mgr.lock().await;
+        mgr.push_window_for_test(dummy_win);
+        assert!(mgr.primary_window().is_some());
+    }
+
+    let resp = harness
+        .send(
+            "update_layout",
+            serde_json::json!({
+                "session_token": "secret_test_token_contract_04"
+            }),
+        )
+        .await;
+
+    assert!(resp.success, "IPC transport/request envelope must succeed");
+    let payload = &resp.payload;
+    assert_eq!(payload["accepted"], true);
+    assert_eq!(payload["worker_synced"], true);
+    assert_eq!(
+        payload["rendered"], false,
+        "rendered must be false when render target is missing"
+    );
+    assert_eq!(payload["rendered_commands"], 0);
+    assert!(
+        payload["render_error"].is_string(),
+        "render_error must report missing render target"
+    );
+    let render_err_msg = payload["render_error"].as_str().unwrap();
+    assert!(
+        render_err_msg.contains("uninitialized or missing"),
+        "Expected missing render target message, got: {}",
+        render_err_msg
+    );
+    assert_eq!(
+        payload["applied"], false,
+        "applied must be false when rendering fails due to missing render target"
+    );
+    assert_eq!(
+        payload["success"], false,
+        "payload success must be false when applied is false"
+    );
+
+    harness.stop().await;
+}

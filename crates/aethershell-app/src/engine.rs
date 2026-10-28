@@ -202,6 +202,104 @@ impl AppEngine {
         .await
     }
 
+    /// Executes a single periodic watchdog maintenance tick for supervised script worker status and integrity.
+    ///
+    /// Checks:
+    /// 1. Polls child worker status and reaps exited/crashed child processes.
+    /// 2. If quarantined or crashed, purges `script.*` bindings from `cached_bindings`.
+    /// 3. Continuous integrity verification (Hypothesis A / Continuous Enforcement):
+    ///    Checks whether the active script file on disk was modified, deleted, or revoked in `trusted_digests`.
+    ///    If invalid, immediately terminates worker and purges `script.*` bindings.
+    pub fn tick_script_worker_watchdog(&self) -> bool {
+        if let Ok(mut sup) = self.script_supervisor.try_lock() {
+            let exit_code = sup.poll_worker_status();
+            if let Some(code) = exit_code {
+                if code != 0 {
+                    warn!(
+                        "Script worker exited unexpectedly with code {}; crash count: {}",
+                        code,
+                        sup.crash_count()
+                    );
+                }
+                if let Ok(mut cache) = self.cached_bindings.write() {
+                    cache.retain(|k, _| !k.starts_with("script."));
+                }
+            }
+            if sup.is_quarantined() {
+                warn!("Script worker is quarantined: {:?}", sup.state());
+                if let Ok(mut cache) = self.cached_bindings.write() {
+                    cache.retain(|k, _| !k.starts_with("script."));
+                }
+            }
+
+            // Continuous, bounded-latency script worker integrity & revocation revalidation
+            if sup.has_active_child() {
+                let trusted_digests = self
+                    .active_config
+                    .read()
+                    .ok()
+                    .map(|c| c.scripting.trusted_digests.clone());
+                if let Err(integrity_err) =
+                    sup.verify_active_worker_integrity(trusted_digests.as_ref())
+                {
+                    warn!(
+                        "Script worker integrity verification failed during periodic watchdog: {}. Worker terminated and script bindings purged.",
+                        integrity_err
+                    );
+                    if let Ok(mut cache) = self.cached_bindings.write() {
+                        cache.retain(|k, _| !k.starts_with("script."));
+                    }
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Asynchronous variant of `tick_script_worker_watchdog` that waits for the script supervisor lock.
+    pub async fn tick_script_worker_watchdog_async(&self) {
+        let mut sup = self.script_supervisor.lock().await;
+        let exit_code = sup.poll_worker_status();
+        if let Some(code) = exit_code {
+            if code != 0 {
+                warn!(
+                    "Script worker exited unexpectedly with code {}; crash count: {}",
+                    code,
+                    sup.crash_count()
+                );
+            }
+            if let Ok(mut cache) = self.cached_bindings.write() {
+                cache.retain(|k, _| !k.starts_with("script."));
+            }
+        }
+        if sup.is_quarantined() {
+            warn!("Script worker is quarantined: {:?}", sup.state());
+            if let Ok(mut cache) = self.cached_bindings.write() {
+                cache.retain(|k, _| !k.starts_with("script."));
+            }
+        }
+
+        // Continuous, bounded-latency script worker integrity & revocation revalidation
+        if sup.has_active_child() {
+            let trusted_digests = self
+                .active_config
+                .read()
+                .ok()
+                .map(|c| c.scripting.trusted_digests.clone());
+            if let Err(integrity_err) = sup.verify_active_worker_integrity(trusted_digests.as_ref())
+            {
+                warn!(
+                    "Script worker integrity verification failed during periodic watchdog: {}. Worker terminated and script bindings purged.",
+                    integrity_err
+                );
+                if let Ok(mut cache) = self.cached_bindings.write() {
+                    cache.retain(|k, _| !k.starts_with("script."));
+                }
+            }
+        }
+    }
+
     /// Primary runtime entry point.
     pub async fn run(&self, is_safe_mode: bool) -> Result<(), Box<dyn std::error::Error>> {
         info!(
@@ -671,29 +769,10 @@ impl AppEngine {
                 last_telemetry_poll = now;
             }
 
-            // 3. Periodic script worker watchdog check and crash monitor (2s interval)
-            if now.duration_since(last_watchdog_check) >= std::time::Duration::from_secs(2) {
-                if let Ok(mut sup) = self.script_supervisor.try_lock() {
-                    let exit_code = sup.poll_worker_status();
-                    if let Some(code) = exit_code {
-                        if code != 0 {
-                            warn!(
-                                "Script worker exited unexpectedly with code {}; crash count: {}",
-                                code,
-                                sup.crash_count()
-                            );
-                        }
-                        if let Ok(mut cache) = self.cached_bindings.write() {
-                            cache.retain(|k, _| !k.starts_with("script."));
-                        }
-                    }
-                    if sup.is_quarantined() {
-                        warn!("Script worker is quarantined: {:?}", sup.state());
-                        if let Ok(mut cache) = self.cached_bindings.write() {
-                            cache.retain(|k, _| !k.starts_with("script."));
-                        }
-                    }
-                }
+            // 3. Periodic script worker watchdog check, crash monitor, and continuous integrity verification (2s nominal interval)
+            if now.duration_since(last_watchdog_check) >= std::time::Duration::from_secs(2)
+                && self.tick_script_worker_watchdog()
+            {
                 last_watchdog_check = now;
             }
 
@@ -1357,6 +1436,8 @@ impl AppEngine {
 
                         let mut win_mgr = desktop_windows.lock().await;
                         let mut rendered_commands = 0;
+                        let mut rendered = false;
+                        let mut render_err: Option<String> = None;
                         if let Some(primary) = win_mgr.primary_window() {
                             let width = primary.bounds[2].max(100) as f32;
                             let height = primary.bounds[3].max(100) as f32;
@@ -1369,22 +1450,46 @@ impl AppEngine {
                             win_mgr.set_interactive_regions(regions);
                             let mut r_lock = desktop_renderer.lock().await;
                             if let Some(ref mut renderer) = *r_lock {
-                                if let Ok(count) = renderer.render_scene(&scene) {
-                                    rendered_commands = count;
+                                match renderer.render_scene(&scene) {
+                                    Ok(count) => {
+                                        rendered = true;
+                                        rendered_commands = count;
+                                    }
+                                    Err(e) => {
+                                        rendered = false;
+                                        render_err = Some(e.to_string());
+                                        warn!("Direct2D scene rendering error during layout update: {}", e);
+                                    }
                                 }
+                            } else {
+                                rendered = false;
+                                render_err = Some(
+                                    "Desktop render target is uninitialized or missing".into(),
+                                );
+                                warn!("Direct2D scene rendering skipped: desktop render target is uninitialized or missing");
                             }
                         }
+
+                        // Complete application requires worker_synced AND no rendering error
+                        let applied = worker_synced && render_err.is_none();
+
                         info!(
-                            "Updated layout and re-rendered on live desktop host ({} commands, worker_synced: {})",
-                            rendered_commands, worker_synced
+                            "Updated layout and re-rendered on live desktop host (commands: {}, rendered: {}, applied: {}, worker_synced: {})",
+                            rendered_commands, rendered, applied, worker_synced
                         );
                         IpcResponse::ok(
                             req.message_id,
                             serde_json::json!({
-                                "rendered_commands": rendered_commands,
-                                "success": true,
+                                "accepted": true,
+                                "success": applied,
+                                "persisted": false,
+                                "applied": applied,
                                 "worker_synced": worker_synced,
-                                "worker_error": worker_err,
+                                "worker_error": worker_err.clone(),
+                                "worker_sync_error": worker_err,
+                                "rendered": rendered,
+                                "rendered_commands": rendered_commands,
+                                "render_error": render_err,
                             }),
                         )
                     }
@@ -1543,8 +1648,11 @@ impl AppEngine {
                             aud.set_fps_mode(fps_mode);
                         }
 
+                        // 2. Trigger live scene re-render with updated configuration
+                        let mut rendered_commands = 0;
+                        let mut rendered = false;
+                        let mut render_err: Option<String> = None;
                         {
-                            // 2. Trigger live scene re-render with updated configuration
                             let mut win_mgr = desktop_windows.lock().await;
                             if let Some(primary) = win_mgr.primary_window() {
                                 let width = primary.bounds[2].max(100) as f32;
@@ -1558,12 +1666,28 @@ impl AppEngine {
                                 win_mgr.set_interactive_regions(regions);
                                 let mut r_lock = desktop_renderer.lock().await;
                                 if let Some(ref mut renderer) = *r_lock {
-                                    let _ = renderer.render_scene(&scene);
+                                    match renderer.render_scene(&scene) {
+                                        Ok(count) => {
+                                            rendered = true;
+                                            rendered_commands = count;
+                                        }
+                                        Err(e) => {
+                                            rendered = false;
+                                            render_err = Some(e.to_string());
+                                            warn!("Direct2D scene rendering error during set_config: {}", e);
+                                        }
+                                    }
+                                } else {
+                                    rendered = false;
+                                    render_err = Some(
+                                        "Desktop render target is uninitialized or missing".into(),
+                                    );
+                                    warn!("Direct2D scene rendering skipped: desktop render target is uninitialized or missing");
                                 }
                             }
                         }
 
-                        let (applied, sync_err) = match script_sync_res {
+                        let (worker_synced, sync_err) = match script_sync_res {
                             Ok(_) => (true, None),
                             Err(e) => {
                                 warn!(
@@ -1574,16 +1698,27 @@ impl AppEngine {
                             }
                         };
 
+                        // Complete application requires worker_synced AND no rendering error
+                        let applied = worker_synced && render_err.is_none();
+
                         info!(
-                            "IPC 'set_config' processed (applied: {}, sync_err: {:?})",
-                            applied, sync_err
+                            "IPC 'set_config' processed (persisted: true, applied: {}, worker_synced: {}, rendered: {}, sync_err: {:?}, render_err: {:?})",
+                            applied, worker_synced, rendered, sync_err, render_err
                         );
                         IpcResponse::ok(
                             req.message_id,
                             serde_json::json!({
+                                "accepted": true,
+                                "success": applied,
+                                "persisted": true,
                                 "applied": applied,
-                                "config": candidate_cfg,
+                                "worker_synced": worker_synced,
+                                "worker_error": sync_err.clone(),
                                 "worker_sync_error": sync_err,
+                                "rendered": rendered,
+                                "rendered_commands": rendered_commands,
+                                "render_error": render_err,
+                                "config": candidate_cfg,
                             }),
                         )
                     }
