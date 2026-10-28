@@ -1461,6 +1461,12 @@ impl AppEngine {
                                         warn!("Direct2D scene rendering error during layout update: {}", e);
                                     }
                                 }
+                            } else {
+                                rendered = false;
+                                render_err = Some(
+                                    "Desktop render target is uninitialized or missing".into(),
+                                );
+                                warn!("Direct2D scene rendering skipped: desktop render target is uninitialized or missing");
                             }
                         }
 
@@ -1474,7 +1480,8 @@ impl AppEngine {
                         IpcResponse::ok(
                             req.message_id,
                             serde_json::json!({
-                                "success": true,
+                                "accepted": true,
+                                "success": applied,
                                 "persisted": false,
                                 "applied": applied,
                                 "worker_synced": worker_synced,
@@ -1670,6 +1677,12 @@ impl AppEngine {
                                             warn!("Direct2D scene rendering error during set_config: {}", e);
                                         }
                                     }
+                                } else {
+                                    rendered = false;
+                                    render_err = Some(
+                                        "Desktop render target is uninitialized or missing".into(),
+                                    );
+                                    warn!("Direct2D scene rendering skipped: desktop render target is uninitialized or missing");
                                 }
                             }
                         }
@@ -1695,7 +1708,8 @@ impl AppEngine {
                         IpcResponse::ok(
                             req.message_id,
                             serde_json::json!({
-                                "success": true,
+                                "accepted": true,
+                                "success": applied,
                                 "persisted": true,
                                 "applied": applied,
                                 "worker_synced": worker_synced,

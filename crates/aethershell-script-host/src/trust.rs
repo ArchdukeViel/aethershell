@@ -54,9 +54,12 @@ pub fn paths_equal(p1: &Path, p2: &Path) -> bool {
 /// 5. Distinct paths with identical filenames do not inherit each other's approval.
 ///
 /// Returns the verified approved SHA-256 digest on success, or a `TrustError` on failure.
-pub fn authorize_script_trust(
+/// Authorizes a precomputed script digest against an explicit trust registry (PRD Section 13.2 / Gate G10).
+/// Avoids redundant disk reads when script bytes have already been read.
+pub fn authorize_script_digest_trust(
     script_path: &Path,
     configured_path_str: &str,
+    actual_digest: &str,
     trusted_digests: &HashMap<String, String>,
 ) -> Result<String, TrustError> {
     if !script_path.is_file() {
@@ -65,11 +68,6 @@ pub fn authorize_script_trust(
 
     let canonical_script = normalize_script_path(script_path)
         .map_err(|e| TrustError::IoError(format!("Path normalization failed: {}", e)))?;
-
-    // Read script bytes and compute actual SHA-256 digest
-    let script_bytes = std::fs::read(&canonical_script)
-        .map_err(|e| TrustError::IoError(format!("Failed to read script file: {}", e)))?;
-    let actual_digest = sha256_hex(&script_bytes);
 
     // Find all matching trust entries for this canonical path or exact configured path string
     let mut matching_approvals: Vec<(&str, &str)> = Vec::new();
@@ -139,11 +137,38 @@ pub fn authorize_script_trust(
     if !actual_digest.eq_ignore_ascii_case(&approved_digest) {
         return Err(TrustError::DigestMismatch {
             expected: approved_digest,
-            actual: actual_digest,
+            actual: actual_digest.to_string(),
         });
     }
 
     Ok(approved_digest)
+}
+
+/// Authorizes a target script package against an explicit trust registry (PRD Section 13.2 / Gate G10).
+/// Reads the script file, computes its SHA-256 digest, and validates it against `trusted_digests`.
+pub fn authorize_script_trust(
+    script_path: &Path,
+    configured_path_str: &str,
+    trusted_digests: &HashMap<String, String>,
+) -> Result<String, TrustError> {
+    if !script_path.is_file() {
+        return Err(TrustError::InvalidPath(script_path.display().to_string()));
+    }
+
+    let canonical_script = normalize_script_path(script_path)
+        .map_err(|e| TrustError::IoError(format!("Path normalization failed: {}", e)))?;
+
+    // Read script bytes and compute actual SHA-256 digest
+    let script_bytes = std::fs::read(&canonical_script)
+        .map_err(|e| TrustError::IoError(format!("Failed to read script file: {}", e)))?;
+    let actual_digest = sha256_hex(&script_bytes);
+
+    authorize_script_digest_trust(
+        script_path,
+        configured_path_str,
+        &actual_digest,
+        trusted_digests,
+    )
 }
 
 /// Computes a standard SHA-256 hexadecimal hash over bytes without external dependencies.
