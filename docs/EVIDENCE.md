@@ -1449,3 +1449,44 @@ This document maintains verifiable test and validation records. Every entry is t
   - `%LOCALAPPDATA%\AetherShell`: 0 items verified.
 - **Evidentiary Verdict & Status**: `passed`. Reaffirms: 0 gates `VERIFIED`, 18 `PARTIALLY_VERIFIED`, 1 `NOT_APPLICABLE`, 1 `DEFERRED`. `CORE_STABLE_CANDIDATE` strictly not declared.
 
+---
+
+### EVD-037: Runtime Resource Optimizations & Windows VM Qualification Infrastructure (Decision Q47:A / Q48:A)
+- **Requirement / Gate**: Gate G13 (Real Measured Performance Budgets), Gate G01 (Core Startup & Lifecycle), Gate G09 (Audio Spectrum), Gate G18 (Strict No-Go & Evidence Governance), PRD Section 7.3, Section 14, Section 18.2, Owner Decisions Q01:B, Q02:A, Q37:A, Q47:A, Q48:A
+- **Candidate Commit**: HEAD
+- **Date & Environment**: 2026-10-28, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Following the empirical physical AMD Ryzen 5 5500U runtime benchmark (EVD-035), the project owner approved Decision Q47:A (high-return, low-risk, non-invasive runtime resource optimizations) and Decision Q48:A (authorizing a single lightweight disposable VM on the local PC allocating 2 GB RAM / 2 vCPUs under strict safety preflight constraints).
+- **Implementation & Remediation**:
+  1. **Event-Driven System Tray Thread (`crates/aethershell-app/src/tray.rs`)**:
+     - Converted `spawn_tray_thread` from a 50 Hz polling loop (`PeekMessageW` + `sleep(20ms)`) to event-driven blocking `GetMessageW`.
+     - When idle, the tray thread is blocked in the Windows kernel scheduler, consuming strictly 0 CPU cycles and 0 wakeups per second.
+     - Implemented `TrayShutdownHandle` wrapping the thread ID, hidden window handle (`HWND`), and atomic flag.
+     - When `tray_shutdown.store(true)` is called during engine exit or tests, it dispatches `WM_CLOSE` to the tray window and `WM_QUIT` to the thread message queue, unblocking `GetMessageW` immediately (< 100ms) and breaking the message loop cleanly without deadlock.
+     - Added unit test `test_tray_event_driven_blocking_and_shutdown_handle` verifying immediate event-driven unblocking and clean termination.
+  2. **Dirty-State Presentation Gating (`crates/aethershell-app/src/engine.rs`)**:
+     - Added dirty-state evaluation to the adaptive presentation loop in `engine.rs`.
+     - When audio spectrum is silent/empty (bands empty or <= 0.001) and live bindings (clock string, date string, telemetry metrics, and script variables) and geometry are unchanged from the previous frame, the engine marks the frame non-dirty.
+     - Skips redundant Direct2D scene compilation (`compile_live_scene_with_scale`) and DXGI swapchain draw calls (`render_scene`), reducing idle GPU/CPU presentation overhead while preserving instant reactive updates upon minute roll-over, telemetry change, audio playback, or window resize/DPI change.
+     - Added comprehensive integration test `test_dirty_state_presentation_gating_and_silence_suppression` verifying initial frame dirtying, idle silence suppression, noise floor filtering, active audio triggers, clock rollover updates, telemetry updates, and DPI scaling triggers.
+  3. **WASAPI Shared-Mode Capture Idle Backoff (`crates/aethershell-audio/src/wasapi.rs`)**:
+     - Optimized `run_active_stream` to back off to 250ms during prolonged silence (> 120 ticks / > 5-10 seconds of no audio), reducing background wakeups to 4 Hz while preserving instant reactive wakeup as soon as audio packets flow.
+     - Once processor completes band decay and marks silence, skips redundant empty sample processing cycles.
+     - In fallback mode (when no audio endpoint is active), increased sleep from 100ms to 250ms and avoids redundant processing when already silent.
+  4. **Disposable VM & Sandbox Infrastructure (`scripts/provision_disposable_vm.ps1`)**:
+     - Implemented automated provisioning script conforming strictly to Owner Decision Q48:A (allocating 2048 MB RAM / 2 vCPUs).
+     - Incorporates non-spoofable host hardware identity verification (`Win32_ComputerSystem`, `Win32_BIOS`), physical memory preflight (>= 2048 MB free), Volume C: storage preflight (>= 40 GB free), CPU load check (< 50%), and single-VM concurrency enforcement (prohibits multiple running VMs per Q01:B).
+     - Generates isolated Windows Sandbox profile (`AetherShell-Test-Sandbox.wsb`) with networking disabled (airgap containment) and shared test artifact mounting (`target\qualification_artifacts`).
+     - Preserves host `%LOCALAPPDATA%\AetherShell` strictly at 0 items.
+- **Verification & Test Results**:
+  - `cargo test --workspace`: 279 passed, 0 failed, 0 ignored (168 unit + 111 integration across 27 test executables).
+  - `cargo clippy --workspace --all-targets -- -D warnings`: passed cleanly (0 errors, 0 warnings).
+  - `cargo fmt --all --check`: passed cleanly (0 diff).
+  - `tests/provision_disposable_vm_tests.ps1`: 4/4 passed cleanly.
+  - `tests/test_inventory_tests.ps1`: 6/6 passed cleanly.
+  - `tests/run_ryzen5_benchmark_tests.ps1`: 11/11 passed cleanly.
+  - `scripts/provision_disposable_vm.ps1 -Mode Sandbox -DryRun`: passed with exit code 0; verified 7.3 GB free RAM, 59.5 GB free disk, 0 running VMs, and generated valid `.wsb` profile.
+  - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gate G13 reaffirmed truthfully as `PARTIALLY_VERIFIED`. `CORE_STABLE_CANDIDATE` strictly not declared; `v1.0.0` reserved.
+
+

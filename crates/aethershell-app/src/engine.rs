@@ -742,6 +742,11 @@ impl AppEngine {
             }
         }
 
+        // Dirty-state presentation gating state (PRD Section 7.3 & Decision Q47)
+        let mut last_rendered_bindings: Option<HashMap<String, BindingValue>> = None;
+        let mut last_rendered_geometry: Option<([i32; 4], f32)> = None;
+        let mut is_initial_frame = true;
+
         while !self.shutdown_flag.load(Ordering::Relaxed) {
             // Pump Win32 messages (WM_PAINT, WM_KEYDOWN, WM_ACTIVATE, WM_WTSSESSION_CHANGE, etc.)
             DesktopWindowManager::pump_messages();
@@ -827,11 +832,13 @@ impl AppEngine {
 
                 if !is_gaming {
                     // Sample audio spectrum
-                    let bands = if let Ok(aud) = self.audio.try_lock() {
+                    let raw_bands = if let Ok(aud) = self.audio.try_lock() {
                         aud.current_bands()
                     } else {
                         Vec::new()
                     };
+
+                    let (bands, is_audio_silent) = normalize_audio_spectrum(&raw_bands);
 
                     // Construct live bindings
                     let mut live_bindings = current_telemetry.clone();
@@ -864,6 +871,25 @@ impl AppEngine {
                             let width = bounds[2].max(100) as f32;
                             let height = bounds[3].max(100) as f32;
                             let scale = primary.scale_factor();
+                            let current_geometry = (bounds, scale);
+
+                            // Dirty-state presentation gating (Decision Q47):
+                            // When audio spectrum is silent/empty and clock/telemetry strings are identical
+                            // to previous frame, skip redundant Direct2D scene compilation and DXGI swapchain draw calls.
+                            let is_dirty = should_render_frame(
+                                is_initial_frame,
+                                last_rendered_geometry,
+                                current_geometry,
+                                is_audio_silent,
+                                last_rendered_bindings.as_ref(),
+                                &bindings_snapshot,
+                            );
+
+                            if !is_dirty {
+                                last_render_tick = now;
+                                continue;
+                            }
+
                             let (scene, _) = compile_live_scene_with_scale(
                                 width,
                                 height,
@@ -879,11 +905,16 @@ impl AppEngine {
                                                 "Direct2D renderer waiting for GPU recovery: {}",
                                                 e
                                             );
+                                            is_initial_frame = true;
                                             continue;
                                         }
                                     }
                                     if let Err(e) = renderer.render_scene(&scene) {
                                         tracing::warn!("Direct2D scene render failed: {}", e);
+                                    } else {
+                                        last_rendered_bindings = Some(bindings_snapshot);
+                                        last_rendered_geometry = Some(current_geometry);
+                                        is_initial_frame = false;
                                     }
                                 }
                             }
@@ -2181,4 +2212,48 @@ pub async fn sync_script_worker_internal(
     );
 
     Ok(Some(pid))
+}
+
+/// Normalizes audio spectrum bands for dirty presentation gating.
+///
+/// Under Decision Q47: If all bands are below the noise floor threshold (<= 0.001) or empty,
+/// clamps non-empty bands to 0.0 to prevent microscopic noise floor jitter from dirtying
+/// the presentation loop during silence, while ensuring a clean final frame is drawn when
+/// active audio decays.
+pub fn normalize_audio_spectrum(bands: &[f32]) -> (Vec<f32>, bool) {
+    let is_silent = bands.is_empty() || bands.iter().all(|&b| b <= 0.001);
+    if is_silent {
+        if bands.is_empty() || bands.iter().all(|&b| b == 0.0) {
+            (bands.to_vec(), true)
+        } else {
+            (vec![0.0f32; bands.len()], true)
+        }
+    } else {
+        (bands.to_vec(), false)
+    }
+}
+
+/// Determines whether the desktop presentation scene must be recompiled and rendered to the DXGI swapchain.
+///
+/// Under Decision Q47 (G13 Runtime Resource Optimization):
+/// Returns false when the audio spectrum is silent/empty (bands <= 0.001) and all window geometry,
+/// DPI scaling, clock, telemetry, and script bindings are unchanged from the previous frame.
+pub fn should_render_frame(
+    is_initial_frame: bool,
+    last_geometry: Option<([i32; 4], f32)>,
+    current_geometry: ([i32; 4], f32),
+    is_audio_silent: bool,
+    last_bindings: Option<&HashMap<String, BindingValue>>,
+    current_bindings: &HashMap<String, BindingValue>,
+) -> bool {
+    let geometry_unchanged = match last_geometry {
+        Some(prev_geo) => prev_geo == current_geometry,
+        None => false,
+    };
+    let bindings_unchanged = match last_bindings {
+        Some(prev) => prev == current_bindings,
+        None => false,
+    };
+
+    is_initial_frame || !geometry_unchanged || !is_audio_silent || !bindings_unchanged
 }

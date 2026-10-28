@@ -98,7 +98,8 @@ impl AudioSpectrumProcessor {
     /// Decays existing spectrum bands toward zero during silence.
     fn decay_bands(&mut self) {
         for band in &mut self.prev_bands {
-            *band = (*band * 0.85).max(0.0);
+            let next = *band * 0.85;
+            *band = if next < 0.0005 { 0.0 } else { next };
         }
     }
 }
