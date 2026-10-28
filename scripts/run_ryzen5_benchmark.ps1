@@ -90,51 +90,48 @@ $env:AETHERSHELL_SESSION_TOKEN_PATH = Join-Path $sandboxDir "session.token"
 
 Write-Host "Unique verified AppData sandbox established at: $sandboxDir"
 
-if ($DryRun) {
-    Write-Host "Dry run preflight complete. Cleaning up sandbox..."
-    if (Test-Path $sentinelPath) {
-        Remove-Item -Path $sandboxDir -Recurse -Force
-    }
-    return
-}
-
-# 4. Launch Core process under strict containment
-$coreArgs = @()
-if ($SafeMode) {
-    $coreArgs += "--safe-mode"
-    Write-Host "Launching background Core 'aethershell.exe' in Safe Mode (zero desktop overlay creation)..."
-} else {
-    Write-Host "Launching background Core 'aethershell.exe' (authorized physical/VM execution)..."
-}
-
-$coreProcess = Start-Process -FilePath $exePath -ArgumentList $coreArgs -PassThru
-Start-Sleep -Seconds 5
-
+$coreProcess = $null
 try {
-    if ($coreProcess.HasExited) {
-        throw "Core process exited prematurely with exit code $($coreProcess.ExitCode)"
+    if ($DryRun) {
+        Write-Host "Dry run preflight complete. Skipping Core launch and proceeding to verified sandbox cleanup."
+    } else {
+        # 4. Launch Core process under strict containment
+        $coreArgs = @()
+        if ($SafeMode) {
+            $coreArgs += "--safe-mode"
+            Write-Host "Launching background Core 'aethershell.exe' in Safe Mode (zero desktop overlay creation)..."
+        } else {
+            Write-Host "Launching background Core 'aethershell.exe' (authorized physical/VM execution)..."
+        }
+
+        $coreProcess = Start-Process -FilePath $exePath -ArgumentList $coreArgs -PassThru
+        Start-Sleep -Seconds 5
+
+        if ($coreProcess.HasExited) {
+            throw "Core process exited prematurely with exit code $($coreProcess.ExitCode)"
+        }
+
+        Write-Host "Core process active (PID: $($coreProcess.Id)). Starting formal PRD Section 14 benchmark..."
+        Write-Host "Procedure: 5 repetitions of 60s each with 5s warmup (~305 seconds total)..."
+
+        # Execute formal benchmark
+        $benchArgs = @(
+            "--benchmark-runtime", "minimal_idle",
+            "--pid-core", "$($coreProcess.Id)",
+            "--formal",
+            "--repetitions", "5",
+            "--duration", "60",
+            "--warmup", "5",
+            "--output", "$outputJson"
+        )
+
+        & $exePath @benchArgs
+        $benchmarkExit = $LASTEXITCODE
+        Write-Host "Benchmark process completed with exit code: $benchmarkExit"
     }
-
-    Write-Host "Core process active (PID: $($coreProcess.Id)). Starting formal PRD Section 14 benchmark..."
-    Write-Host "Procedure: 5 repetitions of 60s each with 5s warmup (~305 seconds total)..."
-
-    # Execute formal benchmark
-    $benchArgs = @(
-        "--benchmark-runtime", "minimal_idle",
-        "--pid-core", "$($coreProcess.Id)",
-        "--formal",
-        "--repetitions", "5",
-        "--duration", "60",
-        "--warmup", "5",
-        "--output", "$outputJson"
-    )
-
-    & $exePath @benchArgs
-    $benchmarkExit = $LASTEXITCODE
-    Write-Host "Benchmark process completed with exit code: $benchmarkExit"
 } finally {
-    Write-Host "Terminating Core process (PID: $($coreProcess.Id))..."
-    if (-not $coreProcess.HasExited) {
+    if ($null -ne $coreProcess -and -not $coreProcess.HasExited) {
+        Write-Host "Terminating Core process (PID: $($coreProcess.Id))..."
         Stop-Process -Id $coreProcess.Id -Force
         $coreProcess.WaitForExit(5000)
     }
