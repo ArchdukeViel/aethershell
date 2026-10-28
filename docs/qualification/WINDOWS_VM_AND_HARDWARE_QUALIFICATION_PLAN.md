@@ -1,7 +1,7 @@
 # AetherShell Windows VM & Physical Hardware Qualification Plan
 
 **Document Version:** 1.0.0-draft  
-**Baseline Commit:** Post-PR #51 (`0163857`)  
+**Baseline Commit:** Post-PR #51 (`bacf14af66f11230e218c67eb37d959468783523`)  
 **Target Release Phase:** Pre-Production Qualification Phase (PRD Section 18.2 / Section 14)  
 **Governance Authority:** Authoritative PRD & Owner Directives (Q01–Q46, Q37:A, Q40:A, Q42:A, Q44:A, Q46:B)
 
@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary & Objective
 
-AetherShell has achieved clean component-level unit and integration test verification across its 13 workspace crates (257 unique passing tests). However, under the strict evidentiary governance defined in **PRD Section 18.2** and **AGENTS.md**, **no gate can be certified as `VERIFIED` based solely on in-process tests or headless CI runners**.
+AetherShell has achieved clean component-level unit and integration test verification across its 13 workspace crates (264 unique passing tests). However, under the strict evidentiary governance defined in **PRD Section 18.2** and **AGENTS.md**, **no gate can be certified as `VERIFIED` based solely on in-process tests or headless CI runners**.
 
 The objective of this Qualification Plan is to establish a rigorous, repeatable, and non-destructive empirical test campaign to evaluate AetherShell across:
 1. Isolated, disposable Windows Virtual Machines (VMs) for disruptive shell and fault-injection testing.
@@ -43,7 +43,14 @@ Performance budgeting, frame pacing, audio loopback capture, and GPU device-loss
 | **HW-TIER-INTEL** | Intel Core i5/i7 (11th–13th Gen), 16 GB RAM | Intel Iris Xe / UHD Graphics (WDDM 3.1, Driver 31.0+) | Realtek HD Audio (WASAPI shared mode), Single 1080p @ 60 Hz (100% DPI). |
 | **HW-TIER-AMD** | AMD Ryzen 5/7 5000/7000 Series, 16 GB RAM | AMD Radeon Graphics / RX 6000+ (Adrenalin 23.12+, WDDM 3.1) | Realtek / AMD High Definition Audio, Dual Monitor: 1440p @ 144 Hz (125% DPI) + 1080p @ 60 Hz (100% DPI). |
 | **HW-TIER-NVIDIA** | Intel/AMD CPU, 32 GB RAM | NVIDIA GeForce RTX 3060/4070 (Game Ready / Studio Driver 550+) | HDMI/DP Audio + USB Audio DAC, Triple Monitor: 4K @ 60 Hz (150% DPI) + Dual 1440p. |
-| **HW-TIER-WARP** | Reference Low-End Laptop / VM | Microsoft Basic Render Driver (WARP Direct3D 11.1 software) | Stereo loopback, Battery power simulation. |
+
+### 2.3 Software Rasterizer & Diagnostic Fallback Tier
+
+For headless CI environments, virtual machines lacking GPU passthrough, or driver crash recovery diagnostics, AetherShell supports Microsoft Windows Advanced Rasterization Platform (WARP):
+
+| Fallback Tier ID | Environment Specification | Rasterizer & Driver Architecture | Test Role & Diagnostic Objective |
+|:---|:---|:---|:---|
+| **SW-TIER-WARP** | Reference Low-End Laptop / Disposable VM | Microsoft Basic Render Driver (WARP Direct3D 11.1 software rasterizer) | Fallback rendering validation, driver reset fallback simulation, battery power simulation without discrete GPU. |
 
 ---
 
@@ -108,8 +115,8 @@ Performance budgeting, frame pacing, audio loopback capture, and GPU device-loss
 - **Test Procedure:**
   1. Configure an active Lua widget profile with approved SHA-256 digest.
   2. Verify worker spawns in suspended state, is assigned to 128 MB Job Object, and executes under Lua 5.4.
-  3. **Fault Injection A (External Tampering):** While the worker is running, externally modify the script file on disk. Verify watchdog detects mismatch within 2 seconds, terminates worker subprocess fail-closed, and purges `script.*` bindings.
-  4. **Fault Injection B (External Deletion):** Delete the active script file. Verify worker is terminated fail-closed within 2 seconds.
+  3. **Fault Injection A (External Tampering):** While the worker is running, externally modify the script file on disk. Verify watchdog detects mismatch within the bounded watchdog interval (nominal 2-second tick), terminates worker subprocess fail-closed, and purges `script.*` bindings.
+  4. **Fault Injection B (External Deletion):** Delete the active script file. Verify worker is terminated fail-closed within the bounded watchdog interval.
   5. **Fault Injection C (Abnormal Termination):** Kill `aethershell-script-host.exe` via Task Manager or `taskkill /f`. Verify Core detects exit, purges bindings, and increments crash counter without crashing Core.
   6. **Fault Injection D (Memory Quota):** Inject a memory leak script attempting to allocate 200 MB RAM. Verify Windows Job Object terminates child worker at 128 MB commit limit; Core supervisor catches termination and enters quarantine.
 - **Pass Criteria:** Core tray process remains completely unaffected across all worker faults; no zombie processes; all bindings cleanly pruned.
