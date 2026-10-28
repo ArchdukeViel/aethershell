@@ -59,10 +59,42 @@ namespace AetherShell::Settings
             }
         }
 
-        // 3. Resolve per-session token path: %LOCALAPPDATA%\AetherShell\session_{sessionId}.token
+        // Resolve current Windows session ID
         DWORD sessionId = 1;
         ProcessIdToSessionId(GetCurrentProcessId(), &sessionId);
 
+        // 3. Check override environment variable AETHERSHELL_APP_DATA_DIR
+        wchar_t appDataDir[MAX_PATH] = { 0 };
+        DWORD appDataLen = GetEnvironmentVariableW(L"AETHERSHELL_APP_DATA_DIR", appDataDir, MAX_PATH);
+        if (appDataLen > 0 && appDataLen < MAX_PATH)
+        {
+            std::wstring sessionPath = std::wstring(appDataDir) + L"\\session_" + std::to_wstring(sessionId) + L".token";
+            std::ifstream file(sessionPath);
+            if (file.is_open())
+            {
+                std::string tok;
+                if (std::getline(file, tok))
+                {
+                    while (!tok.empty() && (tok.back() == '\r' || tok.back() == '\n' || tok.back() == ' ')) tok.pop_back();
+                    if (!tok.empty()) return tok;
+                }
+            }
+
+            // Fallback check for session.token directly in AETHERSHELL_APP_DATA_DIR
+            std::wstring legacyPath = std::wstring(appDataDir) + L"\\session.token";
+            std::ifstream legacyFile(legacyPath);
+            if (legacyFile.is_open())
+            {
+                std::string tok;
+                if (std::getline(legacyFile, tok))
+                {
+                    while (!tok.empty() && (tok.back() == '\r' || tok.back() == '\n' || tok.back() == ' ')) tok.pop_back();
+                    if (!tok.empty()) return tok;
+                }
+            }
+        }
+
+        // 4. Resolve per-session token path: %LOCALAPPDATA%\AetherShell\session_{sessionId}.token
         wchar_t localAppData[MAX_PATH] = { 0 };
         len = GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH);
         if (len > 0 && len < MAX_PATH)
@@ -323,10 +355,21 @@ namespace AetherShell::Settings
         if (serverSuccess)
         {
             result.success = true;
+            result.applied = true; // default true unless payload explicitly indicates applied == false
             if (root.HasKey(L"payload"))
             {
                 auto payloadVal = root.GetNamedValue(L"payload");
                 result.payload = winrt::to_string(payloadVal.Stringify());
+
+                if (payloadVal.ValueType() == winrt::Windows::Data::Json::JsonValueType::Object)
+                {
+                    auto payloadObj = payloadVal.GetObject();
+                    if (payloadObj.HasKey(L"applied") &&
+                        payloadObj.GetNamedValue(L"applied").ValueType() == winrt::Windows::Data::Json::JsonValueType::Boolean)
+                    {
+                        result.applied = payloadObj.GetNamedBoolean(L"applied");
+                    }
+                }
             }
             else
             {

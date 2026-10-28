@@ -202,6 +202,104 @@ impl AppEngine {
         .await
     }
 
+    /// Executes a single periodic watchdog maintenance tick for supervised script worker status and integrity.
+    ///
+    /// Checks:
+    /// 1. Polls child worker status and reaps exited/crashed child processes.
+    /// 2. If quarantined or crashed, purges `script.*` bindings from `cached_bindings`.
+    /// 3. Continuous integrity verification (Hypothesis A / Continuous Enforcement):
+    ///    Checks whether the active script file on disk was modified, deleted, or revoked in `trusted_digests`.
+    ///    If invalid, immediately terminates worker and purges `script.*` bindings.
+    pub fn tick_script_worker_watchdog(&self) -> bool {
+        if let Ok(mut sup) = self.script_supervisor.try_lock() {
+            let exit_code = sup.poll_worker_status();
+            if let Some(code) = exit_code {
+                if code != 0 {
+                    warn!(
+                        "Script worker exited unexpectedly with code {}; crash count: {}",
+                        code,
+                        sup.crash_count()
+                    );
+                }
+                if let Ok(mut cache) = self.cached_bindings.write() {
+                    cache.retain(|k, _| !k.starts_with("script."));
+                }
+            }
+            if sup.is_quarantined() {
+                warn!("Script worker is quarantined: {:?}", sup.state());
+                if let Ok(mut cache) = self.cached_bindings.write() {
+                    cache.retain(|k, _| !k.starts_with("script."));
+                }
+            }
+
+            // Continuous, bounded-latency script worker integrity & revocation revalidation
+            if sup.has_active_child() {
+                let trusted_digests = self
+                    .active_config
+                    .read()
+                    .ok()
+                    .map(|c| c.scripting.trusted_digests.clone());
+                if let Err(integrity_err) =
+                    sup.verify_active_worker_integrity(trusted_digests.as_ref())
+                {
+                    warn!(
+                        "Script worker integrity verification failed during periodic watchdog: {}. Worker terminated and script bindings purged.",
+                        integrity_err
+                    );
+                    if let Ok(mut cache) = self.cached_bindings.write() {
+                        cache.retain(|k, _| !k.starts_with("script."));
+                    }
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Asynchronous variant of `tick_script_worker_watchdog` that waits for the script supervisor lock.
+    pub async fn tick_script_worker_watchdog_async(&self) {
+        let mut sup = self.script_supervisor.lock().await;
+        let exit_code = sup.poll_worker_status();
+        if let Some(code) = exit_code {
+            if code != 0 {
+                warn!(
+                    "Script worker exited unexpectedly with code {}; crash count: {}",
+                    code,
+                    sup.crash_count()
+                );
+            }
+            if let Ok(mut cache) = self.cached_bindings.write() {
+                cache.retain(|k, _| !k.starts_with("script."));
+            }
+        }
+        if sup.is_quarantined() {
+            warn!("Script worker is quarantined: {:?}", sup.state());
+            if let Ok(mut cache) = self.cached_bindings.write() {
+                cache.retain(|k, _| !k.starts_with("script."));
+            }
+        }
+
+        // Continuous, bounded-latency script worker integrity & revocation revalidation
+        if sup.has_active_child() {
+            let trusted_digests = self
+                .active_config
+                .read()
+                .ok()
+                .map(|c| c.scripting.trusted_digests.clone());
+            if let Err(integrity_err) = sup.verify_active_worker_integrity(trusted_digests.as_ref())
+            {
+                warn!(
+                    "Script worker integrity verification failed during periodic watchdog: {}. Worker terminated and script bindings purged.",
+                    integrity_err
+                );
+                if let Ok(mut cache) = self.cached_bindings.write() {
+                    cache.retain(|k, _| !k.starts_with("script."));
+                }
+            }
+        }
+    }
+
     /// Primary runtime entry point.
     pub async fn run(&self, is_safe_mode: bool) -> Result<(), Box<dyn std::error::Error>> {
         info!(
@@ -671,29 +769,9 @@ impl AppEngine {
                 last_telemetry_poll = now;
             }
 
-            // 3. Periodic script worker watchdog check and crash monitor (2s interval)
+            // 3. Periodic script worker watchdog check, crash monitor, and continuous integrity verification (2s interval)
             if now.duration_since(last_watchdog_check) >= std::time::Duration::from_secs(2) {
-                if let Ok(mut sup) = self.script_supervisor.try_lock() {
-                    let exit_code = sup.poll_worker_status();
-                    if let Some(code) = exit_code {
-                        if code != 0 {
-                            warn!(
-                                "Script worker exited unexpectedly with code {}; crash count: {}",
-                                code,
-                                sup.crash_count()
-                            );
-                        }
-                        if let Ok(mut cache) = self.cached_bindings.write() {
-                            cache.retain(|k, _| !k.starts_with("script."));
-                        }
-                    }
-                    if sup.is_quarantined() {
-                        warn!("Script worker is quarantined: {:?}", sup.state());
-                        if let Ok(mut cache) = self.cached_bindings.write() {
-                            cache.retain(|k, _| !k.starts_with("script."));
-                        }
-                    }
-                }
+                self.tick_script_worker_watchdog();
                 last_watchdog_check = now;
             }
 
@@ -1381,10 +1459,13 @@ impl AppEngine {
                         IpcResponse::ok(
                             req.message_id,
                             serde_json::json!({
+                                "rendered": rendered_commands > 0,
                                 "rendered_commands": rendered_commands,
-                                "success": true,
+                                "applied": worker_synced,
                                 "worker_synced": worker_synced,
                                 "worker_error": worker_err,
+                                "worker_sync_error": worker_err,
+                                "success": true,
                             }),
                         )
                     }
@@ -1581,7 +1662,9 @@ impl AppEngine {
                         IpcResponse::ok(
                             req.message_id,
                             serde_json::json!({
+                                "persisted": true,
                                 "applied": applied,
+                                "worker_synced": applied,
                                 "config": candidate_cfg,
                                 "worker_sync_error": sync_err,
                             }),

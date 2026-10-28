@@ -9,6 +9,7 @@ namespace AetherShell::Settings
     {
         bool transportSuccess{ false };
         bool success{ false };
+        bool applied{ false };
         std::string payload;
         std::string error;
     };

@@ -127,7 +127,7 @@ namespace winrt::AetherShell::Settings::implementation
             std::string jsonStr = winrt::to_string(payload.Stringify());
 
             auto res = ::AetherShell::Settings::SettingsIpcClient::SendCommand("set_config", jsonStr);
-            return res.success;
+            return res.success && res.applied;
         }
         catch (...)
         {

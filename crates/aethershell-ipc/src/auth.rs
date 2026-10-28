@@ -100,6 +100,12 @@ impl SessionToken {
         if let Ok(override_path) = std::env::var("AETHERSHELL_SESSION_TOKEN_PATH") {
             return PathBuf::from(override_path);
         }
+        if let Ok(appdata_override) = std::env::var("AETHERSHELL_APP_DATA_DIR") {
+            let path = PathBuf::from(appdata_override);
+            if !path.as_os_str().is_empty() {
+                return path.join(format!("session_{}.token", session_id));
+            }
+        }
         if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
             PathBuf::from(appdata)
                 .join("AetherShell")
@@ -124,15 +130,24 @@ impl SessionToken {
             }
         }
         // Fallback check for legacy session.token path
-        if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
-            let legacy_path = PathBuf::from(appdata)
+        let legacy_path = if let Ok(appdata_override) = std::env::var("AETHERSHELL_APP_DATA_DIR") {
+            let path = PathBuf::from(appdata_override);
+            if !path.as_os_str().is_empty() {
+                path.join("session.token")
+            } else {
+                std::env::temp_dir().join("session.token")
+            }
+        } else if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
+            PathBuf::from(appdata)
                 .join("AetherShell")
-                .join("session.token");
-            if let Ok(s) = std::fs::read_to_string(&legacy_path) {
-                let trimmed = s.trim().to_string();
-                if !trimmed.is_empty() {
-                    return Some(trimmed);
-                }
+                .join("session.token")
+        } else {
+            std::env::temp_dir().join("aethershell_session.token")
+        };
+        if let Ok(s) = std::fs::read_to_string(&legacy_path) {
+            let trimmed = s.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
             }
         }
         None

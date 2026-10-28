@@ -25,6 +25,23 @@ pub enum SupervisorState {
     Terminated,
 }
 
+/// Integrity verification error for running child workers (Hypothesis A / Continuous Enforcement).
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum WorkerIntegrityError {
+    #[error("Script file '{0}' does not exist or was deleted from disk.")]
+    ScriptNotFound(PathBuf),
+    #[error("Failed to read script file '{0}': {1}")]
+    IoError(PathBuf, String),
+    #[error("Script content on disk modified! Running digest '{running}', current disk digest '{actual}'.")]
+    ContentModified {
+        script: PathBuf,
+        running: String,
+        actual: String,
+    },
+    #[error("Script trust revoked or unapproved in active trust ledger: {0}")]
+    TrustRevoked(String),
+}
+
 /// RAII wrapper managing a Win32 child process handle.
 #[derive(Debug)]
 pub struct SupervisedChild {
@@ -189,6 +206,7 @@ pub struct ScriptSupervisor {
     job: Option<JobObjectGuard>,
     child: Option<SupervisedChild>,
     current_script: Option<PathBuf>,
+    current_script_str: Option<String>,
     current_digest: Option<String>,
 }
 
@@ -203,6 +221,7 @@ impl ScriptSupervisor {
             job: JobObjectGuard::new().ok(),
             child: None,
             current_script: None,
+            current_script_str: None,
             current_digest: None,
         }
     }
@@ -256,11 +275,20 @@ impl ScriptSupervisor {
     pub fn invalidate_worker(&mut self) {
         if let Some(mut child) = self.child.take() {
             child.kill();
+            let _ = child.wait();
         }
         self.state = SupervisorState::Terminated;
         self.last_heartbeat = None;
         self.current_script = None;
+        self.current_script_str = None;
         self.current_digest = None;
+    }
+
+    #[cfg(test)]
+    pub fn set_current_script_for_test(&mut self, script: PathBuf, digest: String) {
+        self.current_script = Some(script.clone());
+        self.current_script_str = Some(script.to_string_lossy().to_string());
+        self.current_digest = Some(digest);
     }
 
     pub fn record_start(&mut self, pid: u32) {
@@ -389,6 +417,7 @@ impl ScriptSupervisor {
         self.current_script = Some(
             crate::normalize_script_path(script_path).unwrap_or_else(|_| script_path.to_path_buf()),
         );
+        self.current_script_str = Some(script_path.to_string_lossy().to_string());
         self.current_digest = Some(approved_digest.to_string());
 
         Ok(pid)
@@ -426,6 +455,7 @@ impl ScriptSupervisor {
     /// Records an unexpected worker exit/crash and applies quarantine if limit exceeded.
     pub fn record_exit(&mut self, exit_code: i32) {
         self.current_script = None;
+        self.current_script_str = None;
         self.current_digest = None;
         if exit_code != 0 {
             self.crash_count += 1;
@@ -454,6 +484,7 @@ impl ScriptSupervisor {
             if let Some(last) = self.last_heartbeat {
                 if last.elapsed().as_secs() >= self.heartbeat_timeout_secs as u64 {
                     self.current_script = None;
+                    self.current_script_str = None;
                     self.current_digest = None;
                     self.state = SupervisorState::Quarantined {
                         reason: format!(
@@ -486,7 +517,94 @@ impl ScriptSupervisor {
         self.state = SupervisorState::Dormant;
         self.last_heartbeat = None;
         self.current_script = None;
+        self.current_script_str = None;
         self.current_digest = None;
+    }
+
+    /// Continuously validates the active script worker's file on disk and cryptographic trust ledger approval.
+    ///
+    /// Checks:
+    /// a) If there is an active child worker (`self.has_active_child() && self.current_script.is_some()`). If not, returns `Ok(())`.
+    /// b) Checks whether `current_script` still exists on disk as a file.
+    /// c) Computes its actual SHA-256 digest from current disk content.
+    /// d) Verifies that actual digest matches `self.current_digest`.
+    /// e) If `trusted_digests` is provided, verifies that `current_script`'s canonical path and actual digest
+    ///    are still authorized in `trusted_digests`.
+    /// f) If any check fails (file missing, read error, digest mismatch, or unapproved in `trusted_digests`),
+    ///    invalidates/terminates the worker (`self.invalidate_worker()`), clears state, and returns an `Err(WorkerIntegrityError)`.
+    pub fn verify_active_worker_integrity(
+        &mut self,
+        trusted_digests: Option<&std::collections::HashMap<String, String>>,
+    ) -> Result<(), WorkerIntegrityError> {
+        // a) Return Ok if no active child worker is present
+        if !self.has_active_child() || self.current_script.is_none() {
+            return Ok(());
+        }
+
+        let script_path = self.current_script.clone().unwrap();
+        let running_digest = match self.current_digest.as_deref() {
+            Some(d) => d.to_string(),
+            None => {
+                self.invalidate_worker();
+                return Err(WorkerIntegrityError::TrustRevoked(
+                    "Missing running digest for active worker".into(),
+                ));
+            }
+        };
+
+        // b) Checks whether current_script still exists on disk as a file
+        if !script_path.is_file() {
+            self.invalidate_worker();
+            return Err(WorkerIntegrityError::ScriptNotFound(script_path));
+        }
+
+        // c) Computes its actual SHA-256 digest
+        let script_bytes = match std::fs::read(&script_path) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                self.invalidate_worker();
+                return Err(WorkerIntegrityError::IoError(script_path, e.to_string()));
+            }
+        };
+        let actual_digest = crate::trust::sha256_hex(&script_bytes);
+
+        // d) Verifies that actual digest matches self.current_digest
+        if !actual_digest.eq_ignore_ascii_case(&running_digest) {
+            self.invalidate_worker();
+            return Err(WorkerIntegrityError::ContentModified {
+                script: script_path,
+                running: running_digest,
+                actual: actual_digest,
+            });
+        }
+
+        // e) If trusted_digests is provided, verifies that current_script's canonical path and actual digest
+        // are still authorized in trusted_digests
+        if let Some(digests) = trusted_digests {
+            let configured_str = self
+                .current_script_str
+                .as_deref()
+                .unwrap_or_else(|| script_path.to_str().unwrap_or(""));
+
+            match crate::trust::authorize_script_trust(&script_path, configured_str, digests) {
+                Ok(approved_digest) => {
+                    if !approved_digest.eq_ignore_ascii_case(&actual_digest) {
+                        self.invalidate_worker();
+                        return Err(WorkerIntegrityError::ContentModified {
+                            script: script_path,
+                            running: running_digest,
+                            actual: actual_digest,
+                        });
+                    }
+                }
+                Err(e) => {
+                    self.invalidate_worker();
+                    return Err(WorkerIntegrityError::TrustRevoked(e.to_string()));
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -505,6 +623,7 @@ impl Drop for ScriptSupervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::process::Command;
 
     #[test]
@@ -834,5 +953,135 @@ mod tests {
                 "ResumeThread on invalid handle must return u32::MAX"
             );
         }
+    }
+
+    #[test]
+    fn test_verify_active_worker_integrity_no_child_is_noop() {
+        let mut supervisor = ScriptSupervisor::new(2);
+        let res = supervisor.verify_active_worker_integrity(None);
+        assert!(res.is_ok(), "No child worker present should return Ok(())");
+    }
+
+    #[test]
+    fn test_verify_active_worker_integrity_detects_deletion_and_modification_and_revocation() {
+        let mut supervisor = ScriptSupervisor::new(2);
+
+        // Spawn a real benign child process (cmd.exe /c timeout)
+        let child_proc = Command::new("cmd.exe")
+            .args(["/c", "ping", "-n", "10", "127.0.0.1"])
+            .spawn()
+            .expect("spawn dummy child");
+
+        let temp_script = std::env::temp_dir().join(format!(
+            "test_integrity_{}_{}.lua",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let content_v1 = b"-- original script content";
+        std::fs::write(&temp_script, content_v1).unwrap();
+        let digest_v1 = crate::sha256_hex(content_v1);
+
+        let supervised_child =
+            SupervisedChild::new(HANDLE(child_proc.as_raw_handle()), child_proc.id());
+        supervisor.assign_supervised_child(supervised_child);
+        supervisor.set_current_script_for_test(temp_script.clone(), digest_v1.clone());
+
+        assert!(supervisor.has_active_child());
+        assert!(supervisor.is_running());
+
+        // 1. Valid state with matching digest and approval
+        let mut trust_ledger = HashMap::new();
+        trust_ledger.insert(temp_script.to_string_lossy().to_string(), digest_v1.clone());
+        let res = supervisor.verify_active_worker_integrity(Some(&trust_ledger));
+        assert!(
+            res.is_ok(),
+            "Untampered script with approval must verify successfully"
+        );
+        assert!(
+            supervisor.has_active_child(),
+            "Child worker must remain active"
+        );
+
+        // 2. Modified content detection
+        std::fs::write(&temp_script, b"-- tampered script content").unwrap();
+        let res_tampered = supervisor.verify_active_worker_integrity(Some(&trust_ledger));
+        assert!(
+            res_tampered.is_err(),
+            "Modified content on disk must fail verification"
+        );
+        assert!(
+            matches!(
+                res_tampered.unwrap_err(),
+                WorkerIntegrityError::ContentModified { .. }
+            ),
+            "Expected ContentModified error"
+        );
+        assert!(
+            !supervisor.has_active_child(),
+            "Worker must be terminated upon content modification"
+        );
+        assert_eq!(*supervisor.state(), SupervisorState::Terminated);
+
+        // Restore script and assign a new child for next check
+        std::fs::write(&temp_script, content_v1).unwrap();
+        let child_proc_2 = Command::new("cmd.exe")
+            .args(["/c", "ping", "-n", "10", "127.0.0.1"])
+            .spawn()
+            .expect("spawn dummy child 2");
+        let supervised_child_2 =
+            SupervisedChild::new(HANDLE(child_proc_2.as_raw_handle()), child_proc_2.id());
+        supervisor.assign_supervised_child(supervised_child_2);
+        supervisor.set_current_script_for_test(temp_script.clone(), digest_v1.clone());
+
+        // 3. Trust revocation detection
+        trust_ledger.clear(); // Revoke trust
+        let res_revoked = supervisor.verify_active_worker_integrity(Some(&trust_ledger));
+        assert!(
+            res_revoked.is_err(),
+            "Revoked trust ledger must fail verification"
+        );
+        assert!(
+            matches!(
+                res_revoked.unwrap_err(),
+                WorkerIntegrityError::TrustRevoked(..)
+            ),
+            "Expected TrustRevoked error"
+        );
+        assert!(
+            !supervisor.has_active_child(),
+            "Worker must be terminated upon trust revocation"
+        );
+
+        // Restore script and assign a new child for deletion check
+        let child_proc_3 = Command::new("cmd.exe")
+            .args(["/c", "ping", "-n", "10", "127.0.0.1"])
+            .spawn()
+            .expect("spawn dummy child 3");
+        let supervised_child_3 =
+            SupervisedChild::new(HANDLE(child_proc_3.as_raw_handle()), child_proc_3.id());
+        supervisor.assign_supervised_child(supervised_child_3);
+        supervisor.set_current_script_for_test(temp_script.clone(), digest_v1.clone());
+
+        // 4. Script deletion detection
+        let _ = std::fs::remove_file(&temp_script);
+        let res_deleted = supervisor.verify_active_worker_integrity(None);
+        assert!(
+            res_deleted.is_err(),
+            "Deleted script file must fail verification"
+        );
+        assert!(
+            matches!(
+                res_deleted.unwrap_err(),
+                WorkerIntegrityError::ScriptNotFound(..)
+            ),
+            "Expected ScriptNotFound error"
+        );
+        assert!(
+            !supervisor.has_active_child(),
+            "Worker must be terminated upon script deletion"
+        );
     }
 }
