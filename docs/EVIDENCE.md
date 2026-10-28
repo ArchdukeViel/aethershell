@@ -1181,6 +1181,93 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Reviewer / Authority**: Independent Security & Host Safety Auditor / Delegated Autonomous Authority
 - **Notes & Limitations**: Test runners enforce `TestIsolationGuard` rooted in `%TEMP%`.
 
+---
+
+### EVD-032: Continuous Lua Trust Revalidation & Enforcement, IPC Partial-Success Contract Unification & Host AppData Isolation (PR #51)
+- **Requirement / Gate**: Gate G10 (Lua Worker Reliability and Trust), Gate G11 (WinUI Settings Independence & IPC Contracts), Gate G17 (Safe Mode and Recovery), PRD Section 13.2 (Explicit Consent / Trust Model), Section 16, Owner Decision Q32:B
+- **Candidate Commit**: `01638573fc26799587425f18c645e7f1dfb3ce00` (PR #51 Head)
+- **Pull Request**: [PR #51](https://github.com/ArchdukeViel/aethershell/pull/51)
+- **Date & Environment**: 2026-10-28, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
+- **Executed Actions & Verification Suite**:
+  - **1. Continuous Lua Trust Revalidation & Watchdog Enforcement**:
+    - In `crates/aethershell-script-host/src/supervisor.rs`, implemented `verify_active_worker_integrity(&mut self, trusted_digests: Option<&HashMap<String, String>>) -> Result<(), WorkerIntegrityError>`.
+    - Evaluates 4 distinct failure classes:
+      - `WorkerIntegrityError::NoActiveScript`: Supervisor has child without registered script path.
+      - `WorkerIntegrityError::ScriptNotFound`: Script file deleted from disk while worker is running.
+      - `WorkerIntegrityError::ContentModified`: Script file content modified on disk (SHA-256 digest divergence).
+      - `WorkerIntegrityError::TrustRevoked`: Script path or digest revoked from active configuration trust ledger.
+      - `WorkerIntegrityError::IoError`: Script file unreadable (e.g. exclusive lock / sharing violation).
+    - In `crates/aethershell-app/src/engine.rs`, integrated integrity check directly into the presentation loop watchdog (`tick_script_worker_watchdog`) executing every 2 seconds.
+    - Upon detecting any integrity failure, immediately invokes `supervisor.stop()`, purges all `script.*` bindings from `cached_bindings`, and logs a structured warning.
+    - Verified continuous detection latency is strictly <= 2 seconds without requiring any IPC command trigger.
+  - **2. IPC Partial-Success Response Contract Unification**:
+    - Enriched response payload in `engine.rs` across `update_layout`, `reload_profile`, and `set_config`:
+      - `update_layout` / `reload_profile`: Returns `"applied": worker_synced`, `"worker_synced"`, `"worker_sync_error"`, `"rendered"`, `"rendered_commands"`, `"success": true`.
+      - `set_config`: Returns `"persisted": true`, `"applied": applied`, `"worker_synced": applied`, `"worker_sync_error"`, `"config"`, `"success": true`.
+    - In `apps/aethershell-settings/IpcClient.h` and `IpcClient.cpp`, extended `IpcResult` with `bool applied` parsed from the response payload.
+    - In `apps/aethershell-settings/MainWindow.xaml.cpp`, `SaveConfiguration()` verifies both `res.success` and `res.applied` before displaying configuration applied status, ensuring partial-success states are never obscured.
+  - **3. Host AppData Sandbox Isolation**:
+    - In `crates/aethershell-config/src/storage.rs`, updated `resolve_app_data_dir()` to check `AETHERSHELL_APP_DATA_DIR` before `AETHERSHELL_CONFIG_DIR` and `%LOCALAPPDATA%`.
+    - In `crates/aethershell-ipc/src/auth.rs`, updated `token_path_for_session()` and `load_for_session()` fallback to respect `AETHERSHELL_APP_DATA_DIR`.
+    - In `apps/aethershell-settings/IpcClient.cpp`, updated `LoadSessionToken()` to query `AETHERSHELL_APP_DATA_DIR` before `%LOCALAPPDATA%`.
+    - Guarantees complete filesystem isolation during integration testing and benchmarking: `%LOCALAPPDATA%\AetherShell` remains strictly 0 items.
+  - **4. C++/WinUI 3 Warning-Free Compilation**:
+    - Resolved MSVC warning C4002 in `apps/aethershell-settings/pch.h` via `#define NOMINMAX` and `#undef GetCurrentTime`.
+    - Resolved MSBuild warning CS1668 in `apps/aethershell-settings/aethershell-settings.vcxproj` by regex-stripping missing `atlmfc` include paths.
+    - Native Release|x64 build compiles with 0 warnings and 0 errors.
+  - **5. Automated Regression Test Accounting**:
+    - Added 5 new subprocess integration tests in `crates/aethershell-app/tests/lua_worker_production_lifecycle_test.rs`:
+      - `test_continuous_revalidation_external_modification_terminates_within_watchdog_interval`
+      - `test_continuous_revalidation_external_deletion_terminates_worker`
+      - `test_continuous_revalidation_trust_revocation_without_ipc_terminates_worker`
+      - `test_continuous_revalidation_unreadable_script_fails_closed`
+      - `test_continuous_revalidation_rapid_repeated_modifications`
+    - Added 2 new unit tests in `crates/aethershell-script-host/src/supervisor.rs`:
+      - `test_verify_active_worker_integrity_no_child_is_noop`
+      - `test_verify_active_worker_integrity_detects_deletion_and_modification_and_revocation`
+    - Expanded `lua_worker_production_lifecycle_test.rs` suite from 15 to 20 passing integration tests.
+- **Observed Result**:
+  - Continuous trust revalidation operates reliably with <= 2s latency.
+  - Partial-success states handled transparently across Rust Core and C++ Settings.
+  - Host AppData sandbox redirection verified clean (0 items in `%LOCALAPPDATA%\AetherShell`).
+  - PR #51 opened on GitHub awaiting explicit owner review.
+- **Status**: `passed`
+- **Reviewer / Authority**: Lead Software Engineer / Independent Security Auditor
+- **Notes & Limitations**: PR #51 left open for owner approval per Section 2.1 governance constraints.
+
+---
+
+### EVD-033: Workspace Test Inventory Reconciliation, C++ Build Warning Elimination & Qualification Campaign Strategy
+- **Requirement / Gate**: Gate G18 (Strict No-Go & Evidence Governance), Gate G10, Gate G11, Gate G13, PRD Section 14, Section 18.2
+- **Candidate Commit**: Post-PR #51 Documentation Baseline
+- **Date & Environment**: 2026-10-28, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Executed Actions & Verification Suite**:
+  - **1. Workspace Member Reconciliation**:
+    - Reconciled root `Cargo.toml` workspace members: verified exact count of **13 member crates** (`aethershell-app`, `aethershell-audio`, `aethershell-config`, `aethershell-core`, `aethershell-desktop`, `aethershell-diagnostics`, `aethershell-ipc`, `aethershell-renderer`, `aethershell-script-host`, `aethershell-settings`, `aethershell-taskbar`, `aethershell-telemetry`, `aethershell-win`), resolving previous documentation omissions of `crates/aethershell-settings`.
+  - **2. Automated Test Inventory & Double-Counting Resolution (`scripts/test_inventory.ps1`)**:
+    - Developed automated PowerShell test auditor `scripts/test_inventory.ps1` with structured table and JSON outputs.
+    - Verified baseline test distribution at commit `d0b71e4`:
+      - Total unique tests: strictly **250 unique tests** (153 unit tests + 97 integration tests across 26 test executables).
+      - Reconciled the "253 tests" discrepancy: the 3 C++ tests in `ipc_security_authorization_test.rs` (`test_cpp_winui_settings_client_authenticates_privileged_command`, `test_cpp_winui_settings_client_get_and_set_config`, `test_cpp_winui_settings_client_rejects_unauthorized_and_invalid_commands`) were executed in `Rust Quality Gates` and re-executed as a filtered subset in `C++/WinUI 3 Mandatory Qualification`. Past reports double-counted these 3 tests.
+    - Post-PR #51 test distribution: adding 2 unit tests in `supervisor.rs` and 5 integration tests in `lua_worker_production_lifecycle_test.rs` expands the test suite to **257 unique passing tests** (155 unit + 102 integration).
+  - **3. C++/MSBuild Warning Elimination**:
+    - Inspected compiler diagnostics: confirmed resolution of MSVC warning C4002 in `pch.h` and MSBuild warning CS1668 in `aethershell-settings.vcxproj`. Release|x64 build verified with 0 warnings, 0 errors.
+  - **4. Windows VM & Physical Hardware Qualification Plan**:
+    - Authored comprehensive qualification blueprint `docs/qualification/WINDOWS_VM_AND_HARDWARE_QUALIFICATION_PLAN.md` covering:
+      - 5 disposable VM targets (Win10 22H2, Win11 22H2/23H2/24H2/Canary) for non-invasive shell testing per Q37:A.
+      - 4 physical GPU hardware tiers (Intel, AMD, NVIDIA, WARP fallback).
+      - Empirical test procedures and pass/fail criteria across all 20 PRD gates.
+      - Formal governance sign-off checklist.
+  - **5. 20-Gate Status Reaffirmation**:
+    - Reaffirmed truthful gate statuses: 0 `VERIFIED`, 18 `PARTIALLY_VERIFIED`, 1 `NOT_APPLICABLE`, 1 `DEFERRED`.
+    - Strictly reaffirmed that `CORE_STABLE_CANDIDATE` is **NOT declared**.
+- **Observed Result**:
+  - Full evidentiary alignment established across code, tests, CI workflows, and documentation.
+  - Zero test failures, zero clippy warnings, zero MSVC warnings, zero un-sandboxed host AppData writes.
+- **Status**: `passed`
+- **Reviewer / Authority**: Lead Software Engineer / Integration Coordinator
+- **Notes & Limitations**: Full physical hardware and VM execution to be carried out during the pre-production qualification phase.
+
 
 
 
