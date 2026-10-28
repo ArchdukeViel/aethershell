@@ -1187,6 +1187,7 @@ This document maintains verifiable test and validation records. Every entry is t
 ### EVD-032: Continuous Lua Trust Revalidation & Enforcement, IPC Partial-Success Contract Unification & Host AppData Isolation (PR #51)
 - **Requirement / Gate**: Gate G10 (Lua Worker Reliability and Trust), Gate G11 (WinUI Settings Independence & IPC Contracts), Gate G17 (Safe Mode and Recovery), PRD Section 13.2 (Explicit Consent / Trust Model), Section 16, Owner Decision Q32:B
 - **Candidate Commit**: `eede52ffbfad5c5df533855cd2c2cfcd4a0b7e08` (PR #51 Head)
+- **Main Merge Commit**: `8531c07c91dec960fde597ae97df9145f5b1bf6b` (Merge pull request #51)
 - **Pull Request**: [PR #51](https://github.com/ArchdukeViel/aethershell/pull/51)
 - **Date & Environment**: 2026-10-28, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM & GitHub Actions Windows Server 2022 runners
 - **Executed Actions & Verification Suite**:
@@ -1246,16 +1247,16 @@ This document maintains verifiable test and validation records. Every entry is t
   - Continuous trust revalidation operates reliably with bounded latency.
   - Partial-success states handled transparently across Rust Core and C++ Settings.
   - Host AppData sandbox redirection verified clean (0 items in `%LOCALAPPDATA%\AetherShell`).
-  - PR #51 opened on GitHub at commit `eede52ffbfad5c5df533855cd2c2cfcd4a0b7e08` awaiting explicit owner review.
+  - PR #51 merged into `main` at squash commit `8531c07c91dec960fde597ae97df9145f5b1bf6b` under Owner Decision 1 (Option A).
 - **Status**: `passed`
 - **Reviewer / Authority**: Lead Software Engineer / Independent Security Auditor
-- **Notes & Limitations**: PR #51 left open for owner approval per Section 2.1 governance constraints.
+- **Notes & Limitations**: Merged per Owner Decision 1 (Option A); local main fast-forwarded and PR #52 retargeted.
 
 ---
 
 ### EVD-033: Workspace Test Inventory Reconciliation, C++ Build Warning Elimination & Qualification Campaign Strategy
 - **Requirement / Gate**: Gate G18 (Strict No-Go & Evidence Governance), Gate G10, Gate G11, Gate G13, PRD Section 14, Section 18.2
-- **Candidate Commit**: PR #52 Head (Stacked on PR #51 `eede52ffbfad5c5df533855cd2c2cfcd4a0b7e08`)
+- **Candidate Commit**: PR #52 Head (Retargeted to `main` at `8531c07c91dec960fde597ae97df9145f5b1bf6b`)
 - **Pull Request**: [PR #52](https://github.com/ArchdukeViel/aethershell/pull/52)
 - **Date & Environment**: 2026-10-28, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
 - **Executed Actions & Verification Suite**:
@@ -1401,13 +1402,3 @@ This document maintains verifiable test and validation records. Every entry is t
   - Gate G13 Acceptance Status: Reaffirmed strictly as `PARTIALLY_VERIFIED`. Gate G13 CANNOT be marked `VERIFIED` until either runtime optimizations bring steady-state usage within preliminary goals, or empirical baselines are formally ratified by the project owner under PRD Section 14.4.
 - **Reviewer / Authority**: Lead Engineering Agent, Performance Subagent & Qualification Coordinator
 - **Notes & Limitations**: This ledger constitutes the first authentic, un-faked physical hardware baseline for AetherShell on AMD Zen 3 mobile APU architecture. Ledger preserved at `docs/qualification/ryzen5_5500u_benchmark_ledger.json`.
-
-
-
-
-
-
-
-
-
-

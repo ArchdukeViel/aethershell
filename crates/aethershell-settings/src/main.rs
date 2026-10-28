@@ -54,6 +54,15 @@ async fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if let Err(unhandled) = validate_settings_args(&args) {
+        eprintln!(
+            "Error: Unrecognized command-line argument(s): {:?}",
+            unhandled
+        );
+        print_usage();
+        return ExitCode::FAILURE;
+    }
+
     if args.iter().any(|a| a == "--status") {
         return query_command(&pipe_name, "get_status", serde_json::json!({})).await;
     }
@@ -185,6 +194,42 @@ fn print_usage() {
     println!("  --help, -h, /?        Show this help text");
 }
 
+fn validate_settings_args(args: &[String]) -> Result<(), Vec<String>> {
+    let mut unhandled = Vec::new();
+    let mut i = 1;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        match arg {
+            "--help" | "-h" | "/?" | "-?" | "/h" | "/help" | "--version" | "-v" | "/version"
+            | "/v" | "--status" | "--capabilities" | "--telemetry" | "--spectrum"
+            | "--pause-audio" | "--resume-audio" | "--shutdown-core" => {
+                i += 1;
+            }
+            "--pipe" | "--page" => {
+                i += 1;
+                if i < args.len() {
+                    i += 1;
+                }
+            }
+            "--interactive" => {
+                i += 1;
+                if i < args.len() && !args[i].starts_with('-') && !args[i].starts_with('/') {
+                    i += 1;
+                }
+            }
+            _ => {
+                unhandled.push(args[i].clone());
+                i += 1;
+            }
+        }
+    }
+    if unhandled.is_empty() {
+        Ok(())
+    } else {
+        Err(unhandled)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,5 +249,38 @@ mod tests {
         for v in ver_flags {
             assert!(matches!(v, "--version" | "-v" | "/version" | "/v"));
         }
+
+        assert!(validate_settings_args(&["aethershell-settings.exe".into()]).is_ok());
+        assert!(
+            validate_settings_args(&["aethershell-settings.exe".into(), "--status".into()]).is_ok()
+        );
+        assert!(validate_settings_args(&[
+            "aethershell-settings.exe".into(),
+            "--pipe".into(),
+            r"\\.\pipe\test".into(),
+            "--status".into()
+        ])
+        .is_ok());
+        assert!(validate_settings_args(&[
+            "aethershell-settings.exe".into(),
+            "--page".into(),
+            "widgets".into()
+        ])
+        .is_ok());
+        assert!(validate_settings_args(&[
+            "aethershell-settings.exe".into(),
+            "--interactive".into(),
+            "8".into()
+        ])
+        .is_ok());
+        assert!(validate_settings_args(&[
+            "aethershell-settings.exe".into(),
+            "--interactive".into()
+        ])
+        .is_ok());
+        assert!(
+            validate_settings_args(&["aethershell-settings.exe".into(), "--unknown".into()])
+                .is_err()
+        );
     }
 }

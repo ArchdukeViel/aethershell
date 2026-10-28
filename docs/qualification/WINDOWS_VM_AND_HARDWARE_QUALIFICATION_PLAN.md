@@ -1,7 +1,7 @@
 # AetherShell Windows VM & Physical Hardware Qualification Plan
 
 **Document Version:** 1.0.0-draft  
-**Baseline Commit:** Post-PR #51 (`eede52ffbfad5c5df533855cd2c2cfcd4a0b7e08`)  
+**Baseline Commit:** Post-PR #51 (`8531c07c91dec960fde597ae97df9145f5b1bf6b`)  
 **Target Release Phase:** Pre-Production Qualification Phase (PRD Section 18.2 / Section 14)  
 **Governance Authority:** Authoritative PRD & Owner Directives (Q01–Q46, Q37:A, Q40:A, Q42:A, Q44:A, Q46:B)
 
@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary & Objective
 
-AetherShell has achieved clean component-level unit and integration test verification across its 13 workspace crates (268 unique passing tests). However, under the strict evidentiary governance defined in **PRD Section 18.2** and **AGENTS.md**, **no gate can be certified as `VERIFIED` based solely on in-process tests or headless CI runners**.
+AetherShell has achieved clean component-level unit and integration test verification across its 13 workspace crates (271 unique passing tests). However, under the strict evidentiary governance defined in **PRD Section 18.2** and **AGENTS.md**, **no gate can be certified as `VERIFIED` based solely on in-process tests or headless CI runners**.
 
 The objective of this Qualification Plan is to establish a rigorous, repeatable, and non-destructive empirical test campaign to evaluate AetherShell across:
 1. Isolated, disposable Windows Virtual Machines (VMs) for disruptive shell and fault-injection testing.

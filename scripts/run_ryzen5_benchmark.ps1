@@ -14,11 +14,15 @@ $ErrorActionPreference = "Stop"
 
 $workspaceRoot = (Resolve-Path "$PSScriptRoot\..").Path
 $exePath = Join-Path $workspaceRoot "target\x86_64-pc-windows-msvc\release\aethershell.exe"
-$outputJson = Join-Path $workspaceRoot "docs\qualification\ryzen5_5500u_benchmark_ledger.json"
-
 if (-not (Test-Path $exePath)) {
-    throw "Release executable not found at $exePath. Run 'cargo build --release --workspace' first."
+    $fallbackPath = Join-Path $workspaceRoot "target\release\aethershell.exe"
+    if (Test-Path $fallbackPath) {
+        $exePath = $fallbackPath
+    } else {
+        throw "Release executable not found at $exePath or $fallbackPath. Run 'cargo build --release --workspace' first."
+    }
 }
+$outputJson = Join-Path $workspaceRoot "docs\qualification\ryzen5_5500u_benchmark_ledger.json"
 
 # 1. Verify pre-test host cleanliness
 $localAppDataDir = "$env:LOCALAPPDATA\AetherShell"
