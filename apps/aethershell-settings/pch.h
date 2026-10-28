@@ -1,5 +1,9 @@
 #pragma once
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
+#undef GetCurrentTime
 #include <unknwn.h>
 #include <restrictederrorinfo.h>
 #include <hstring.h>

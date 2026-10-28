@@ -9,8 +9,15 @@ namespace AetherShell::Settings
     {
         bool transportSuccess{ false };
         bool success{ false };
+        bool applied{ false };
+        bool persisted{ false };
+        bool workerSynced{ false };
+        bool rendered{ false };
+        uint32_t renderedCommands{ 0 };
         std::string payload;
         std::string error;
+        std::string workerSyncError;
+        std::string renderError;
     };
 
     class SettingsIpcClient

@@ -5,6 +5,7 @@ use aethershell_ipc::{IpcClient, IpcServer};
 use aethershell_renderer::RenderCommand;
 use aethershell_script_host::{sha256_hex, ScriptSupervisor};
 use std::collections::HashMap;
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -30,10 +31,18 @@ struct LuaTestHarness {
     temp_dir: PathBuf,
     shutdown_tx: watch::Sender<bool>,
     server_handle: Option<tokio::task::JoinHandle<()>>,
+    watchdog_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl LuaTestHarness {
     async fn start(session_token: &str) -> Self {
+        Self::start_with_watchdog_interval(session_token, None).await
+    }
+
+    async fn start_with_watchdog_interval(
+        session_token: &str,
+        watchdog_interval: Option<Duration>,
+    ) -> Self {
         let temp_dir =
             std::env::temp_dir().join(format!("test_aether_lua_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
@@ -45,11 +54,34 @@ impl LuaTestHarness {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         let handler = engine.create_ipc_handler(current_session_id(), shutdown_tx.clone());
-        let server = IpcServer::new(&pipe_name, handler, shutdown_rx);
+        let server = IpcServer::new(&pipe_name, handler, shutdown_rx.clone());
 
         let server_handle = tokio::spawn(async move {
             let _ = server.run().await;
         });
+
+        let watchdog_handle = if let Some(interval) = watchdog_interval {
+            let engine_clone = Arc::clone(&engine);
+            let mut rx = shutdown_rx.clone();
+            Some(tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    tokio::select! {
+                        _ = ticker.tick() => {
+                            engine_clone.tick_script_worker_watchdog();
+                        }
+                        _ = rx.changed() => {
+                            if *rx.borrow() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }))
+        } else {
+            None
+        };
 
         tokio::time::sleep(Duration::from_millis(60)).await;
 
@@ -60,7 +92,30 @@ impl LuaTestHarness {
             temp_dir,
             shutdown_tx,
             server_handle: Some(server_handle),
+            watchdog_handle,
         }
+    }
+
+    #[allow(dead_code)]
+    fn spawn_watchdog(&mut self, interval: Duration) {
+        let engine_clone = Arc::clone(&self.engine);
+        let mut rx = self.shutdown_tx.subscribe();
+        self.watchdog_handle = Some(tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = ticker.tick() => {
+                        engine_clone.tick_script_worker_watchdog();
+                    }
+                    _ = rx.changed() => {
+                        if *rx.borrow() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }));
     }
 
     fn active_config(&self) -> Arc<RwLock<AppConfig>> {
@@ -80,12 +135,16 @@ impl LuaTestHarness {
         if let Some(h) = self.server_handle.take() {
             let _ = h.await;
         }
+        if let Some(h) = self.watchdog_handle.take() {
+            let _ = h.await;
+        }
         let _ = std::fs::remove_dir_all(&self.temp_dir);
     }
 }
 
 impl Drop for LuaTestHarness {
     fn drop(&mut self) {
+        let _ = self.shutdown_tx.send(true);
         let _ = std::fs::remove_dir_all(&self.temp_dir);
     }
 }
@@ -1171,6 +1230,748 @@ async fn test_config_sync_reports_unapplied_state_when_script_worker_fails() {
         resp.payload["worker_sync_error"].is_string(),
         "worker_sync_error must be present in response"
     );
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_continuous_revalidation_external_modification_terminates_within_watchdog_interval() {
+    let host_bin = find_script_host_binary("aethershell-script-host.exe");
+    if host_bin.is_none() {
+        if std::env::var("REQUIRE_LUA_WORKER_TEST").is_ok() {
+            panic!("REQUIRED_LUA_BIN_MISSING: aethershell-script-host.exe not found");
+        } else {
+            return;
+        }
+    }
+
+    // Launch harness with a 500ms continuous watchdog tick
+    let harness = LuaTestHarness::start_with_watchdog_interval(
+        "lua_test_watchdog_mod",
+        Some(Duration::from_millis(500)),
+    )
+    .await;
+
+    let script_file = harness.temp_dir.join("continuous_mod.lua");
+    let script_v1 = r#"
+function init()
+    aether.set_binding("script.status", "Active: Lua 5.4")
+    aether.publish_bindings({ ["script.status"] = "Active: Lua 5.4" })
+end
+function update()
+    aether.publish_bindings({ ["script.status"] = "Active: Lua 5.4" })
+end
+"#;
+    std::fs::write(&script_file, script_v1).expect("write v1");
+    let digest_v1 = sha256_hex(script_v1.as_bytes());
+
+    // Insert native telemetry binding alongside script binding
+    {
+        let cached_arc = harness.cached_bindings();
+        let mut bindings = cached_arc.write().unwrap();
+        bindings.insert("cpu.usage_percent".into(), BindingValue::Float(22.5));
+    }
+
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.enabled = true;
+        cfg.scripting.active_script = Some(script_file.to_string_lossy().to_string());
+        cfg.scripting.require_explicit_trust_for_imported_scripts = true;
+        cfg.scripting
+            .trusted_digests
+            .insert(script_file.to_string_lossy().to_string(), digest_v1);
+    }
+
+    let launch_res = harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("launch worker");
+    assert!(launch_res.is_some());
+
+    // Wait for initial binding to appear
+    let wait_start = std::time::Instant::now();
+    let mut bound = false;
+    while wait_start.elapsed() < Duration::from_secs(4) {
+        if let Some(val) = harness
+            .cached_bindings()
+            .read()
+            .unwrap()
+            .get("script.status")
+        {
+            if val == &BindingValue::String("Active: Lua 5.4".into()) {
+                bound = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(bound, "Initial binding must be published");
+
+    // Externally modify script file on disk WITHOUT ANY IPC REQUEST
+    let start_mod = std::time::Instant::now();
+    let script_tampered = r#"
+function init()
+    aether.set_binding("script.status", "HACKED")
+    aether.publish_bindings({ ["script.status"] = "HACKED" })
+end
+"#;
+    std::fs::write(&script_file, script_tampered).expect("write tampered content");
+
+    // Wait for the continuous watchdog to detect modification and terminate worker
+    let mut terminated = false;
+    while start_mod.elapsed() < Duration::from_secs(3) {
+        let is_running = {
+            let sup_arc = harness.script_supervisor();
+            let sup = sup_arc.lock().await;
+            sup.is_running()
+        };
+        if !is_running {
+            terminated = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let elapsed = start_mod.elapsed();
+    assert!(
+        terminated,
+        "Watchdog must detect file modification without IPC requests within bounded latency"
+    );
+    // Bounded latency: <= 2 seconds (+ slight scheduling slack)
+    assert!(
+        elapsed <= Duration::from_millis(2500),
+        "Modification termination latency ({:?}) must be bounded within <= 2s",
+        elapsed
+    );
+
+    // Verify supervisor state
+    {
+        let sup_arc = harness.script_supervisor();
+        let sup = sup_arc.lock().await;
+        assert!(!sup.is_running());
+        assert!(!sup.has_active_child());
+    }
+
+    // Verify bindings: script.* purged, native telemetry cpu.* intact
+    {
+        let cached = harness.cached_bindings();
+        let bindings = cached.read().unwrap();
+        assert!(
+            !bindings.contains_key("script.status"),
+            "script.* bindings must be purged"
+        );
+        assert!(
+            bindings.contains_key("cpu.usage_percent"),
+            "Native telemetry bindings must be preserved"
+        );
+    }
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_continuous_revalidation_external_deletion_terminates_worker() {
+    let host_bin = find_script_host_binary("aethershell-script-host.exe");
+    if host_bin.is_none() {
+        if std::env::var("REQUIRE_LUA_WORKER_TEST").is_ok() {
+            panic!("REQUIRED_LUA_BIN_MISSING: aethershell-script-host.exe not found");
+        } else {
+            return;
+        }
+    }
+
+    let harness = LuaTestHarness::start_with_watchdog_interval(
+        "lua_test_watchdog_del",
+        Some(Duration::from_millis(400)),
+    )
+    .await;
+
+    let script_file = harness.temp_dir.join("continuous_del.lua");
+    let script_v1 = r#"
+function init()
+    aether.set_binding("script.del_metric", 99.0)
+    aether.publish_bindings({ ["script.del_metric"] = 99.0 })
+end
+function update()
+    aether.publish_bindings({ ["script.del_metric"] = 99.0 })
+end
+"#;
+    std::fs::write(&script_file, script_v1).expect("write v1");
+    let digest_v1 = sha256_hex(script_v1.as_bytes());
+
+    {
+        let cached_arc = harness.cached_bindings();
+        let mut bindings = cached_arc.write().unwrap();
+        bindings.insert("ram.usage_mb".into(), BindingValue::Float(4096.0));
+    }
+
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.enabled = true;
+        cfg.scripting.active_script = Some(script_file.to_string_lossy().to_string());
+        cfg.scripting.require_explicit_trust_for_imported_scripts = true;
+        cfg.scripting
+            .trusted_digests
+            .insert(script_file.to_string_lossy().to_string(), digest_v1);
+    }
+
+    harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("launch worker");
+
+    // Wait for initial binding to appear
+    let wait_start = std::time::Instant::now();
+    let mut bound = false;
+    while wait_start.elapsed() < Duration::from_secs(4) {
+        if harness
+            .cached_bindings()
+            .read()
+            .unwrap()
+            .get("script.del_metric")
+            .is_some()
+        {
+            bound = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(bound, "Initial binding must be published");
+
+    // Externally DELETE script file on disk WITHOUT ANY IPC REQUEST
+    let start_del = std::time::Instant::now();
+    let _ = std::fs::remove_file(&script_file);
+
+    // Watchdog should reap worker within bounded latency
+    let mut terminated = false;
+    while start_del.elapsed() < Duration::from_secs(3) {
+        let is_running = {
+            let sup_arc = harness.script_supervisor();
+            let sup = sup_arc.lock().await;
+            sup.is_running()
+        };
+        if !is_running {
+            terminated = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    assert!(
+        terminated,
+        "Watchdog must detect file deletion and terminate worker"
+    );
+
+    // Verify supervisor state and bindings
+    {
+        let sup_arc = harness.script_supervisor();
+        let sup = sup_arc.lock().await;
+        assert!(!sup.is_running());
+        assert!(!sup.has_active_child());
+    }
+
+    {
+        let cached = harness.cached_bindings();
+        let bindings = cached.read().unwrap();
+        assert!(
+            !bindings.contains_key("script.del_metric"),
+            "script.del_metric must be purged"
+        );
+        assert!(
+            bindings.contains_key("ram.usage_mb"),
+            "Native telemetry ram.usage_mb must remain intact"
+        );
+    }
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_continuous_revalidation_rapid_repeated_modifications() {
+    let host_bin = find_script_host_binary("aethershell-script-host.exe");
+    if host_bin.is_none() {
+        if std::env::var("REQUIRE_LUA_WORKER_TEST").is_ok() {
+            panic!("REQUIRED_LUA_BIN_MISSING: aethershell-script-host.exe not found");
+        } else {
+            return;
+        }
+    }
+
+    let harness = LuaTestHarness::start("lua_test_rapid_mods").await;
+
+    let script_file = harness.temp_dir.join("rapid_mods.lua");
+    let script_v1 = r#"
+function init()
+    aether.set_binding("script.rapid_status", "original")
+    aether.publish_bindings({ ["script.rapid_status"] = "original" })
+end
+function update()
+    aether.publish_bindings({ ["script.rapid_status"] = "original" })
+end
+"#;
+    std::fs::write(&script_file, script_v1).expect("write v1");
+    let digest_v1 = sha256_hex(script_v1.as_bytes());
+
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.enabled = true;
+        cfg.scripting.active_script = Some(script_file.to_string_lossy().to_string());
+        cfg.scripting.require_explicit_trust_for_imported_scripts = true;
+        cfg.scripting
+            .trusted_digests
+            .insert(script_file.to_string_lossy().to_string(), digest_v1);
+    }
+
+    harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("launch worker");
+
+    // Rapidly rewrite the script file 10 times with different contents
+    for i in 0..10 {
+        let tampered_content = format!(
+            r#"
+function init()
+    aether.set_binding("script.rapid_status", "rapid_mod_{}")
+    aether.publish_bindings({{ ["script.rapid_status"] = "rapid_mod_{}" }})
+end
+"#,
+            i, i
+        );
+        std::fs::write(&script_file, tampered_content).expect("rewrite script");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+
+    // Trigger watchdog tick
+    let ticked = harness.engine.tick_script_worker_watchdog();
+    assert!(ticked, "Watchdog tick must acquire supervisor lock");
+
+    // Verify worker was invalidated immediately upon rapid modification
+    {
+        let sup_arc = harness.script_supervisor();
+        let sup = sup_arc.lock().await;
+        assert!(
+            !sup.is_running(),
+            "Supervisor must report worker not running after rapid modifications"
+        );
+        assert!(
+            !sup.has_active_child(),
+            "Worker process handle must be cleared and terminated"
+        );
+    }
+
+    {
+        let cached = harness.cached_bindings();
+        let bindings = cached.read().unwrap();
+        assert!(
+            !bindings.contains_key("script.rapid_status"),
+            "Bindings must be purged"
+        );
+    }
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_continuous_revalidation_unreadable_script_fails_closed() {
+    let host_bin = find_script_host_binary("aethershell-script-host.exe");
+    if host_bin.is_none() {
+        if std::env::var("REQUIRE_LUA_WORKER_TEST").is_ok() {
+            panic!("REQUIRED_LUA_BIN_MISSING: aethershell-script-host.exe not found");
+        } else {
+            return;
+        }
+    }
+
+    let harness = LuaTestHarness::start("lua_test_unreadable").await;
+
+    let script_file = harness.temp_dir.join("unreadable.lua");
+    let script_v1 = r#"
+function init()
+    aether.set_binding("script.lock_test", "running")
+    aether.publish_bindings({ ["script.lock_test"] = "running" })
+end
+function update()
+    aether.publish_bindings({ ["script.lock_test"] = "running" })
+end
+"#;
+    std::fs::write(&script_file, script_v1).expect("write v1");
+    let digest_v1 = sha256_hex(script_v1.as_bytes());
+
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.enabled = true;
+        cfg.scripting.active_script = Some(script_file.to_string_lossy().to_string());
+        cfg.scripting.require_explicit_trust_for_imported_scripts = true;
+        cfg.scripting
+            .trusted_digests
+            .insert(script_file.to_string_lossy().to_string(), digest_v1);
+    }
+
+    harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("launch worker");
+
+    // Wait for initial binding to appear
+    let wait_start = std::time::Instant::now();
+    let mut bound = false;
+    while wait_start.elapsed() < Duration::from_secs(4) {
+        if harness
+            .cached_bindings()
+            .read()
+            .unwrap()
+            .get("script.lock_test")
+            .is_some()
+        {
+            bound = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(bound, "Initial binding must be published");
+
+    // Lock file with exclusive sharing mode (dwShareMode = 0) so reading fails
+    let lock_file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .share_mode(0)
+        .open(&script_file)
+        .expect("exclusive open");
+
+    // Trigger watchdog tick
+    let ticked = harness.engine.tick_script_worker_watchdog();
+    assert!(ticked, "Watchdog tick must succeed");
+
+    // Supervisor must detect unreadable file, fail closed, terminate worker
+    {
+        let sup_arc = harness.script_supervisor();
+        let sup = sup_arc.lock().await;
+        assert!(
+            !sup.is_running(),
+            "Supervisor must terminate worker when script is unreadable (fail closed)"
+        );
+        assert!(!sup.has_active_child());
+    }
+
+    {
+        let cached = harness.cached_bindings();
+        let bindings = cached.read().unwrap();
+        assert!(
+            !bindings.contains_key("script.lock_test"),
+            "Bindings must be purged on unreadable script"
+        );
+    }
+
+    drop(lock_file);
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_continuous_revalidation_trust_revocation_without_ipc_terminates_worker() {
+    let host_bin = find_script_host_binary("aethershell-script-host.exe");
+    if host_bin.is_none() {
+        if std::env::var("REQUIRE_LUA_WORKER_TEST").is_ok() {
+            panic!("REQUIRED_LUA_BIN_MISSING: aethershell-script-host.exe not found");
+        } else {
+            return;
+        }
+    }
+
+    // Launch harness with a 400ms continuous watchdog tick
+    let harness = LuaTestHarness::start_with_watchdog_interval(
+        "lua_test_watchdog_revoke",
+        Some(Duration::from_millis(400)),
+    )
+    .await;
+
+    let script_file = harness.temp_dir.join("continuous_revoke.lua");
+    let script_v1 = r#"
+function init()
+    aether.set_binding("script.rev_status", "valid")
+    aether.publish_bindings({ ["script.rev_status"] = "valid" })
+end
+function update()
+    aether.publish_bindings({ ["script.rev_status"] = "valid" })
+end
+"#;
+    std::fs::write(&script_file, script_v1).expect("write v1");
+    let digest_v1 = sha256_hex(script_v1.as_bytes());
+
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.enabled = true;
+        cfg.scripting.active_script = Some(script_file.to_string_lossy().to_string());
+        cfg.scripting.require_explicit_trust_for_imported_scripts = true;
+        cfg.scripting
+            .trusted_digests
+            .insert(script_file.to_string_lossy().to_string(), digest_v1);
+    }
+
+    harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("launch worker");
+
+    // Wait for initial binding to appear
+    let wait_start = std::time::Instant::now();
+    let mut bound = false;
+    while wait_start.elapsed() < Duration::from_secs(4) {
+        if harness
+            .cached_bindings()
+            .read()
+            .unwrap()
+            .get("script.rev_status")
+            .is_some()
+        {
+            bound = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(bound, "Initial binding must be published");
+
+    // Explicitly revoke trust in active_config WITHOUT CALLING ANY IPC FUNCTION OR SYNC
+    let start_revoke = std::time::Instant::now();
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.trusted_digests.clear();
+    }
+
+    // Watchdog should detect trust revocation and terminate worker
+    let mut terminated = false;
+    while start_revoke.elapsed() < Duration::from_secs(3) {
+        let is_running = {
+            let sup_arc = harness.script_supervisor();
+            let sup = sup_arc.lock().await;
+            sup.is_running()
+        };
+        if !is_running {
+            terminated = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    assert!(
+        terminated,
+        "Watchdog must detect trust revocation in active_config and terminate worker"
+    );
+
+    {
+        let sup_arc = harness.script_supervisor();
+        let sup = sup_arc.lock().await;
+        assert!(!sup.is_running());
+        assert!(!sup.has_active_child());
+    }
+
+    {
+        let cached = harness.cached_bindings();
+        let bindings = cached.read().unwrap();
+        assert!(
+            !bindings.contains_key("script.rev_status"),
+            "script.rev_status must be purged upon trust revocation"
+        );
+    }
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_continuous_revalidation_poisoned_config_lock_fails_closed() {
+    let host_bin = find_script_host_binary("aethershell-script-host.exe");
+    if host_bin.is_none() {
+        return;
+    }
+
+    let harness = LuaTestHarness::start_with_watchdog_interval("lua_poison_lock", None).await;
+
+    let script_file = harness.temp_dir.join("poison_test.lua");
+    let script_v1 = r#"
+function init()
+    aether.set_binding("script.poison_metric", 42.0)
+    aether.publish_bindings({ ["script.poison_metric"] = 42.0 })
+end
+function update()
+    aether.publish_bindings({ ["script.poison_metric"] = 42.0 })
+end
+"#;
+    std::fs::write(&script_file, script_v1).expect("write script");
+    let digest_v1 = sha256_hex(script_v1.as_bytes());
+
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.enabled = true;
+        cfg.scripting.active_script = Some(script_file.to_string_lossy().to_string());
+        cfg.scripting.require_explicit_trust_for_imported_scripts = true;
+        cfg.scripting
+            .trusted_digests
+            .insert(script_file.to_string_lossy().to_string(), digest_v1);
+    }
+
+    harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("launch worker");
+
+    // Wait for initial binding to appear
+    let wait_start = std::time::Instant::now();
+    let mut bound = false;
+    while wait_start.elapsed() < Duration::from_secs(4) {
+        if harness
+            .cached_bindings()
+            .read()
+            .unwrap()
+            .get("script.poison_metric")
+            .is_some()
+        {
+            bound = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(bound, "Initial binding must be published");
+
+    // Poison the active_config RwLock
+    let config_arc_clone = harness.active_config();
+    let handle = std::thread::spawn(move || {
+        let _guard = config_arc_clone.write().unwrap();
+        panic!("Simulated lock poisoning in configuration subsystem");
+    });
+    let _ = handle.join();
+
+    // Verify lock is indeed poisoned
+    assert!(harness.active_config().read().is_err());
+
+    // Trigger watchdog tick
+    let ticked = harness.engine.tick_script_worker_watchdog();
+    assert!(ticked, "Watchdog tick should succeed");
+
+    // Verify worker terminated fail-closed
+    {
+        let sup_arc = harness.script_supervisor();
+        let sup = sup_arc.lock().await;
+        assert!(
+            !sup.has_active_child(),
+            "Active worker must be terminated fail-closed when config lock is poisoned"
+        );
+    }
+
+    // Verify script bindings purged
+    {
+        let cached = harness.cached_bindings();
+        let bindings = cached.read().unwrap();
+        assert!(
+            !bindings.contains_key("script.poison_metric"),
+            "script.* bindings must be purged when trust ledger is inaccessible"
+        );
+    }
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_continuous_revalidation_active_child_missing_metadata_fails_closed() {
+    let host_bin = find_script_host_binary("aethershell-script-host.exe");
+    if host_bin.is_none() {
+        return;
+    }
+
+    let harness = LuaTestHarness::start_with_watchdog_interval("lua_missing_meta", None).await;
+
+    let script_file = harness.temp_dir.join("missing_meta.lua");
+    let script_v1 = r#"
+function init()
+    aether.set_binding("script.meta_metric", 100.0)
+    aether.publish_bindings({ ["script.meta_metric"] = 100.0 })
+end
+function update()
+    aether.publish_bindings({ ["script.meta_metric"] = 100.0 })
+end
+"#;
+    std::fs::write(&script_file, script_v1).expect("write script");
+    let digest_v1 = sha256_hex(script_v1.as_bytes());
+
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.enabled = true;
+        cfg.scripting.active_script = Some(script_file.to_string_lossy().to_string());
+        cfg.scripting.require_explicit_trust_for_imported_scripts = true;
+        cfg.scripting
+            .trusted_digests
+            .insert(script_file.to_string_lossy().to_string(), digest_v1);
+    }
+
+    harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("launch worker");
+
+    // Wait for initial binding to appear
+    let wait_start = std::time::Instant::now();
+    let mut bound = false;
+    while wait_start.elapsed() < Duration::from_secs(4) {
+        if harness
+            .cached_bindings()
+            .read()
+            .unwrap()
+            .get("script.meta_metric")
+            .is_some()
+        {
+            bound = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(bound, "Initial binding must be published");
+
+    // Corrupt supervisor state by clearing current_script while child is still active
+    {
+        let sup_arc = harness.script_supervisor();
+        let mut sup = sup_arc.lock().await;
+        assert!(sup.has_active_child());
+        sup.clear_current_script_for_test();
+        assert!(sup.current_script().is_none());
+    }
+
+    // Trigger watchdog tick - should detect missing metadata and fail-closed
+    let ticked = harness.engine.tick_script_worker_watchdog();
+    assert!(ticked, "Watchdog tick should succeed");
+
+    // Verify worker terminated fail-closed
+    {
+        let sup_arc = harness.script_supervisor();
+        let sup = sup_arc.lock().await;
+        assert!(
+            !sup.has_active_child(),
+            "Active worker must be terminated fail-closed when script metadata is missing"
+        );
+    }
+
+    // Verify script bindings purged
+    {
+        let cached = harness.cached_bindings();
+        let bindings = cached.read().unwrap();
+        assert!(
+            !bindings.contains_key("script.meta_metric"),
+            "script.* bindings must be purged when worker metadata is invalid"
+        );
+    }
 
     harness.stop().await;
 }
