@@ -1,0 +1,305 @@
+{
+  "profile": "minimal_idle",
+  "target_budget": {
+    "classification": "ratified_target",
+    "max_core_cpu_pct": 0.1,
+    "max_core_working_set_mb": 30.0,
+    "max_combined_cpu_pct": 0.1,
+    "max_combined_working_set_mb": 30.0,
+    "max_gpu_pct": 0.0,
+    "max_wakeups_per_sec": 2,
+    "rationale": "Ratified PRD Section 14.2 baseline: Core working set <= 30 MiB median, steady CPU <= 0.1% on reference desktop hardware."
+  },
+  "environment": {
+    "os_family": "Windows 11 26H2 (Build 26300)",
+    "os_build": 26300,
+    "os_ubr": 9711,
+    "cpu_architecture": "x86_64",
+    "logical_processor_count": 12,
+    "total_physical_memory_mb": 15693.6796875,
+    "display_count": 1,
+    "display_topologies": [
+      {
+        "monitor_index": 0,
+        "resolution": "1920x1080",
+        "is_primary": true
+      }
+    ],
+    "power_source": "AC Power",
+    "active_theme": "Dark",
+    "measured_binaries": {
+      "aethershell.exe": "dcbb951c65300bd09e9a5d96f46223f1e89e3b4f564c23fa6fd0da2b0564b025"
+    }
+  },
+  "execution_mode": "formal_acceptance",
+  "warmup_duration_seconds": 5,
+  "repetition_duration_seconds": 60,
+  "repetitions": [
+    {
+      "repetition_index": 1,
+      "duration_seconds": 60,
+      "process_metrics": [
+        {
+          "pid": 24968,
+          "role": "core",
+          "sample_count": 120,
+          "working_set_median_mb": 44.12890625,
+          "working_set_p95_mb": 44.171875,
+          "working_set_max_mb": 44.1796875,
+          "private_bytes_median_mb": 25.619140625,
+          "private_bytes_p95_mb": 25.671875,
+          "private_bytes_max_mb": 25.671875,
+          "cpu_median_pct": 0.520581112516032,
+          "cpu_p95_pct": 1.0414194545820668,
+          "cpu_max_pct": 1.561043858288988
+        }
+      ],
+      "combined_working_set_median_mb": 44.12890625,
+      "combined_working_set_p95_mb": 44.171875,
+      "combined_working_set_max_mb": 44.1796875,
+      "combined_private_bytes_median_mb": 25.619140625,
+      "combined_cpu_median_pct": 0.520581112516032,
+      "combined_cpu_p95_pct": 1.0414194545820668,
+      "combined_cpu_max_pct": 1.561043858288988,
+      "gpu_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "D3DKMT / GPU hardware performance counters unavailable in current execution context"
+        }
+      },
+      "wakeup_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "Kernel ETW / thread context switch instrumentation unavailable in user-mode process sampler"
+        }
+      },
+      "presentation_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "Direct2D / DXGI swapchain presentation instrumentation unavailable without active desktop window session"
+        }
+      },
+      "anomalies": [],
+      "verdict": {
+        "failed": {
+          "reason": "Core CPU median 0.52% exceeds ratified budget 0.10%"
+        }
+      }
+    },
+    {
+      "repetition_index": 2,
+      "duration_seconds": 60,
+      "process_metrics": [
+        {
+          "pid": 24968,
+          "role": "core",
+          "sample_count": 120,
+          "working_set_median_mb": 44.15234375,
+          "working_set_p95_mb": 44.15234375,
+          "working_set_max_mb": 44.15234375,
+          "private_bytes_median_mb": 25.65234375,
+          "private_bytes_p95_mb": 25.65234375,
+          "private_bytes_max_mb": 25.65234375,
+          "cpu_median_pct": 0.5202474306852103,
+          "cpu_p95_pct": 1.0405416781940549,
+          "cpu_max_pct": 1.3014581128559173
+        }
+      ],
+      "combined_working_set_median_mb": 44.15234375,
+      "combined_working_set_p95_mb": 44.15234375,
+      "combined_working_set_max_mb": 44.15234375,
+      "combined_private_bytes_median_mb": 25.65234375,
+      "combined_cpu_median_pct": 0.5202474306852103,
+      "combined_cpu_p95_pct": 1.0405416781940549,
+      "combined_cpu_max_pct": 1.3014581128559173,
+      "gpu_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "D3DKMT / GPU hardware performance counters unavailable in current execution context"
+        }
+      },
+      "wakeup_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "Kernel ETW / thread context switch instrumentation unavailable in user-mode process sampler"
+        }
+      },
+      "presentation_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "Direct2D / DXGI swapchain presentation instrumentation unavailable without active desktop window session"
+        }
+      },
+      "anomalies": [],
+      "verdict": {
+        "failed": {
+          "reason": "Core CPU median 0.52% exceeds ratified budget 0.10%"
+        }
+      }
+    },
+    {
+      "repetition_index": 3,
+      "duration_seconds": 60,
+      "process_metrics": [
+        {
+          "pid": 24968,
+          "role": "core",
+          "sample_count": 120,
+          "working_set_median_mb": 43.61328125,
+          "working_set_p95_mb": 43.8046875,
+          "working_set_max_mb": 43.80859375,
+          "private_bytes_median_mb": 25.1875,
+          "private_bytes_p95_mb": 25.1875,
+          "private_bytes_max_mb": 25.19140625,
+          "cpu_median_pct": 0.5202887991281403,
+          "cpu_p95_pct": 1.0410738584177337,
+          "cpu_max_pct": 1.8222191211870762
+        }
+      ],
+      "combined_working_set_median_mb": 43.61328125,
+      "combined_working_set_p95_mb": 43.8046875,
+      "combined_working_set_max_mb": 43.80859375,
+      "combined_private_bytes_median_mb": 25.1875,
+      "combined_cpu_median_pct": 0.5202887991281403,
+      "combined_cpu_p95_pct": 1.0410738584177337,
+      "combined_cpu_max_pct": 1.8222191211870762,
+      "gpu_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "D3DKMT / GPU hardware performance counters unavailable in current execution context"
+        }
+      },
+      "wakeup_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "Kernel ETW / thread context switch instrumentation unavailable in user-mode process sampler"
+        }
+      },
+      "presentation_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "Direct2D / DXGI swapchain presentation instrumentation unavailable without active desktop window session"
+        }
+      },
+      "anomalies": [],
+      "verdict": {
+        "failed": {
+          "reason": "Core CPU median 0.52% exceeds ratified budget 0.10%"
+        }
+      }
+    },
+    {
+      "repetition_index": 4,
+      "duration_seconds": 60,
+      "process_metrics": [
+        {
+          "pid": 24968,
+          "role": "core",
+          "sample_count": 120,
+          "working_set_median_mb": 43.61328125,
+          "working_set_p95_mb": 43.8046875,
+          "working_set_max_mb": 43.80859375,
+          "private_bytes_median_mb": 25.1875,
+          "private_bytes_p95_mb": 25.19140625,
+          "private_bytes_max_mb": 25.19921875,
+          "cpu_median_pct": 0.5200103658971951,
+          "cpu_p95_pct": 1.0400705315920626,
+          "cpu_max_pct": 1.5616567053790953
+        }
+      ],
+      "combined_working_set_median_mb": 43.61328125,
+      "combined_working_set_p95_mb": 43.8046875,
+      "combined_working_set_max_mb": 43.80859375,
+      "combined_private_bytes_median_mb": 25.1875,
+      "combined_cpu_median_pct": 0.5200103658971951,
+      "combined_cpu_p95_pct": 1.0400705315920626,
+      "combined_cpu_max_pct": 1.5616567053790953,
+      "gpu_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "D3DKMT / GPU hardware performance counters unavailable in current execution context"
+        }
+      },
+      "wakeup_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "Kernel ETW / thread context switch instrumentation unavailable in user-mode process sampler"
+        }
+      },
+      "presentation_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "Direct2D / DXGI swapchain presentation instrumentation unavailable without active desktop window session"
+        }
+      },
+      "anomalies": [],
+      "verdict": {
+        "failed": {
+          "reason": "Core CPU median 0.52% exceeds ratified budget 0.10%"
+        }
+      }
+    },
+    {
+      "repetition_index": 5,
+      "duration_seconds": 60,
+      "process_metrics": [
+        {
+          "pid": 24968,
+          "role": "core",
+          "sample_count": 120,
+          "working_set_median_mb": 43.82421875,
+          "working_set_p95_mb": 44.0390625,
+          "working_set_max_mb": 44.0390625,
+          "private_bytes_median_mb": 25.205078125,
+          "private_bytes_p95_mb": 25.22265625,
+          "private_bytes_max_mb": 25.22265625,
+          "cpu_median_pct": 0.520285108943275,
+          "cpu_p95_pct": 1.041305406768312,
+          "cpu_max_pct": 1.3014021794326183
+        }
+      ],
+      "combined_working_set_median_mb": 43.82421875,
+      "combined_working_set_p95_mb": 44.0390625,
+      "combined_working_set_max_mb": 44.0390625,
+      "combined_private_bytes_median_mb": 25.205078125,
+      "combined_cpu_median_pct": 0.520285108943275,
+      "combined_cpu_p95_pct": 1.041305406768312,
+      "combined_cpu_max_pct": 1.3014021794326183,
+      "gpu_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "D3DKMT / GPU hardware performance counters unavailable in current execution context"
+        }
+      },
+      "wakeup_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "Kernel ETW / thread context switch instrumentation unavailable in user-mode process sampler"
+        }
+      },
+      "presentation_status": {
+        "status": "unavailable",
+        "data": {
+          "reason": "Direct2D / DXGI swapchain presentation instrumentation unavailable without active desktop window session"
+        }
+      },
+      "anomalies": [],
+      "verdict": {
+        "failed": {
+          "reason": "Core CPU median 0.52% exceeds ratified budget 0.10%"
+        }
+      }
+    }
+  ],
+  "overall_verdict": {
+    "failed": {
+      "reason": "One or more repetitions exceeded budget targets or experienced process exit anomalies"
+    }
+  },
+  "notes": [
+    "Measurements capture resident WorkingSetSize and PrivateUsage via Win32 K32GetProcessMemoryInfo.",
+    "CPU load normalized across logical cores via GetProcessTimes, isolating target processes from measurement overhead.",
+    "Combined multi-process percentiles computed from synchronized timestamp samples.",
+    "Budget is ratified PRD Section 14.2 requirement."
+  ]
+}
