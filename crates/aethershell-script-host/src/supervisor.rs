@@ -189,6 +189,7 @@ pub struct ScriptSupervisor {
     job: Option<JobObjectGuard>,
     child: Option<SupervisedChild>,
     current_script: Option<PathBuf>,
+    current_digest: Option<String>,
 }
 
 impl ScriptSupervisor {
@@ -202,6 +203,7 @@ impl ScriptSupervisor {
             job: JobObjectGuard::new().ok(),
             child: None,
             current_script: None,
+            current_digest: None,
         }
     }
 
@@ -240,6 +242,10 @@ impl ScriptSupervisor {
         self.current_script.as_deref()
     }
 
+    pub fn current_digest(&self) -> Option<&str> {
+        self.current_digest.as_deref()
+    }
+
     pub fn assign_supervised_child(&mut self, child: SupervisedChild) {
         let pid = child.id();
         self.child = Some(child);
@@ -254,6 +260,7 @@ impl ScriptSupervisor {
         self.state = SupervisorState::Terminated;
         self.last_heartbeat = None;
         self.current_script = None;
+        self.current_digest = None;
     }
 
     pub fn record_start(&mut self, pid: u32) {
@@ -379,7 +386,10 @@ impl ScriptSupervisor {
         self.child = Some(SupervisedChild::new(pi.hProcess, pid));
         self.state = SupervisorState::Spawning;
         self.last_heartbeat = Some(Instant::now());
-        self.current_script = Some(script_path.to_path_buf());
+        self.current_script = Some(
+            crate::normalize_script_path(script_path).unwrap_or_else(|_| script_path.to_path_buf()),
+        );
+        self.current_digest = Some(approved_digest.to_string());
 
         Ok(pid)
     }
@@ -416,6 +426,7 @@ impl ScriptSupervisor {
     /// Records an unexpected worker exit/crash and applies quarantine if limit exceeded.
     pub fn record_exit(&mut self, exit_code: i32) {
         self.current_script = None;
+        self.current_digest = None;
         if exit_code != 0 {
             self.crash_count += 1;
             if self.crash_count >= self.max_crashes {
@@ -443,6 +454,7 @@ impl ScriptSupervisor {
             if let Some(last) = self.last_heartbeat {
                 if last.elapsed().as_secs() >= self.heartbeat_timeout_secs as u64 {
                     self.current_script = None;
+                    self.current_digest = None;
                     self.state = SupervisorState::Quarantined {
                         reason: format!(
                             "Worker PID {} hung or missed heartbeats for >{}s. Terminated.",
@@ -474,6 +486,7 @@ impl ScriptSupervisor {
         self.state = SupervisorState::Dormant;
         self.last_heartbeat = None;
         self.current_script = None;
+        self.current_digest = None;
     }
 }
 
