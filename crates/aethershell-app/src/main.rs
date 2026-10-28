@@ -22,6 +22,11 @@ async fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_usage();
+        return ExitCode::SUCCESS;
+    }
+
     if args.iter().any(|a| a == "--diagnostics") {
         run_diagnostics();
         return ExitCode::SUCCESS;
@@ -369,4 +374,34 @@ fn run_diagnostics() {
     let json_str = serde_json::to_string_pretty(&report).unwrap_or_default();
     let sanitized = redact_sensitive_info(&json_str);
     println!("{}", sanitized);
+}
+
+fn print_usage() {
+    println!(
+        "AetherShell v{} — Unified Windows Taskbar and Desktop Widget Customization Engine",
+        env!("CARGO_PKG_VERSION")
+    );
+    println!();
+    println!("USAGE:");
+    println!("    aethershell.exe [OPTIONS]");
+    println!();
+    println!("OPTIONS:");
+    println!("    -h, --help               Print help information");
+    println!("    -v, --version            Print version information");
+    println!("    --safe-mode              Launch in Safe Mode (forces NativeNoopBackend, bypasses hooks)");
+    println!("    --diagnostics            Generate and print sanitized JSON diagnostics report");
+    println!("    --settings               Request active instance to open Settings window");
+    println!("    --benchmark <SECS>       Run component-level microbenchmark (default: 60s)");
+    println!("    --benchmark-runtime <PROFILE> [OPTIONS]");
+    println!("                             Run genuine multi-process runtime benchmark");
+    println!(
+        "                               Profiles: minimal_idle, default_widgets, active_media,"
+    );
+    println!("                                         battery, gaming, settings_open, lua_worker_active,");
+    println!("                                         mixed_monitors, monitor_off");
+    println!("                               Flags:    --repetitions <N>, --duration <SECS>, --warmup <SECS>,");
+    println!("                                         --pid-core <PID>, --pid-settings <PID>, --pid-worker <PID>,");
+    println!(
+        "                                         --formal, --allow-self-pid, --output <PATH>"
+    );
 }
