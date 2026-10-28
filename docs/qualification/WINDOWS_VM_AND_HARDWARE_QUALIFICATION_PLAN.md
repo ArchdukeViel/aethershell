@@ -45,7 +45,7 @@ Performance budgeting, frame pacing, audio loopback capture, and GPU device-loss
 | Hardware Tier ID | Hardware Specification | GPU & Driver Architecture | Audio & Display Topology |
 |:---|:---|:---|:---|
 | **HW-TIER-INTEL** | Intel Core i5/i7 (11th–13th Gen), 16 GB RAM | Intel Iris Xe / UHD Graphics (WDDM 3.1, Driver 31.0+) | Realtek HD Audio (WASAPI shared mode), Single 1080p @ 60 Hz (100% DPI). |
-| **HW-TIER-AMD** | AMD Ryzen 5/7 5000/7000 Series, 16 GB RAM | AMD Radeon Graphics / RX 6000+ (Adrenalin 23.12+, WDDM 3.1) | Realtek / AMD High Definition Audio, Dual Monitor: 1440p @ 144 Hz (125% DPI) + 1080p @ 60 Hz (100% DPI). |
+| **HW-TIER-AMD** | AMD Ryzen 5/7 5000/7000 Series, 16 GB RAM *(Empirical baseline recorded under EVD-035: AMD Ryzen 5 5500U, 16 GB RAM, AMD Radeon Graphics, Windows 11 Pro 26H2 Build 26300; 5x60s formal benchmark ledger in `docs/qualification/ryzen5_5500u_benchmark_ledger.json`)* | AMD Radeon Graphics / RX 6000+ (Adrenalin 23.12+, WDDM 3.1) | Realtek / AMD High Definition Audio, Single 1080p @ 60 Hz (100% DPI) / Dual Monitor: 1440p @ 144 Hz + 1080p @ 60 Hz. |
 | **HW-TIER-NVIDIA** | Intel/AMD CPU, 32 GB RAM | NVIDIA GeForce RTX 3060/4070 (Game Ready / Studio Driver 550+) | HDMI/DP Audio + USB Audio DAC, Triple Monitor: 4K @ 60 Hz (150% DPI) + Dual 1440p. |
 
 ### 2.3 Software Rasterizer & Diagnostic Fallback Tier
@@ -196,6 +196,11 @@ Every gate from G01 through G20 is mapped directly to its canonical PRD requirem
   3. Execute 5-repetition 60-second evaluations for active profiles: `default_widgets`, `active_media_visualization`, `mixed_monitors`.
   4. Collect process working sets (`WorkingSetSize`), private commit (`PrivateUsage`), multi-core normalized CPU, and ETW presentation metrics.
 - **Pass Criteria:** All measurements comply with ratified PRD Section 14.2 budgets (Minimal Idle: Core WS <= 30 MiB median, steady CPU <= 0.1%). Provisional proposals evaluated and recorded with variance.
+- **Empirical Execution Record (HW-TIER-AMD / EVD-035):**
+  - Executed formal 5x60s benchmark on physical AMD Ryzen 5 5500U, 16 GB RAM, AMD Radeon Graphics, Windows 11 Pro 26H2 Build 26300 under isolated AppData sandbox (0 items in `%LOCALAPPDATA%\AetherShell`).
+  - Observed steady-state metrics (600 samples across 300s): Core resident WorkingSetSize median **43.8 MB** (p95: 44.0 MB, max: 44.2 MB; variance < 0.57 MB); Private Commit median **25.2 MB** (p95: 25.6 MB); Multi-core normalized CPU median **0.52%** (p95: 1.04%, max: 1.82%).
+  - Full ledger: `docs/qualification/ryzen5_5500u_benchmark_ledger.json`.
+  - Truthful disposition: Gate G13 remains `PARTIALLY_VERIFIED`. While private commit (25.2 MB) satisfies the <= 30 MB budget, resident physical WorkingSetSize (43.8 MB) and CPU (0.52%) exceed preliminary PRD Section 14.2 goals, providing the first authentic baseline to guide optimization or ratification under PRD Section 14.4.
 
 ### Gate G14: Accessibility, Keyboard Navigation, UI Automation & High-Contrast Themes
 - **Authoritative Requirement:** Full keyboard navigation; Narrator / Windows UI Automation (UIA) tree representation; Windows high-contrast theme support; DPI/text scaling; reduced motion respect; localization truncation rules.
