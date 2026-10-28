@@ -303,15 +303,28 @@ Because the development PC possesses 16 GB physical RAM (~15.3 GB visible) with 
 
 ### 4.3 Mandatory Host-vs-Guest Isolation Guard
 
-Every disruptive command (e.g. `taskkill /f /im explorer.exe`, process aborts, driver resets, installer executions) must employ an automated machine-identity guard that **fails closed**:
+Every disruptive command (e.g. `taskkill /f /im explorer.exe`, process aborts, driver resets, installer executions) must employ an automated machine-identity guard that **fails closed**. In strict compliance with Part I Section 5.3, the guard **never relies solely on a shell prompt, window title, working directory, or environment variable (`$env:COMPUTERNAME`)**:
 
 ```powershell
-# Mandatory Host vs Guest Precondition Guard
+# Mandatory Host vs Guest Precondition Guard (Fails closed on physical host)
 $ExpectedGuestComputerName = "AETHERSHELL-VM"
-$CurrentComputerName = $env:COMPUTERNAME
 
-if ($CurrentComputerName -ne $ExpectedGuestComputerName) {
-    Write-Error "CRITICAL SAFETY VIOLATION: Attempted to execute guest-only disruptive command on host machine '$CurrentComputerName'! Aborting immediately."
+# 1. Non-spoofable hardware query via CIM (cannot be bypassed by modifying environment variables)
+$systemInfo = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+$biosInfo = Get-CimInstance Win32_BIOS -ErrorAction Stop
+
+$isVirtualMachine = ($systemInfo.Model -match 'Virtual|Hyper-V|VMware|KVM') -or 
+                    ($systemInfo.Manufacturer -match 'Microsoft Corporation|VMware|QEMU') -or
+                    ($biosInfo.SerialNumber -match 'Microsoft|VMware')
+
+if (-not $isVirtualMachine) {
+    Write-Error "CRITICAL SAFETY VIOLATION: Disruptive command blocked! Detected physical host machine (Model: '$($systemInfo.Model)', Manufacturer: '$($systemInfo.Manufacturer)'). Disruptive shell tests are strictly VM-only per Q37:A. Aborting immediately."
+    exit 1
+}
+
+# 2. Strict guest machine name verification
+if ($systemInfo.Name -ne $ExpectedGuestComputerName) {
+    Write-Error "CRITICAL SAFETY VIOLATION: Guest machine identity mismatch! Expected '$ExpectedGuestComputerName', detected '$($systemInfo.Name)'. Aborting immediately."
     exit 1
 }
 ```

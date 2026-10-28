@@ -1299,21 +1299,24 @@ This document maintains verifiable test and validation records. Every entry is t
     - Query Host Permissions: Process token is filtered Medium Mandatory Level (`BUILTIN\Administrators` deny-only). Non-elevated Hyper-V execution (`Get-VM`) fails with `VirtualizationException` (permission denied), and `C:\ProgramData\Microsoft\Windows\Virtual Hard Disks` access is denied. Windows Sandbox is not enabled (`WindowsSandbox.exe` not present).
     - Query Memory & Storage Headroom: Total visible physical memory 16,070,328 KB (~15.3 GB); Free physical memory 3,580,788 KB (~3.58 GB); Pagefile 20 GB; Volume C: total 511 GB, free 65.4 GB (60.9 GiB).
     - Resource Headroom & Capacity Disposition: With active development workloads and ~3.58 GB free physical RAM, provisioning a full 4 GB Windows guest VM without memory overcommit would risk host responsiveness. Conforming to Q01:B and host resource safeguards ("Do not force resource-intensive VM execution when available host memory is insufficient; do not terminate user programs to free memory"), full VM creation and execution is held as `BLOCKED_RESOURCE_CAPACITY` / `BLOCKED_ELEVATION_PREREQUISITE` pending owner allocation, elevation, and disk preparation without unauthorized host alteration.
-  - **2. CLI Safe Invocation Guard (`aethershell --help`)**:
+  - **2. CLI Safe Invocation Guard & Argument Fail-Closed Hardening**:
     - Discovered CLI defect in `crates/aethershell-app/src/main.rs`: passing `--help` or `-h` lacked an argument branch and fell through to `AppEngine::new().run()`, starting the background engine and initializing AppData.
-    - Implemented `print_usage()` and `--help` / `-h` handler returning clean `ExitCode::SUCCESS` without booting engine.
+    - Discovered secondary defect in adversarial audit: passing Windows help flags (`/?`, `-?`, `/h`, `/help`) or unrecognized CLI arguments (e.g. `--unknown`) also fell through to start the desktop engine and polluted `%LOCALAPPDATA%\AetherShell`.
+    - Discovered tertiary defect in `crates/aethershell-settings/src/main.rs`: passing `/?` or `-?` resulted in `Unknown arguments` error instead of displaying help.
+    - Implemented comprehensive flag handling supporting `--help`, `-h`, `/?`, `-?`, `/h`, `/help`, `--version`, `-v`, `/version`, `/v`, and fail-closed rejection of unrecognized command-line arguments in both executables.
+    - Added dedicated unit tests for CLI argument parsing and `print_usage()` in `crates/aethershell-app/src/main.rs` and `crates/aethershell-settings/src/main.rs`.
     - Verified `%LOCALAPPDATA%\AetherShell` is strictly maintained at 0 items.
   - **3. Authoritative PRD Gate & Matrix Reconciliation**:
     - Updated `docs/qualification/WINDOWS_VM_AND_HARDWARE_QUALIFICATION_PLAN.md` Section 2.1 to cover all 7 PRD Section 2.1 OS tiers (Builds 19045, 22621, 22631, 26100, 26200, 26300, and 28000).
     - Expanded Section 3 to provide individual, dedicated verification procedures for all 20 gates (G01 through G20) conforming strictly to PRD Section 18.2.
-    - Codified Host Preflight, Resource Budgets (one VM at a time, max 4 GB dynamic RAM, 2 vCPUs), Host-vs-Guest Machine Identity Guards, and Owner-Attended Physical AMD Testing Protocols.
+    - Codified Host Preflight, Resource Budgets (one VM at a time, max 4 GB dynamic RAM, 2 vCPUs), Host-vs-Guest Machine Identity Guards (hardened with non-spoofable CIM hardware model and BIOS checks), and Owner-Attended Physical AMD Testing Protocols.
   - **4. Test Suite Execution & Inventory Audit**:
-    - Executed `cargo test --workspace`: all 268 unique tests across 13 workspace crates passed cleanly (160 unit + 108 integration tests across 26 test executables).
+    - Executed `cargo test --workspace --bins`: all 271 unique tests across 13 workspace crates passed cleanly (163 unit + 108 integration tests across 27 test executables).
     - Executed `cargo clippy --workspace --all-targets -- -D warnings`: 0 warnings, 0 errors.
     - Executed `cargo fmt --all --check`: 0 diff.
     - Executed C++/WinUI 3 qualification tests (`ipc_security_authorization_test.rs`): 3 passing tests.
     - Executed `tests/test_inventory_tests.ps1`: 6 passing regression tests.
-    - Executed `scripts/test_inventory.ps1`: strictly 268 unique passing tests.
+    - Executed `scripts/test_inventory.ps1`: strictly 271 unique passing tests.
   - **5. 20-Gate Acceptance Matrix Status**:
     - Truthfully maintained: 0 `VERIFIED`, 18 `PARTIALLY_VERIFIED`, 1 `NOT_APPLICABLE` (G05), 1 `DEFERRED` (G15).
     - Strictly reaffirmed that `CORE_STABLE_CANDIDATE` is NOT declared.

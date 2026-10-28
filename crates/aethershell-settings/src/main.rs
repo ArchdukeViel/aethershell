@@ -38,12 +38,18 @@ async fn main() -> ExitCode {
     );
 
     // 2. Handle CLI commands
-    if args.iter().any(|a| a == "--help" || a == "-h") {
+    if args
+        .iter()
+        .any(|a| matches!(a.as_str(), "--help" | "-h" | "/?" | "-?" | "/h" | "/help"))
+    {
         print_usage();
         return ExitCode::SUCCESS;
     }
 
-    if args.iter().any(|a| a == "--version" || a == "-v") {
+    if args
+        .iter()
+        .any(|a| matches!(a.as_str(), "--version" | "-v" | "/version" | "/v"))
+    {
         println!("AetherShell Settings v{}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
@@ -175,8 +181,8 @@ fn print_usage() {
     println!("  --interactive [SECS]  Trigger temporary interactive desktop mode");
     println!("  --shutdown-core       Request active engine to terminate cleanly");
     println!("  --pipe <PIPE>         Connect to explicit Named Pipe endpoint");
-    println!("  --version, -v         Display version and exit");
-    println!("  --help, -h            Show this help text");
+    println!("  --version, -v, /v     Display version and exit");
+    println!("  --help, -h, /?        Show this help text");
 }
 
 #[cfg(test)]
@@ -186,5 +192,17 @@ mod tests {
     #[test]
     fn test_print_usage_execution() {
         print_usage();
+    }
+
+    #[test]
+    fn test_settings_cli_flag_matching() {
+        let help_flags = ["--help", "-h", "/?", "-?", "/h", "/help"];
+        for f in help_flags {
+            assert!(matches!(f, "--help" | "-h" | "/?" | "-?" | "/h" | "/help"));
+        }
+        let ver_flags = ["--version", "-v", "/version", "/v"];
+        for v in ver_flags {
+            assert!(matches!(v, "--version" | "-v" | "/version" | "/v"));
+        }
     }
 }

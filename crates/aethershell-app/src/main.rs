@@ -15,24 +15,27 @@ async fn main() -> ExitCode {
 
     let args: Vec<String> = env::args().collect();
 
-    if args.iter().any(|a| a == "--version" || a == "-v") {
+    if args.iter().any(|a| is_version_flag(a)) {
         println!("AetherShell v{}", env!("CARGO_PKG_VERSION"));
         println!("Platform: Native Windows x86-64");
         println!("License: Apache-2.0");
         return ExitCode::SUCCESS;
     }
 
-    if args.iter().any(|a| a == "--help" || a == "-h") {
+    if args.iter().any(|a| is_help_flag(a)) {
         print_usage();
         return ExitCode::SUCCESS;
     }
 
-    if args.iter().any(|a| a == "--diagnostics") {
+    if args
+        .iter()
+        .any(|a| a == "--diagnostics" || a == "/diagnostics")
+    {
         run_diagnostics();
         return ExitCode::SUCCESS;
     }
 
-    if args.iter().any(|a| a == "--settings") {
+    if args.iter().any(|a| a == "--settings" || a == "/settings") {
         let singleton = SessionSingletonGuard::acquire();
         let session_id = singleton.as_ref().map(|s| s.session_id()).unwrap_or(1);
         let pipe_name = format!(r"\\.\pipe\aethershell-ipc-{}", session_id);
@@ -327,7 +330,23 @@ async fn main() -> ExitCode {
         };
     }
 
-    let is_safe_mode = args.iter().any(|a| a == "--safe-mode");
+    // Validate unhandled arguments to prevent accidental desktop engine startup or AppData pollution.
+    let unhandled: Vec<&String> = args
+        .iter()
+        .skip(1)
+        .filter(|a| *a != "--safe-mode" && *a != "/safe-mode")
+        .collect();
+
+    if !unhandled.is_empty() {
+        eprintln!(
+            "Error: Unrecognized command-line argument(s): {:?}",
+            unhandled
+        );
+        print_usage();
+        return ExitCode::FAILURE;
+    }
+
+    let is_safe_mode = args.iter().any(|a| a == "--safe-mode" || a == "/safe-mode");
 
     println!("Starting AetherShell v{}...", env!("CARGO_PKG_VERSION"));
     if is_safe_mode {
@@ -342,6 +361,14 @@ async fn main() -> ExitCode {
 
     println!("AetherShell core terminated cleanly.");
     ExitCode::SUCCESS
+}
+
+fn is_help_flag(a: &str) -> bool {
+    matches!(a, "--help" | "-h" | "/?" | "-?" | "/h" | "/help")
+}
+
+fn is_version_flag(a: &str) -> bool {
+    matches!(a, "--version" | "-v" | "/version" | "/v")
 }
 
 fn run_diagnostics() {
@@ -386,7 +413,7 @@ fn print_usage() {
     println!("    aethershell.exe [OPTIONS]");
     println!();
     println!("OPTIONS:");
-    println!("    -h, --help               Print help information");
+    println!("    -h, --help, /?           Print help information");
     println!("    -v, --version            Print version information");
     println!("    --safe-mode              Launch in Safe Mode (forces NativeNoopBackend, bypasses hooks)");
     println!("    --diagnostics            Generate and print sanitized JSON diagnostics report");
@@ -404,4 +431,32 @@ fn print_usage() {
     println!(
         "                                         --formal, --allow-self-pid, --output <PATH>"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_print_usage_execution() {
+        print_usage();
+    }
+
+    #[test]
+    fn test_cli_help_and_version_flags() {
+        assert!(is_help_flag("--help"));
+        assert!(is_help_flag("-h"));
+        assert!(is_help_flag("/?"));
+        assert!(is_help_flag("-?"));
+        assert!(is_help_flag("/h"));
+        assert!(is_help_flag("/help"));
+        assert!(!is_help_flag("--unknown"));
+        assert!(!is_help_flag("--safe-mode"));
+
+        assert!(is_version_flag("--version"));
+        assert!(is_version_flag("-v"));
+        assert!(is_version_flag("/v"));
+        assert!(is_version_flag("/version"));
+        assert!(!is_version_flag("--diagnostics"));
+    }
 }
