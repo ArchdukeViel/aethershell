@@ -70,14 +70,14 @@ impl WorkloadProfile {
     pub fn target_budget(&self) -> ResourceBudget {
         match self {
             WorkloadProfile::MinimalIdle => ResourceBudget {
-                classification: BudgetClassification::RatifiedTarget,
+                classification: BudgetClassification::PreliminaryDesignTarget,
                 max_core_cpu_pct: 0.1,
                 max_core_working_set_mb: 30.0,
                 max_combined_cpu_pct: 0.1,
                 max_combined_working_set_mb: 30.0,
                 max_gpu_pct: Some(0.0),
                 max_wakeups_per_sec: Some(2),
-                rationale: "Ratified PRD Section 14.2 baseline: Core working set <= 30 MiB median, steady CPU <= 0.1% on reference desktop hardware.".into(),
+                rationale: "Preliminary design target per PRD Section 14.2 (GOALS, not yet ratified across multi-environment test matrix per PRD Section 14.4): Core working set <= 30 MiB median, steady CPU <= 0.1% on reference desktop hardware.".into(),
             },
             WorkloadProfile::DefaultWidgets => ResourceBudget {
                 classification: BudgetClassification::ProvisionalProposal,
@@ -167,10 +167,36 @@ impl WorkloadProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BudgetClassification {
+    /// Preliminary design target per PRD Section 14.2 (GOALS pending multi-environment ratification per Section 14.4).
+    PreliminaryDesignTarget,
     /// Ratified PRD Section 14.2 requirement.
     RatifiedTarget,
     /// Provisional diagnostic proposal per PRD Section 14.2 (subject to empirical qualification).
     ProvisionalProposal,
+}
+
+impl std::fmt::Display for BudgetClassification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BudgetClassification::PreliminaryDesignTarget => write!(f, "preliminary design target"),
+            BudgetClassification::RatifiedTarget => write!(f, "ratified target"),
+            BudgetClassification::ProvisionalProposal => write!(f, "provisional proposal"),
+        }
+    }
+}
+
+impl BudgetClassification {
+    pub fn is_ratified(&self) -> bool {
+        matches!(self, Self::RatifiedTarget)
+    }
+
+    pub fn is_preliminary(&self) -> bool {
+        matches!(self, Self::PreliminaryDesignTarget)
+    }
+
+    pub fn is_provisional(&self) -> bool {
+        matches!(self, Self::ProvisionalProposal)
+    }
 }
 
 /// Resource consumption budget targets (PRD Section 14.2 / Gate G13).
@@ -1103,6 +1129,13 @@ impl RuntimeBenchmarkSession {
         let presentation_status = self.probe_presentation_metrics();
 
         let is_ratified = self.target_budget.classification == BudgetClassification::RatifiedTarget;
+        let is_preliminary =
+            self.target_budget.classification == BudgetClassification::PreliminaryDesignTarget;
+        let target_label = if is_ratified {
+            "ratified budget"
+        } else {
+            "preliminary design target"
+        };
 
         // 4. Verify against PRD Section 14.2 budget
         let verdict = if !anomalies.is_empty() {
@@ -1117,33 +1150,35 @@ impl RuntimeBenchmarkSession {
             BenchmarkVerdict::Failed {
                 reason: "No valid samples collected during recording period; empty dataset cannot substantiate benchmark verification".into(),
             }
-        } else if is_ratified {
+        } else if is_ratified || is_preliminary {
             if core_cpu_median > self.target_budget.max_core_cpu_pct {
                 BenchmarkVerdict::Failed {
                     reason: format!(
-                        "Core CPU median {:.2}% exceeds ratified budget {:.2}%",
-                        core_cpu_median, self.target_budget.max_core_cpu_pct
+                        "Core CPU median {:.2}% exceeds {} {:.2}%",
+                        core_cpu_median, target_label, self.target_budget.max_core_cpu_pct
                     ),
                 }
             } else if core_ws_median > self.target_budget.max_core_working_set_mb {
                 BenchmarkVerdict::Failed {
                     reason: format!(
-                        "Core working set {:.2} MB exceeds ratified budget {:.2} MB",
-                        core_ws_median, self.target_budget.max_core_working_set_mb
+                        "Core working set {:.2} MB exceeds {} {:.2} MB",
+                        core_ws_median, target_label, self.target_budget.max_core_working_set_mb
                     ),
                 }
             } else if combined_cpu_median > self.target_budget.max_combined_cpu_pct {
                 BenchmarkVerdict::Failed {
                     reason: format!(
-                        "Combined CPU median {:.2}% exceeds ratified budget {:.2}%",
-                        combined_cpu_median, self.target_budget.max_combined_cpu_pct
+                        "Combined CPU median {:.2}% exceeds {} {:.2}%",
+                        combined_cpu_median, target_label, self.target_budget.max_combined_cpu_pct
                     ),
                 }
             } else if combined_ws_median > self.target_budget.max_combined_working_set_mb {
                 BenchmarkVerdict::Failed {
                     reason: format!(
-                        "Combined working set {:.2} MB exceeds ratified budget {:.2} MB",
-                        combined_ws_median, self.target_budget.max_combined_working_set_mb
+                        "Combined working set {:.2} MB exceeds {} {:.2} MB",
+                        combined_ws_median,
+                        target_label,
+                        self.target_budget.max_combined_working_set_mb
                     ),
                 }
             } else if matches!(gpu_status, GpuMetricStatus::Unavailable { .. })
@@ -1153,9 +1188,12 @@ impl RuntimeBenchmarkSession {
                     PresentationMetricStatus::Unavailable { .. }
                 )
             {
-                BenchmarkVerdict::PartiallyVerified {
-                    limitation: "Process CPU and RAM budgets verified within ratified PRD Section 14.2; GPU, kernel wakeups, or presentation instrumentation unavailable in environment".into(),
-                }
+                let lim = if is_ratified {
+                    "Process CPU and RAM budgets verified within ratified PRD Section 14.2; GPU, kernel wakeups, or presentation instrumentation unavailable in environment".into()
+                } else {
+                    "Process CPU and RAM budgets evaluated within preliminary design target per PRD Section 14.2; GPU, kernel wakeups, or presentation instrumentation unavailable in environment".into()
+                };
+                BenchmarkVerdict::PartiallyVerified { limitation: lim }
             } else {
                 BenchmarkVerdict::Passed
             }
@@ -1241,9 +1279,12 @@ impl RuntimeBenchmarkSession {
             if uses_self {
                 return Err("Formal PRD Section 14 acceptance qualification cannot be executed with self-PID attachment".into());
             }
-            if self.target_budget.classification != BudgetClassification::RatifiedTarget {
+            if self.target_budget.classification != BudgetClassification::RatifiedTarget
+                && self.target_budget.classification
+                    != BudgetClassification::PreliminaryDesignTarget
+            {
                 return Err(format!(
-                    "Formal PRD Section 14 acceptance qualification only applies to ratified target budgets (WorkloadProfile::MinimalIdle), but {:?} has provisional proposals",
+                    "Formal PRD Section 14 acceptance qualification only applies to preliminary or ratified target budgets (WorkloadProfile::MinimalIdle), but {:?} has provisional proposals",
                     self.profile
                 ));
             }
@@ -1303,8 +1344,17 @@ impl RuntimeBenchmarkSession {
                 ),
             }
         } else if has_partial {
+            let target_desc =
+                if self.target_budget.classification == BudgetClassification::RatifiedTarget {
+                    "ratified PRD Section 14.2 budget"
+                } else {
+                    "preliminary design target per PRD Section 14.2"
+                };
             BenchmarkVerdict::PartiallyVerified {
-                limitation: "CPU and memory verified within ratified PRD Section 14.2 budget; GPU, wakeup, or presentation hardware instrumentation unavailable in execution context".into(),
+                limitation: format!(
+                    "CPU and memory verified within {}; GPU, wakeup, or presentation hardware instrumentation unavailable in execution context",
+                    target_desc
+                ),
             }
         } else {
             BenchmarkVerdict::Passed
@@ -1318,11 +1368,16 @@ impl RuntimeBenchmarkSession {
             BenchmarkExecutionMode::QuickDiagnostic
         };
 
-        let is_ratified = self.target_budget.classification == BudgetClassification::RatifiedTarget;
-        let budget_note = if is_ratified {
-            "Budget is ratified PRD Section 14.2 requirement.".into()
-        } else {
-            "Budget thresholds are provisional diagnostic proposals per PRD Section 14.2, not ratified hard acceptance budgets.".into()
+        let budget_note = match self.target_budget.classification {
+            BudgetClassification::RatifiedTarget => {
+                "Budget is ratified PRD Section 14.2 requirement.".into()
+            }
+            BudgetClassification::PreliminaryDesignTarget => {
+                "Budget is preliminary design target per PRD Section 14.2 (GOALS, not yet ratified across multi-environment test matrix per PRD Section 14.4).".into()
+            }
+            BudgetClassification::ProvisionalProposal => {
+                "Budget thresholds are provisional diagnostic proposals per PRD Section 14.2, not ratified hard acceptance budgets.".into()
+            }
         };
 
         let mut notes = vec![

@@ -21,6 +21,8 @@ pub enum TrustError {
 }
 
 /// Normalizes a filesystem path by canonicalizing existing files and stripping verbatim UNC prefixes (`\\?\`).
+/// If transient `ERROR_INVALID_HANDLE` (os error 6) occurs due to concurrent handle recycling races,
+/// retries with exponential backoff before failing closed.
 pub fn normalize_script_path(path: &Path) -> Result<PathBuf, std::io::Error> {
     if !path.exists() {
         return Err(std::io::Error::new(
@@ -28,9 +30,23 @@ pub fn normalize_script_path(path: &Path) -> Result<PathBuf, std::io::Error> {
             format!("Path does not exist: {}", path.display()),
         ));
     }
-    let canonical = std::fs::canonicalize(path)?;
+
+    let mut attempts = 0;
+    let canonical = loop {
+        match std::fs::canonicalize(path) {
+            Ok(c) => break c,
+            Err(e) if attempts < 4 && e.raw_os_error() == Some(6) => {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(5 * attempts));
+            }
+            Err(e) => return Err(e),
+        }
+    };
+
     let s = canonical.to_string_lossy();
-    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+    if let Some(stripped) = s.strip_prefix(r"\\?\UNC\") {
+        Ok(PathBuf::from(format!(r"\\{}", stripped)))
+    } else if let Some(stripped) = s.strip_prefix(r"\\?\") {
         Ok(PathBuf::from(stripped))
     } else {
         Ok(canonical)
@@ -427,6 +443,35 @@ mod tests {
         let reauth_b =
             authorize_script_trust(&script_b, &script_b.to_string_lossy(), &registry_with_b);
         assert_eq!(reauth_b, Ok(digest_b));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_normalize_script_path_lifecycle() {
+        // Nonexistent path returns NotFound
+        let bogus = Path::new("C:\\NonExistentDirectory_12345\\widget.lua");
+        let err = normalize_script_path(bogus).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+
+        // Existing file normalizes cleanly without \\?\ prefix
+        let temp_dir = std::env::temp_dir().join(format!(
+            "test_norm_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let file = temp_dir.join("test.lua");
+        std::fs::write(&file, b"-- content").unwrap();
+
+        let norm = normalize_script_path(&file).expect("normalize valid file");
+        assert!(!norm.to_string_lossy().starts_with(r"\\?\"));
+        assert!(norm.is_file());
+        let norm_again = normalize_script_path(&norm).expect("idempotent normalization");
+        assert_eq!(norm, norm_again);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

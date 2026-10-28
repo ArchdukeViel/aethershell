@@ -2,7 +2,6 @@ use aethershell_app::AppEngine;
 use aethershell_core::InteractionMode;
 use aethershell_ipc::{IpcClient, IpcClientIdentity, IpcRequest, IpcServer};
 use aethershell_script_host::SupervisedChild;
-use std::os::windows::io::AsRawHandle;
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
@@ -408,8 +407,8 @@ async fn test_negative_dead_worker_and_wrong_pids_rejected() {
     {
         let sup_arc = harness.engine.script_supervisor();
         let mut sup = sup_arc.lock().await;
-        let dead_handle = windows::Win32::Foundation::HANDLE(dummy_proc.as_raw_handle() as *mut _);
-        let dead_child = SupervisedChild::new(dead_handle, dead_pid);
+        let dead_child =
+            SupervisedChild::from_child(&dummy_proc).expect("duplicate dead child handle");
         sup.assign_supervised_child(dead_child);
     }
 

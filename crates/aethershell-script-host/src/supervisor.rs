@@ -4,15 +4,17 @@ use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::time::Instant;
 use tracing::info;
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::{
+    CloseHandle, DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE, INVALID_HANDLE_VALUE,
+};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
     QueryInformationJobObject, SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
 };
 use windows::Win32::System::Threading::{
-    CreateProcessW, GetExitCodeProcess, ResumeThread, TerminateProcess, WaitForSingleObject,
-    CREATE_SUSPENDED, PROCESS_INFORMATION, STARTUPINFOW,
+    CreateProcessW, GetCurrentProcess, GetExitCodeProcess, ResumeThread, TerminateProcess,
+    WaitForSingleObject, CREATE_SUSPENDED, PROCESS_INFORMATION, STARTUPINFOW,
 };
 
 /// Status and health of the supervised script host child process (PRD Section 13.2 / Gate G10).
@@ -52,10 +54,46 @@ pub struct SupervisedChild {
 }
 
 impl SupervisedChild {
+    /// Creates a `SupervisedChild` taking exclusive ownership of an existing Win32 `process_handle`.
+    ///
+    /// # Safety and Ownership Invariants
+    /// - The caller MUST transfer exclusive ownership of `process_handle` to this `SupervisedChild`.
+    /// - The caller must NOT close `process_handle` after transferring ownership.
+    /// - Never wrap a borrowed handle from `std::process::Child` directly without duplicating it first.
+    ///   Callers wrapping an `std::process::Child` must call [`SupervisedChild::from_child`] which safely
+    ///   duplicates the Win32 handle via `DuplicateHandle` to prevent double-close handle invalidation.
+    /// - Passing `HANDLE::default()` (null) or `INVALID_HANDLE_VALUE` is safe and treated as an inert handle.
     pub fn new(process_handle: HANDLE, pid: u32) -> Self {
         Self {
             process_handle,
             pid,
+        }
+    }
+
+    /// Creates a `SupervisedChild` from an existing `Child` process by duplicating its process handle.
+    /// This prevents double-close handle corruption when both `SupervisedChild` and `Child` are dropped.
+    pub fn from_child(child: &Child) -> Result<Self, String> {
+        let raw = child.as_raw_handle();
+        let cur_proc = unsafe { GetCurrentProcess() };
+        let mut dup_handle = HANDLE::default();
+        let res = unsafe {
+            DuplicateHandle(
+                cur_proc,
+                HANDLE(raw),
+                cur_proc,
+                &mut dup_handle,
+                0,
+                false,
+                DUPLICATE_SAME_ACCESS,
+            )
+        };
+        if res.is_ok() {
+            Ok(Self::new(dup_handle, child.id()))
+        } else {
+            Err(format!(
+                "Failed to duplicate child process handle: {:?}",
+                res.err()
+            ))
         }
     }
 
@@ -80,7 +118,7 @@ impl SupervisedChild {
 
     pub fn kill(&mut self) {
         unsafe {
-            if !self.process_handle.0.is_null() {
+            if !self.process_handle.0.is_null() && self.process_handle != INVALID_HANDLE_VALUE {
                 let _ = TerminateProcess(self.process_handle, 1);
             }
         }
@@ -102,7 +140,7 @@ impl SupervisedChild {
 impl Drop for SupervisedChild {
     fn drop(&mut self) {
         unsafe {
-            if !self.process_handle.0.is_null() {
+            if !self.process_handle.0.is_null() && self.process_handle != INVALID_HANDLE_VALUE {
                 let _ = CloseHandle(self.process_handle);
             }
         }
@@ -187,7 +225,7 @@ impl JobObjectGuard {
 impl Drop for JobObjectGuard {
     fn drop(&mut self) {
         unsafe {
-            if !self.0 .0.is_null() {
+            if !self.0 .0.is_null() && self.0 != INVALID_HANDLE_VALUE {
                 let _ = CloseHandle(self.0);
             }
         }
@@ -938,8 +976,8 @@ mod tests {
     #[test]
     fn test_spawn_worker_assignment_failure_terminates_suspended_child_fail_closed() {
         let mut supervisor = ScriptSupervisor::new(2);
-        // Inject invalid Job Object handle (12345678)
-        let invalid_job = JobObjectGuard::from_raw_handle_for_test(HANDLE(12345678 as *mut _));
+        // Inject invalid Job Object handle (INVALID_HANDLE_VALUE)
+        let invalid_job = JobObjectGuard::from_raw_handle_for_test(INVALID_HANDLE_VALUE);
         supervisor.set_job_for_test(Some(invalid_job));
 
         let script = std::env::temp_dir().join(format!(
@@ -999,7 +1037,7 @@ mod tests {
         let mut supervisor = ScriptSupervisor::new(2);
 
         // Spawn a real benign child process (cmd.exe /c timeout)
-        let child_proc = Command::new("cmd.exe")
+        let mut child_proc = Command::new("cmd.exe")
             .args(["/c", "ping", "-n", "10", "127.0.0.1"])
             .spawn()
             .expect("spawn dummy child");
@@ -1017,7 +1055,7 @@ mod tests {
         let digest_v1 = crate::sha256_hex(content_v1);
 
         let supervised_child =
-            SupervisedChild::new(HANDLE(child_proc.as_raw_handle()), child_proc.id());
+            SupervisedChild::from_child(&child_proc).expect("duplicate child handle");
         supervisor.assign_supervised_child(supervised_child);
         supervisor.set_current_script_for_test(temp_script.clone(), digest_v1.clone());
 
@@ -1059,12 +1097,12 @@ mod tests {
 
         // Restore script and assign a new child for next check
         std::fs::write(&temp_script, content_v1).unwrap();
-        let child_proc_2 = Command::new("cmd.exe")
+        let mut child_proc_2 = Command::new("cmd.exe")
             .args(["/c", "ping", "-n", "10", "127.0.0.1"])
             .spawn()
             .expect("spawn dummy child 2");
         let supervised_child_2 =
-            SupervisedChild::new(HANDLE(child_proc_2.as_raw_handle()), child_proc_2.id());
+            SupervisedChild::from_child(&child_proc_2).expect("duplicate child 2 handle");
         supervisor.assign_supervised_child(supervised_child_2);
         supervisor.set_current_script_for_test(temp_script.clone(), digest_v1.clone());
 
@@ -1088,12 +1126,12 @@ mod tests {
         );
 
         // Restore script and assign a new child for deletion check
-        let child_proc_3 = Command::new("cmd.exe")
+        let mut child_proc_3 = Command::new("cmd.exe")
             .args(["/c", "ping", "-n", "10", "127.0.0.1"])
             .spawn()
             .expect("spawn dummy child 3");
         let supervised_child_3 =
-            SupervisedChild::new(HANDLE(child_proc_3.as_raw_handle()), child_proc_3.id());
+            SupervisedChild::from_child(&child_proc_3).expect("duplicate child 3 handle");
         supervisor.assign_supervised_child(supervised_child_3);
         supervisor.set_current_script_for_test(temp_script.clone(), digest_v1.clone());
 
@@ -1115,18 +1153,25 @@ mod tests {
             !supervisor.has_active_child(),
             "Worker must be terminated upon script deletion"
         );
+
+        let _ = child_proc.kill();
+        let _ = child_proc.wait();
+        let _ = child_proc_2.kill();
+        let _ = child_proc_2.wait();
+        let _ = child_proc_3.kill();
+        let _ = child_proc_3.wait();
     }
 
     #[test]
     fn test_verify_active_worker_integrity_active_child_missing_metadata_fails_closed() {
         let mut supervisor = ScriptSupervisor::new(2);
-        let child_proc = Command::new("cmd.exe")
+        let mut child_proc = Command::new("cmd.exe")
             .args(["/c", "ping", "-n", "10", "127.0.0.1"])
             .spawn()
             .expect("spawn dummy child");
 
         let supervised_child =
-            SupervisedChild::new(HANDLE(child_proc.as_raw_handle()), child_proc.id());
+            SupervisedChild::from_child(&child_proc).expect("duplicate child handle");
         supervisor.assign_supervised_child(supervised_child);
         // Explicitly leave current_script as None (active child missing metadata)
         assert!(supervisor.has_active_child());
@@ -1148,18 +1193,21 @@ mod tests {
             !supervisor.has_active_child(),
             "Worker must be terminated fail-closed"
         );
+
+        let _ = child_proc.kill();
+        let _ = child_proc.wait();
     }
 
     #[test]
     fn test_verify_active_worker_integrity_active_child_missing_digest_fails_closed() {
         let mut supervisor = ScriptSupervisor::new(2);
-        let child_proc = Command::new("cmd.exe")
+        let mut child_proc = Command::new("cmd.exe")
             .args(["/c", "ping", "-n", "10", "127.0.0.1"])
             .spawn()
             .expect("spawn dummy child");
 
         let supervised_child =
-            SupervisedChild::new(HANDLE(child_proc.as_raw_handle()), child_proc.id());
+            SupervisedChild::from_child(&child_proc).expect("duplicate child handle");
         supervisor.assign_supervised_child(supervised_child);
         supervisor.set_current_script_for_test(
             PathBuf::from("dummy.lua"),
@@ -1186,12 +1234,15 @@ mod tests {
             !supervisor.has_active_child(),
             "Worker must be terminated fail-closed"
         );
+
+        let _ = child_proc.kill();
+        let _ = child_proc.wait();
     }
 
     #[test]
     fn test_verify_active_worker_integrity_missing_trust_ledger_fails_closed() {
         let mut supervisor = ScriptSupervisor::new(2);
-        let child_proc = Command::new("cmd.exe")
+        let mut child_proc = Command::new("cmd.exe")
             .args(["/c", "ping", "-n", "10", "127.0.0.1"])
             .spawn()
             .expect("spawn dummy child");
@@ -1209,7 +1260,7 @@ mod tests {
         let digest = crate::sha256_hex(content);
 
         let supervised_child =
-            SupervisedChild::new(HANDLE(child_proc.as_raw_handle()), child_proc.id());
+            SupervisedChild::from_child(&child_proc).expect("duplicate child handle");
         supervisor.assign_supervised_child(supervised_child);
         supervisor.set_current_script_for_test(temp_script.clone(), digest);
 
@@ -1238,5 +1289,100 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&temp_script);
+        let _ = child_proc.kill();
+        let _ = child_proc.wait();
+    }
+
+    #[test]
+    fn test_supervised_child_from_child_duplicates_handle_safely() {
+        // Verify that SupervisedChild::from_child creates an independent duplicate handle.
+        // Dropping SupervisedChild must NOT invalidate child_proc's handle, preventing double-close.
+        let mut child = Command::new("cmd.exe")
+            .args(["/c", "exit", "0"])
+            .spawn()
+            .expect("spawn test child");
+
+        {
+            let mut supervised = SupervisedChild::from_child(&child).expect("duplicate handle");
+            assert_ne!(
+                supervised.handle().0,
+                child.as_raw_handle(),
+                "Duplicate handle must differ from original raw handle"
+            );
+            assert!(
+                !supervised.handle().0.is_null() && supervised.handle() != INVALID_HANDLE_VALUE,
+                "Duplicate handle must be a valid non-null handle"
+            );
+            let _ = supervised.wait();
+            // supervised is dropped here, closing the duplicate handle ONLY
+        }
+
+        // The original Child must still have a valid handle that can be waited and dropped without OS error
+        let status = child.wait().expect("wait on child with original handle");
+        assert!(status.success(), "Child process must report success");
+    }
+
+    #[test]
+    fn test_concurrent_script_trust_authorization_and_worker_lifecycle() {
+        // Concurrently run script trust authorization (which opens and canonicalizes files)
+        // and worker lifecycle invalidations (which spawn and drop processes) to prove
+        // zero handle recycling interference and zero ERROR_INVALID_HANDLE failures.
+        let temp_dir = std::env::temp_dir().join(format!(
+            "test_concurrent_trust_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let script = temp_dir.join("concurrent.lua");
+        let content = "function init() return 42 end";
+        std::fs::write(&script, content).unwrap();
+        let digest = crate::trust::sha256_hex(content.as_bytes());
+
+        let mut registry = HashMap::new();
+        registry.insert(script.to_string_lossy().to_string(), digest.clone());
+
+        let script_clone = script.clone();
+        let digest_clone = digest.clone();
+        let registry_clone = registry.clone();
+
+        let h1 = std::thread::spawn(move || {
+            for _ in 0..30 {
+                let res = crate::trust::authorize_script_trust(
+                    &script_clone,
+                    &script_clone.to_string_lossy(),
+                    &registry_clone,
+                );
+                assert_eq!(
+                    res,
+                    Ok(digest_clone.clone()),
+                    "Authorization must succeed without handle invalidation"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+
+        let h2 = std::thread::spawn(move || {
+            for _ in 0..30 {
+                let mut sup = ScriptSupervisor::new(2);
+                let mut child = Command::new("cmd.exe")
+                    .args(["/c", "exit", "0"])
+                    .spawn()
+                    .expect("spawn child");
+                let sc = SupervisedChild::from_child(&child).expect("from_child");
+                sup.assign_supervised_child(sc);
+                sup.invalidate_worker();
+                let _ = child.wait();
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+
+        h1.join().unwrap();
+        h2.join().unwrap();
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

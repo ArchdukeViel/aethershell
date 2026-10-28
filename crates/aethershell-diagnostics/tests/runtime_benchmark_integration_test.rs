@@ -8,17 +8,17 @@ use std::time::Duration;
 #[test]
 fn test_prd_section_14_budget_conformance() {
     // PRD Section 14.2 Resource Targets:
-    // Minimal Idle: Ratified Target: Core <= 0.1% CPU, <= 30 MB RAM
+    // Minimal Idle: Preliminary Design Target: Core <= 0.1% CPU, <= 30 MB RAM
     let idle_budget = WorkloadProfile::MinimalIdle.target_budget();
     assert_eq!(
         idle_budget.classification,
-        BudgetClassification::RatifiedTarget
+        BudgetClassification::PreliminaryDesignTarget
     );
     assert_eq!(idle_budget.max_core_cpu_pct, 0.1);
     assert_eq!(idle_budget.max_core_working_set_mb, 30.0);
     assert_eq!(idle_budget.max_combined_cpu_pct, 0.1);
     assert_eq!(idle_budget.max_combined_working_set_mb, 30.0);
-    assert!(idle_budget.rationale.contains("Ratified PRD Section 14.2"));
+    assert!(idle_budget.rationale.contains("Preliminary design target"));
 
     // Default Widgets: Provisional Proposal
     let widgets_budget = WorkloadProfile::DefaultWidgets.target_budget();
@@ -618,7 +618,7 @@ fn test_formal_qualification_enforcements() {
     );
     assert!(res_prof
         .unwrap_err()
-        .contains("only applies to ratified target budgets"));
+        .contains("only applies to preliminary or ratified target budgets"));
 }
 
 #[test]
@@ -646,4 +646,89 @@ fn test_provisional_profile_verdict_preserves_distinction() {
         "Provisional profile must produce ProvisionalDiagnostic verdict, not hard Pass/Fail: {:?}",
         ledger.overall_verdict
     );
+}
+
+#[test]
+fn test_deserialize_ryzen5_5500u_benchmark_ledger_json() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let ledger_path =
+        manifest_dir.join("../../docs/qualification/ryzen5_5500u_benchmark_ledger.json");
+    assert!(
+        ledger_path.exists(),
+        "Required test evidence missing: docs/qualification/ryzen5_5500u_benchmark_ledger.json must exist"
+    );
+    let content =
+        std::fs::read_to_string(&ledger_path).expect("read ryzen5_5500u_benchmark_ledger.json");
+    let ledger: aethershell_diagnostics::RuntimeBenchmarkLedger =
+        serde_json::from_str(&content).expect("deserialize ryzen5_5500u_benchmark_ledger.json");
+
+    assert_eq!(ledger.profile, WorkloadProfile::MinimalIdle);
+    assert_eq!(
+        ledger.target_budget.classification,
+        BudgetClassification::PreliminaryDesignTarget
+    );
+    assert_eq!(ledger.target_budget.max_core_working_set_mb, 30.0);
+    assert_eq!(ledger.target_budget.max_core_cpu_pct, 0.1);
+    assert_eq!(ledger.repetitions.len(), 5);
+    for rep in &ledger.repetitions {
+        assert!(matches!(
+            rep.gpu_status,
+            aethershell_diagnostics::GpuMetricStatus::Unavailable { .. }
+        ));
+        assert!(matches!(
+            rep.wakeup_status,
+            aethershell_diagnostics::WakeupMetricStatus::Unavailable { .. }
+        ));
+        assert!(matches!(
+            rep.presentation_status,
+            aethershell_diagnostics::PresentationMetricStatus::Unavailable { .. }
+        ));
+    }
+}
+
+#[test]
+fn test_budget_classification_three_state_semantics() {
+    let prelim = BudgetClassification::PreliminaryDesignTarget;
+    let ratified = BudgetClassification::RatifiedTarget;
+    let prov = BudgetClassification::ProvisionalProposal;
+
+    assert_ne!(prelim, ratified);
+    assert_ne!(prelim, prov);
+    assert_ne!(ratified, prov);
+
+    assert!(prelim.is_preliminary());
+    assert!(!prelim.is_ratified());
+    assert!(!prelim.is_provisional());
+
+    assert!(!ratified.is_preliminary());
+    assert!(ratified.is_ratified());
+    assert!(!ratified.is_provisional());
+
+    assert!(!prov.is_preliminary());
+    assert!(!prov.is_ratified());
+    assert!(prov.is_provisional());
+
+    // Serialization to snake_case
+    assert_eq!(
+        serde_json::to_string(&prelim).unwrap(),
+        "\"preliminary_design_target\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ratified).unwrap(),
+        "\"ratified_target\""
+    );
+    assert_eq!(
+        serde_json::to_string(&prov).unwrap(),
+        "\"provisional_proposal\""
+    );
+
+    // Deserialization from JSON string
+    let de_prelim: BudgetClassification =
+        serde_json::from_str("\"preliminary_design_target\"").unwrap();
+    let de_ratified: BudgetClassification = serde_json::from_str("\"ratified_target\"").unwrap();
+    let de_prov: BudgetClassification = serde_json::from_str("\"provisional_proposal\"").unwrap();
+
+    assert_eq!(de_prelim, BudgetClassification::PreliminaryDesignTarget);
+    assert_eq!(de_ratified, BudgetClassification::RatifiedTarget);
+    assert_eq!(de_prov, BudgetClassification::ProvisionalProposal);
 }
