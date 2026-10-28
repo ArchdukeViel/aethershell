@@ -1431,19 +1431,21 @@ This document maintains verifiable test and validation records. Every entry is t
      Added unit tests `test_supervised_child_from_child_duplicates_handle_safely` and `test_concurrent_script_trust_authorization_and_worker_lifecycle`, verifying 30 concurrent iterations of script trust canonicalization alongside 30 worker spawns/drops without a single failure.
   5. **Zombie Process Cleanup**:
      Added `.kill()` and `.wait()` calls across all spawned child process tests in `supervisor.rs` to eliminate `clippy::zombie-processes` warnings and ensure zero orphan process leaks.
-  6. **Physical Host Benchmark Guard & Scoped Sandbox**:
-     Rewrote `scripts/run_ryzen5_benchmark.ps1` with host environment detection (`Win32_ComputerSystem` / `Win32_BIOS`). Blocks intrusive desktop manipulation on physical hosts unless `-SafeMode` or explicit `-AllowPhysicalHost` is passed (Q37:A). Created unique sandbox directory (`target\benchmark_sandbox_${PID}_${uniqueSuffix}`) with `.benchmark_sandbox_owner` sentinel, verified scoped cleanup, and strictly verified `%LOCALAPPDATA%\AetherShell` is never modified (remains 0 items).
-  7. **Benchmark Ledger Reclassification**:
-     Reconciled `docs/qualification/ryzen5_5500u_benchmark_ledger.json` budget classification to `preliminary_design_target` and rationale to cite preliminary PRD Section 14.2 design goals (pending multi-environment ratification per PRD Section 14.4). Added serde alias `preliminary_design_target` to `BudgetClassification::RatifiedTarget` and added regression test `test_deserialize_ryzen5_5500u_benchmark_ledger_json`.
+  6. **Physical Host Benchmark Safety & Scoped Sandbox Hardening**:
+     Hardened `scripts/run_ryzen5_benchmark.ps1` with host environment detection (`Win32_ComputerSystem` / `Win32_BIOS`). Strictly blocks intrusive Core benchmark execution on physical host per Q03:A and Q37:A, recognizing that `aethershell.exe` discovers desktop window hierarchies, creates Direct2D overlays, and registers global hotkeys even in `--safe-mode`. Removed `-AllowPhysicalHost` bypass and permitted only `-DryRun` on physical host for non-invasive preflight and containment verification. Added unique sandbox directory (`target\benchmark_sandbox_${PID}_${uniqueSuffix}`) with structured JSON sentinel (`.benchmark_sandbox_owner`), verified boundary-safe directory descendant containment (`target\` prefix with separator), reparse point / junction rejection, and guaranteed environment variable restoration (`AETHERSHELL_APP_DATA_DIR` and `AETHERSHELL_SESSION_TOKEN_PATH`) in `finally`. Verified `%LOCALAPPDATA%\AetherShell` is never modified (strictly 0 items). Added 11 automated safety regression tests in `tests/run_ryzen5_benchmark_tests.ps1`.
+  7. **Distinct Preliminary Budget Classification & Semantics**:
+     Eliminated the contradictory Serde alias mapping preliminary targets to `RatifiedTarget`. Implemented a dedicated enum variant `BudgetClassification::PreliminaryDesignTarget` alongside `RatifiedTarget` and `ProvisionalProposal`. Reconciled `docs/qualification/ryzen5_5500u_benchmark_ledger.json` and `WorkloadProfile::MinimalIdle` to `PreliminaryDesignTarget`, updated verdict generation, Display formatting, and budget notes, and added `test_budget_classification_three_state_semantics` and `test_deserialize_ryzen5_5500u_benchmark_ledger_json` regression tests.
   8. **Test Accounting Reconciliation**:
-     Reconciled discovered tests to 275 unique tests (166 unit + 109 integration across 27 test executables). Reconciled CI execution count (275 unique tests + 3 repeated CI filtered executions = 278 test runs).
+     Reconciled discovered tests to 276 unique tests (166 unit + 110 integration across 27 test executables). CI execution count: 276 unique tests + 3 repeated CI filtered executions = 279 test runs. PowerShell regression suites: 6 tests in `test_inventory_tests.ps1` and 11 tests in `run_ryzen5_benchmark_tests.ps1`.
 - **Verification & Test Results**:
-  - `cargo test --workspace`: 275 passed, 0 failed, 0 ignored.
+  - `cargo test --workspace`: 276 passed, 0 failed, 0 ignored.
   - `cargo clippy --workspace --all-targets -- -D warnings`: passed cleanly, 0 warnings.
   - `cargo fmt --all --check`: passed cleanly, 0 diff.
   - `tests/test_inventory_tests.ps1`: 6/6 passed.
-  - `scripts/test_inventory.ps1`: verified 275 unique tests across 27 test executables.
+  - `tests/run_ryzen5_benchmark_tests.ps1`: 11/11 passed.
+  - `scripts/test_inventory.ps1 -Strict`: verified 276 unique tests across 27 test executables.
   - `ipc_security_authorization_test.rs` C++ tests: 3/3 passed.
+  - `cargo build --release --workspace`: passed cleanly (0 errors, 0 warnings).
   - `%LOCALAPPDATA%\AetherShell`: 0 items verified.
 - **Evidentiary Verdict & Status**: `passed`. Reaffirms: 0 gates `VERIFIED`, 18 `PARTIALLY_VERIFIED`, 1 `NOT_APPLICABLE`, 1 `DEFERRED`. `CORE_STABLE_CANDIDATE` strictly not declared.
 

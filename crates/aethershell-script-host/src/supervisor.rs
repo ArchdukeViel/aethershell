@@ -54,6 +54,15 @@ pub struct SupervisedChild {
 }
 
 impl SupervisedChild {
+    /// Creates a `SupervisedChild` taking exclusive ownership of an existing Win32 `process_handle`.
+    ///
+    /// # Safety and Ownership Invariants
+    /// - The caller MUST transfer exclusive ownership of `process_handle` to this `SupervisedChild`.
+    /// - The caller must NOT close `process_handle` after transferring ownership.
+    /// - Never wrap a borrowed handle from `std::process::Child` directly without duplicating it first.
+    ///   Callers wrapping an `std::process::Child` must call [`SupervisedChild::from_child`] which safely
+    ///   duplicates the Win32 handle via `DuplicateHandle` to prevent double-close handle invalidation.
+    /// - Passing `HANDLE::default()` (null) or `INVALID_HANDLE_VALUE` is safe and treated as an inert handle.
     pub fn new(process_handle: HANDLE, pid: u32) -> Self {
         Self {
             process_handle,
