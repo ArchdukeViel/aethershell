@@ -28,6 +28,8 @@ pub enum SupervisorState {
 /// Integrity verification error for running child workers (Hypothesis A / Continuous Enforcement).
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum WorkerIntegrityError {
+    #[error("Active worker child exists but has no registered script path or identity metadata.")]
+    NoActiveScript,
     #[error("Script file '{0}' does not exist or was deleted from disk.")]
     ScriptNotFound(PathBuf),
     #[error("Failed to read script file '{0}': {1}")]
@@ -284,11 +286,16 @@ impl ScriptSupervisor {
         self.current_digest = None;
     }
 
-    #[cfg(test)]
+    #[doc(hidden)]
     pub fn set_current_script_for_test(&mut self, script: PathBuf, digest: String) {
         self.current_script = Some(script.clone());
         self.current_script_str = Some(script.to_string_lossy().to_string());
         self.current_digest = Some(digest);
+    }
+
+    #[doc(hidden)]
+    pub fn clear_current_script_for_test(&mut self) {
+        self.current_script = None;
     }
 
     pub fn record_start(&mut self, pid: u32) {
@@ -537,11 +544,19 @@ impl ScriptSupervisor {
         trusted_digests: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<(), WorkerIntegrityError> {
         // a) Return Ok if no active child worker is present
-        if !self.has_active_child() || self.current_script.is_none() {
+        if !self.has_active_child() {
             return Ok(());
         }
 
-        let script_path = self.current_script.clone().unwrap();
+        // b) Active child worker with missing script path is an inconsistent state (Fail-closed / A1)
+        let script_path = match self.current_script.clone() {
+            Some(path) => path,
+            None => {
+                self.invalidate_worker();
+                return Err(WorkerIntegrityError::NoActiveScript);
+            }
+        };
+
         let running_digest = match self.current_digest.as_deref() {
             Some(d) => d.to_string(),
             None => {
@@ -552,13 +567,13 @@ impl ScriptSupervisor {
             }
         };
 
-        // b) Checks whether current_script still exists on disk as a file
+        // c) Checks whether current_script still exists on disk as a file
         if !script_path.is_file() {
             self.invalidate_worker();
             return Err(WorkerIntegrityError::ScriptNotFound(script_path));
         }
 
-        // c) Computes its actual SHA-256 digest
+        // d) Computes its actual SHA-256 digest
         let script_bytes = match std::fs::read(&script_path) {
             Ok(bytes) => bytes,
             Err(e) => {
@@ -568,7 +583,7 @@ impl ScriptSupervisor {
         };
         let actual_digest = crate::trust::sha256_hex(&script_bytes);
 
-        // d) Verifies that actual digest matches self.current_digest
+        // e) Verifies that actual digest matches self.current_digest
         if !actual_digest.eq_ignore_ascii_case(&running_digest) {
             self.invalidate_worker();
             return Err(WorkerIntegrityError::ContentModified {
@@ -578,29 +593,38 @@ impl ScriptSupervisor {
             });
         }
 
-        // e) If trusted_digests is provided, verifies that current_script's canonical path and actual digest
-        // are still authorized in trusted_digests
-        if let Some(digests) = trusted_digests {
-            let configured_str = self
-                .current_script_str
-                .as_deref()
-                .unwrap_or_else(|| script_path.to_str().unwrap_or(""));
+        // f) Mandatory authorization ledger validation (Fail-closed / A2)
+        // If trusted_digests is None (e.g. config lock poisoned or inaccessible),
+        // mandatory authorization CANNOT be verified. Active worker must NOT be treated as authorized.
+        let digests = match trusted_digests {
+            Some(d) => d,
+            None => {
+                self.invalidate_worker();
+                return Err(WorkerIntegrityError::TrustRevoked(
+                    "Authoritative trust ledger is missing or inaccessible".into(),
+                ));
+            }
+        };
 
-            match crate::trust::authorize_script_trust(&script_path, configured_str, digests) {
-                Ok(approved_digest) => {
-                    if !approved_digest.eq_ignore_ascii_case(&actual_digest) {
-                        self.invalidate_worker();
-                        return Err(WorkerIntegrityError::ContentModified {
-                            script: script_path,
-                            running: running_digest,
-                            actual: actual_digest,
-                        });
-                    }
-                }
-                Err(e) => {
+        let configured_str = self
+            .current_script_str
+            .as_deref()
+            .unwrap_or_else(|| script_path.to_str().unwrap_or(""));
+
+        match crate::trust::authorize_script_trust(&script_path, configured_str, digests) {
+            Ok(approved_digest) => {
+                if !approved_digest.eq_ignore_ascii_case(&actual_digest) {
                     self.invalidate_worker();
-                    return Err(WorkerIntegrityError::TrustRevoked(e.to_string()));
+                    return Err(WorkerIntegrityError::ContentModified {
+                        script: script_path,
+                        running: running_digest,
+                        actual: actual_digest,
+                    });
                 }
+            }
+            Err(e) => {
+                self.invalidate_worker();
+                return Err(WorkerIntegrityError::TrustRevoked(e.to_string()));
             }
         }
 
@@ -1083,5 +1107,90 @@ mod tests {
             !supervisor.has_active_child(),
             "Worker must be terminated upon script deletion"
         );
+    }
+
+    #[test]
+    fn test_verify_active_worker_integrity_active_child_missing_metadata_fails_closed() {
+        let mut supervisor = ScriptSupervisor::new(2);
+        let child_proc = Command::new("cmd.exe")
+            .args(["/c", "ping", "-n", "10", "127.0.0.1"])
+            .spawn()
+            .expect("spawn dummy child");
+
+        let supervised_child =
+            SupervisedChild::new(HANDLE(child_proc.as_raw_handle()), child_proc.id());
+        supervisor.assign_supervised_child(supervised_child);
+        // Explicitly leave current_script as None (active child missing metadata)
+        assert!(supervisor.has_active_child());
+        assert!(supervisor.current_script().is_none());
+
+        let trust_ledger = HashMap::new();
+        let res = supervisor.verify_active_worker_integrity(Some(&trust_ledger));
+
+        assert!(
+            res.is_err(),
+            "Active child with missing script metadata must fail closed"
+        );
+        assert_eq!(
+            res.unwrap_err(),
+            WorkerIntegrityError::NoActiveScript,
+            "Must return WorkerIntegrityError::NoActiveScript"
+        );
+        assert!(
+            !supervisor.has_active_child(),
+            "Worker must be terminated fail-closed"
+        );
+    }
+
+    #[test]
+    fn test_verify_active_worker_integrity_missing_trust_ledger_fails_closed() {
+        let mut supervisor = ScriptSupervisor::new(2);
+        let child_proc = Command::new("cmd.exe")
+            .args(["/c", "ping", "-n", "10", "127.0.0.1"])
+            .spawn()
+            .expect("spawn dummy child");
+
+        let temp_script = std::env::temp_dir().join(format!(
+            "test_missing_ledger_{}_{}.lua",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let content = b"-- test missing ledger script";
+        std::fs::write(&temp_script, content).unwrap();
+        let digest = crate::sha256_hex(content);
+
+        let supervised_child =
+            SupervisedChild::new(HANDLE(child_proc.as_raw_handle()), child_proc.id());
+        supervisor.assign_supervised_child(supervised_child);
+        supervisor.set_current_script_for_test(temp_script.clone(), digest);
+
+        assert!(supervisor.has_active_child());
+
+        // When trusted_digests is None (e.g. config lock poisoned or inaccessible)
+        let res = supervisor.verify_active_worker_integrity(None);
+
+        assert!(
+            res.is_err(),
+            "Missing authoritative trust ledger must fail closed"
+        );
+        match res.unwrap_err() {
+            WorkerIntegrityError::TrustRevoked(msg) => {
+                assert!(
+                    msg.contains("missing or inaccessible"),
+                    "Expected missing or inaccessible ledger message, got: {}",
+                    msg
+                );
+            }
+            other => panic!("Expected TrustRevoked error variant, got: {:?}", other),
+        }
+        assert!(
+            !supervisor.has_active_child(),
+            "Worker must be terminated fail-closed"
+        );
+
+        let _ = std::fs::remove_file(&temp_script);
     }
 }

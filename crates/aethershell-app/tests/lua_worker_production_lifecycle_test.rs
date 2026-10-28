@@ -1787,3 +1787,191 @@ end
 
     harness.stop().await;
 }
+
+#[tokio::test]
+async fn test_continuous_revalidation_poisoned_config_lock_fails_closed() {
+    let host_bin = find_script_host_binary("aethershell-script-host.exe");
+    if host_bin.is_none() {
+        return;
+    }
+
+    let harness = LuaTestHarness::start_with_watchdog_interval("lua_poison_lock", None).await;
+
+    let script_file = harness.temp_dir.join("poison_test.lua");
+    let script_v1 = r#"
+function init()
+    aether.set_binding("script.poison_metric", 42.0)
+    aether.publish_bindings({ ["script.poison_metric"] = 42.0 })
+end
+function update()
+    aether.publish_bindings({ ["script.poison_metric"] = 42.0 })
+end
+"#;
+    std::fs::write(&script_file, script_v1).expect("write script");
+    let digest_v1 = sha256_hex(script_v1.as_bytes());
+
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.enabled = true;
+        cfg.scripting.active_script = Some(script_file.to_string_lossy().to_string());
+        cfg.scripting.require_explicit_trust_for_imported_scripts = true;
+        cfg.scripting
+            .trusted_digests
+            .insert(script_file.to_string_lossy().to_string(), digest_v1);
+    }
+
+    harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("launch worker");
+
+    // Wait for initial binding to appear
+    let wait_start = std::time::Instant::now();
+    let mut bound = false;
+    while wait_start.elapsed() < Duration::from_secs(4) {
+        if harness
+            .cached_bindings()
+            .read()
+            .unwrap()
+            .get("script.poison_metric")
+            .is_some()
+        {
+            bound = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(bound, "Initial binding must be published");
+
+    // Poison the active_config RwLock
+    let config_arc_clone = harness.active_config();
+    let handle = std::thread::spawn(move || {
+        let _guard = config_arc_clone.write().unwrap();
+        panic!("Simulated lock poisoning in configuration subsystem");
+    });
+    let _ = handle.join();
+
+    // Verify lock is indeed poisoned
+    assert!(harness.active_config().read().is_err());
+
+    // Trigger watchdog tick
+    let ticked = harness.engine.tick_script_worker_watchdog();
+    assert!(ticked, "Watchdog tick should succeed");
+
+    // Verify worker terminated fail-closed
+    {
+        let sup_arc = harness.script_supervisor();
+        let sup = sup_arc.lock().await;
+        assert!(
+            !sup.has_active_child(),
+            "Active worker must be terminated fail-closed when config lock is poisoned"
+        );
+    }
+
+    // Verify script bindings purged
+    {
+        let cached = harness.cached_bindings();
+        let bindings = cached.read().unwrap();
+        assert!(
+            !bindings.contains_key("script.poison_metric"),
+            "script.* bindings must be purged when trust ledger is inaccessible"
+        );
+    }
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_continuous_revalidation_active_child_missing_metadata_fails_closed() {
+    let host_bin = find_script_host_binary("aethershell-script-host.exe");
+    if host_bin.is_none() {
+        return;
+    }
+
+    let harness = LuaTestHarness::start_with_watchdog_interval("lua_missing_meta", None).await;
+
+    let script_file = harness.temp_dir.join("missing_meta.lua");
+    let script_v1 = r#"
+function init()
+    aether.set_binding("script.meta_metric", 100.0)
+    aether.publish_bindings({ ["script.meta_metric"] = 100.0 })
+end
+function update()
+    aether.publish_bindings({ ["script.meta_metric"] = 100.0 })
+end
+"#;
+    std::fs::write(&script_file, script_v1).expect("write script");
+    let digest_v1 = sha256_hex(script_v1.as_bytes());
+
+    {
+        let config_arc = harness.active_config();
+        let mut cfg = config_arc.write().unwrap();
+        cfg.scripting.enabled = true;
+        cfg.scripting.active_script = Some(script_file.to_string_lossy().to_string());
+        cfg.scripting.require_explicit_trust_for_imported_scripts = true;
+        cfg.scripting
+            .trusted_digests
+            .insert(script_file.to_string_lossy().to_string(), digest_v1);
+    }
+
+    harness
+        .engine
+        .sync_script_worker(&harness.pipe_name, false)
+        .await
+        .expect("launch worker");
+
+    // Wait for initial binding to appear
+    let wait_start = std::time::Instant::now();
+    let mut bound = false;
+    while wait_start.elapsed() < Duration::from_secs(4) {
+        if harness
+            .cached_bindings()
+            .read()
+            .unwrap()
+            .get("script.meta_metric")
+            .is_some()
+        {
+            bound = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(bound, "Initial binding must be published");
+
+    // Corrupt supervisor state by clearing current_script while child is still active
+    {
+        let sup_arc = harness.script_supervisor();
+        let mut sup = sup_arc.lock().await;
+        assert!(sup.has_active_child());
+        sup.clear_current_script_for_test();
+        assert!(sup.current_script().is_none());
+    }
+
+    // Trigger watchdog tick - should detect missing metadata and fail-closed
+    let ticked = harness.engine.tick_script_worker_watchdog();
+    assert!(ticked, "Watchdog tick should succeed");
+
+    // Verify worker terminated fail-closed
+    {
+        let sup_arc = harness.script_supervisor();
+        let sup = sup_arc.lock().await;
+        assert!(
+            !sup.has_active_child(),
+            "Active worker must be terminated fail-closed when script metadata is missing"
+        );
+    }
+
+    // Verify script bindings purged
+    {
+        let cached = harness.cached_bindings();
+        let bindings = cached.read().unwrap();
+        assert!(
+            !bindings.contains_key("script.meta_metric"),
+            "script.* bindings must be purged when worker metadata is invalid"
+        );
+    }
+
+    harness.stop().await;
+}

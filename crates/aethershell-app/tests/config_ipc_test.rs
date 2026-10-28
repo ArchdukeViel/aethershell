@@ -524,3 +524,64 @@ async fn test_set_config_transactional_rollback_on_disk_persistence_failure() {
     let _ = fs::remove_dir_all(&blocked_path);
     harness.stop().await;
 }
+
+#[tokio::test]
+async fn test_set_config_response_contract_fields() {
+    let harness = ConfigTestHarness::start("secret_test_token_contract_01").await;
+
+    let candidate_cfg = AppConfig {
+        profile: "signature_minimal".into(),
+        ..Default::default()
+    };
+
+    let resp = harness
+        .send(
+            "set_config",
+            serde_json::json!({
+                "session_token": "secret_test_token_contract_01",
+                "config": candidate_cfg
+            }),
+        )
+        .await;
+
+    assert!(resp.success, "set_config envelope must succeed");
+    let payload = &resp.payload;
+    assert_eq!(payload["success"], true);
+    assert_eq!(payload["persisted"], true);
+    assert_eq!(payload["applied"], true);
+    assert_eq!(payload["worker_synced"], true);
+    assert!(payload["worker_sync_error"].is_null());
+    assert!(payload["render_error"].is_null());
+    assert!(payload["rendered"].is_boolean());
+    assert!(payload["rendered_commands"].is_number());
+    assert_eq!(payload["config"]["profile"], "signature_minimal");
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn test_update_layout_response_contract_fields() {
+    let harness = ConfigTestHarness::start("secret_test_token_contract_02").await;
+
+    let resp = harness
+        .send(
+            "update_layout",
+            serde_json::json!({
+                "session_token": "secret_test_token_contract_02"
+            }),
+        )
+        .await;
+
+    assert!(resp.success, "update_layout envelope must succeed");
+    let payload = &resp.payload;
+    assert_eq!(payload["success"], true);
+    assert_eq!(payload["persisted"], false);
+    assert_eq!(payload["applied"], true);
+    assert_eq!(payload["worker_synced"], true);
+    assert!(payload["worker_sync_error"].is_null());
+    assert!(payload["render_error"].is_null());
+    assert!(payload["rendered"].is_boolean());
+    assert!(payload["rendered_commands"].is_number());
+
+    harness.stop().await;
+}

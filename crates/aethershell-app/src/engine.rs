@@ -769,9 +769,10 @@ impl AppEngine {
                 last_telemetry_poll = now;
             }
 
-            // 3. Periodic script worker watchdog check, crash monitor, and continuous integrity verification (2s interval)
-            if now.duration_since(last_watchdog_check) >= std::time::Duration::from_secs(2) {
-                self.tick_script_worker_watchdog();
+            // 3. Periodic script worker watchdog check, crash monitor, and continuous integrity verification (2s nominal interval)
+            if now.duration_since(last_watchdog_check) >= std::time::Duration::from_secs(2)
+                && self.tick_script_worker_watchdog()
+            {
                 last_watchdog_check = now;
             }
 
@@ -1435,6 +1436,8 @@ impl AppEngine {
 
                         let mut win_mgr = desktop_windows.lock().await;
                         let mut rendered_commands = 0;
+                        let mut rendered = false;
+                        let mut render_err: Option<String> = None;
                         if let Some(primary) = win_mgr.primary_window() {
                             let width = primary.bounds[2].max(100) as f32;
                             let height = primary.bounds[3].max(100) as f32;
@@ -1447,25 +1450,39 @@ impl AppEngine {
                             win_mgr.set_interactive_regions(regions);
                             let mut r_lock = desktop_renderer.lock().await;
                             if let Some(ref mut renderer) = *r_lock {
-                                if let Ok(count) = renderer.render_scene(&scene) {
-                                    rendered_commands = count;
+                                match renderer.render_scene(&scene) {
+                                    Ok(count) => {
+                                        rendered = true;
+                                        rendered_commands = count;
+                                    }
+                                    Err(e) => {
+                                        rendered = false;
+                                        render_err = Some(e.to_string());
+                                        warn!("Direct2D scene rendering error during layout update: {}", e);
+                                    }
                                 }
                             }
                         }
+
+                        // Complete application requires worker_synced AND no rendering error
+                        let applied = worker_synced && render_err.is_none();
+
                         info!(
-                            "Updated layout and re-rendered on live desktop host ({} commands, worker_synced: {})",
-                            rendered_commands, worker_synced
+                            "Updated layout and re-rendered on live desktop host (commands: {}, rendered: {}, applied: {}, worker_synced: {})",
+                            rendered_commands, rendered, applied, worker_synced
                         );
                         IpcResponse::ok(
                             req.message_id,
                             serde_json::json!({
-                                "rendered": rendered_commands > 0,
-                                "rendered_commands": rendered_commands,
-                                "applied": worker_synced,
-                                "worker_synced": worker_synced,
-                                "worker_error": worker_err,
-                                "worker_sync_error": worker_err,
                                 "success": true,
+                                "persisted": false,
+                                "applied": applied,
+                                "worker_synced": worker_synced,
+                                "worker_error": worker_err.clone(),
+                                "worker_sync_error": worker_err,
+                                "rendered": rendered,
+                                "rendered_commands": rendered_commands,
+                                "render_error": render_err,
                             }),
                         )
                     }
@@ -1624,8 +1641,11 @@ impl AppEngine {
                             aud.set_fps_mode(fps_mode);
                         }
 
+                        // 2. Trigger live scene re-render with updated configuration
+                        let mut rendered_commands = 0;
+                        let mut rendered = false;
+                        let mut render_err: Option<String> = None;
                         {
-                            // 2. Trigger live scene re-render with updated configuration
                             let mut win_mgr = desktop_windows.lock().await;
                             if let Some(primary) = win_mgr.primary_window() {
                                 let width = primary.bounds[2].max(100) as f32;
@@ -1639,12 +1659,22 @@ impl AppEngine {
                                 win_mgr.set_interactive_regions(regions);
                                 let mut r_lock = desktop_renderer.lock().await;
                                 if let Some(ref mut renderer) = *r_lock {
-                                    let _ = renderer.render_scene(&scene);
+                                    match renderer.render_scene(&scene) {
+                                        Ok(count) => {
+                                            rendered = true;
+                                            rendered_commands = count;
+                                        }
+                                        Err(e) => {
+                                            rendered = false;
+                                            render_err = Some(e.to_string());
+                                            warn!("Direct2D scene rendering error during set_config: {}", e);
+                                        }
+                                    }
                                 }
                             }
                         }
 
-                        let (applied, sync_err) = match script_sync_res {
+                        let (worker_synced, sync_err) = match script_sync_res {
                             Ok(_) => (true, None),
                             Err(e) => {
                                 warn!(
@@ -1655,18 +1685,26 @@ impl AppEngine {
                             }
                         };
 
+                        // Complete application requires worker_synced AND no rendering error
+                        let applied = worker_synced && render_err.is_none();
+
                         info!(
-                            "IPC 'set_config' processed (applied: {}, sync_err: {:?})",
-                            applied, sync_err
+                            "IPC 'set_config' processed (persisted: true, applied: {}, worker_synced: {}, rendered: {}, sync_err: {:?}, render_err: {:?})",
+                            applied, worker_synced, rendered, sync_err, render_err
                         );
                         IpcResponse::ok(
                             req.message_id,
                             serde_json::json!({
+                                "success": true,
                                 "persisted": true,
                                 "applied": applied,
-                                "worker_synced": applied,
-                                "config": candidate_cfg,
+                                "worker_synced": worker_synced,
+                                "worker_error": sync_err.clone(),
                                 "worker_sync_error": sync_err,
+                                "rendered": rendered,
+                                "rendered_commands": rendered_commands,
+                                "render_error": render_err,
+                                "config": candidate_cfg,
                             }),
                         )
                     }

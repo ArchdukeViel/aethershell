@@ -97,22 +97,30 @@ impl SessionToken {
     /// Canonical path to session capability token for a specific session ID:
     /// `%LOCALAPPDATA%\AetherShell\session_{session_id}.token`
     pub fn token_path_for_session(session_id: u32) -> PathBuf {
+        // 1. Explicit token path override: AETHERSHELL_SESSION_TOKEN_PATH
         if let Ok(override_path) = std::env::var("AETHERSHELL_SESSION_TOKEN_PATH") {
-            return PathBuf::from(override_path);
-        }
-        if let Ok(appdata_override) = std::env::var("AETHERSHELL_APP_DATA_DIR") {
-            let path = PathBuf::from(appdata_override);
-            if !path.as_os_str().is_empty() {
-                return path.join(format!("session_{}.token", session_id));
+            let trimmed = override_path.trim();
+            if !trimmed.is_empty() {
+                return PathBuf::from(trimmed);
             }
         }
-        if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
-            PathBuf::from(appdata)
-                .join("AetherShell")
-                .join(format!("session_{}.token", session_id))
-        } else {
-            std::env::temp_dir().join(format!("aethershell_session_{}.token", session_id))
+        // 2. Explicit isolated AppData directory: AETHERSHELL_APP_DATA_DIR
+        if let Ok(appdata_override) = std::env::var("AETHERSHELL_APP_DATA_DIR") {
+            let trimmed = appdata_override.trim();
+            if !trimmed.is_empty() {
+                return PathBuf::from(trimmed).join(format!("session_{}.token", session_id));
+            }
         }
+        // 3. Default production path: %LOCALAPPDATA%\AetherShell
+        if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
+            let trimmed = appdata.trim();
+            if !trimmed.is_empty() {
+                return PathBuf::from(trimmed)
+                    .join("AetherShell")
+                    .join(format!("session_{}.token", session_id));
+            }
+        }
+        std::env::temp_dir().join(format!("aethershell_session_{}.token", session_id))
     }
 
     /// Canonical path to session capability token for the current session.
@@ -121,35 +129,97 @@ impl SessionToken {
     }
 
     /// Loads the active session token for a given session ID from disk, if present.
+    ///
+    /// Precedence order:
+    /// 1. `AETHERSHELL_SESSION_TOKEN_PATH`: Exact file override. Fails closed (never falls back).
+    /// 2. `AETHERSHELL_APP_DATA_DIR`: Isolated directory override. Checks `session_{id}.token` and `session.token`.
+    ///    Fails closed (NEVER falls back to `%LOCALAPPDATA%`).
+    /// 3. `%LOCALAPPDATA%\AetherShell`: Production default directory.
     pub fn load_for_session(session_id: u32) -> Option<String> {
-        let path = Self::token_path_for_session(session_id);
-        if let Ok(s) = std::fs::read_to_string(&path) {
-            let trimmed = s.trim().to_string();
+        // 1. Explicit token path override: AETHERSHELL_SESSION_TOKEN_PATH
+        if let Ok(override_path) = std::env::var("AETHERSHELL_SESSION_TOKEN_PATH") {
+            let trimmed = override_path.trim();
             if !trimmed.is_empty() {
-                return Some(trimmed);
+                if let Ok(s) = std::fs::read_to_string(trimmed) {
+                    let token = s.trim().to_string();
+                    if !token.is_empty() {
+                        return Some(token);
+                    }
+                }
+                // Fail-closed: Explicit token path override specified; never fall back
+                return None;
             }
         }
-        // Fallback check for legacy session.token path
-        let legacy_path = if let Ok(appdata_override) = std::env::var("AETHERSHELL_APP_DATA_DIR") {
-            let path = PathBuf::from(appdata_override);
-            if !path.as_os_str().is_empty() {
-                path.join("session.token")
+
+        // 2. Explicit isolated AppData directory: AETHERSHELL_APP_DATA_DIR
+        if let Ok(appdata_override) = std::env::var("AETHERSHELL_APP_DATA_DIR") {
+            let trimmed = appdata_override.trim();
+            if !trimmed.is_empty() {
+                let base = PathBuf::from(trimmed);
+                let session_path = base.join(format!("session_{}.token", session_id));
+                if let Ok(s) = std::fs::read_to_string(&session_path) {
+                    let token = s.trim().to_string();
+                    if !token.is_empty() {
+                        return Some(token);
+                    }
+                }
+                let legacy_path = base.join("session.token");
+                if let Ok(s) = std::fs::read_to_string(&legacy_path) {
+                    let token = s.trim().to_string();
+                    if !token.is_empty() {
+                        return Some(token);
+                    }
+                }
+                // Fail-closed: Explicit isolated AppData directory specified; NEVER fall back to %LOCALAPPDATA%
+                return None;
+            }
+        }
+
+        // 3. Default production path: %LOCALAPPDATA%\AetherShell\session_{session_id}.token
+        let default_dir = if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
+            let trimmed = appdata.trim();
+            if !trimmed.is_empty() {
+                Some(PathBuf::from(trimmed).join("AetherShell"))
             } else {
-                std::env::temp_dir().join("session.token")
+                None
             }
-        } else if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
-            PathBuf::from(appdata)
-                .join("AetherShell")
-                .join("session.token")
         } else {
-            std::env::temp_dir().join("aethershell_session.token")
+            None
         };
-        if let Ok(s) = std::fs::read_to_string(&legacy_path) {
-            let trimmed = s.trim().to_string();
-            if !trimmed.is_empty() {
-                return Some(trimmed);
+
+        if let Some(dir) = &default_dir {
+            let session_path = dir.join(format!("session_{}.token", session_id));
+            if let Ok(s) = std::fs::read_to_string(&session_path) {
+                let token = s.trim().to_string();
+                if !token.is_empty() {
+                    return Some(token);
+                }
+            }
+            let legacy_path = dir.join("session.token");
+            if let Ok(s) = std::fs::read_to_string(&legacy_path) {
+                let token = s.trim().to_string();
+                if !token.is_empty() {
+                    return Some(token);
+                }
+            }
+        } else {
+            let fallback_session =
+                std::env::temp_dir().join(format!("aethershell_session_{}.token", session_id));
+            if let Ok(s) = std::fs::read_to_string(&fallback_session) {
+                let token = s.trim().to_string();
+                if !token.is_empty() {
+                    return Some(token);
+                }
+            }
+            let fallback_legacy = std::env::temp_dir().join("aethershell_session.token");
+            if let Ok(s) = std::fs::read_to_string(&fallback_legacy) {
+                let token = s.trim().to_string();
+                if !token.is_empty() {
+                    return Some(token);
+                }
             }
         }
+
         None
     }
 
@@ -408,5 +478,57 @@ mod tests {
 
         std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
         let _ = std::fs::remove_dir_all(custom_dir);
+    }
+
+    #[test]
+    fn test_isolated_appdata_dir_never_falls_back_to_production_localappdata() {
+        let _lock = ENV_LOCK.lock().unwrap();
+
+        // Setup a mock production LOCALAPPDATA directory containing a real token
+        let prod_dir =
+            std::env::temp_dir().join(format!("test_prod_appdata_{}", uuid::Uuid::new_v4()));
+        let prod_aethershell = prod_dir.join("AetherShell");
+        std::fs::create_dir_all(&prod_aethershell).unwrap();
+        let prod_token_file = prod_aethershell.join("session_42.token");
+        std::fs::write(&prod_token_file, "SECRET_PRODUCTION_TOKEN_DO_NOT_LEAK").unwrap();
+
+        // Setup an isolated test directory WITHOUT any token
+        let isolated_dir =
+            std::env::temp_dir().join(format!("test_isolated_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&isolated_dir).unwrap();
+
+        let orig_localappdata = std::env::var("LOCALAPPDATA").ok();
+        std::env::set_var("LOCALAPPDATA", &prod_dir);
+        std::env::set_var("AETHERSHELL_APP_DATA_DIR", &isolated_dir);
+        std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
+
+        // Attempt to load token for session 42 while pointing to isolated dir
+        let loaded = SessionToken::load_for_session(42);
+
+        // Fail-closed verification: MUST NOT fall back to LOCALAPPDATA!
+        assert_eq!(
+            loaded, None,
+            "Isolated AppData directory without token must fail closed and NEVER fall back to production LOCALAPPDATA"
+        );
+
+        // Also verify explicit token path override fail-closed
+        let nonexistent_token_file = isolated_dir.join("nonexistent_session.token");
+        std::env::set_var("AETHERSHELL_SESSION_TOKEN_PATH", &nonexistent_token_file);
+        let loaded_override = SessionToken::load_for_session(42);
+        assert_eq!(
+            loaded_override, None,
+            "Explicit token path override must fail closed when file is missing"
+        );
+
+        // Cleanup environment
+        std::env::remove_var("AETHERSHELL_SESSION_TOKEN_PATH");
+        std::env::remove_var("AETHERSHELL_APP_DATA_DIR");
+        if let Some(orig) = orig_localappdata {
+            std::env::set_var("LOCALAPPDATA", orig);
+        } else {
+            std::env::remove_var("LOCALAPPDATA");
+        }
+        let _ = std::fs::remove_dir_all(prod_dir);
+        let _ = std::fs::remove_dir_all(isolated_dir);
     }
 }
