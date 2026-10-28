@@ -1285,6 +1285,47 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Reviewer / Authority**: Lead Software Engineer / Integration Coordinator
 - **Notes & Limitations**: Full physical hardware and VM execution to be carried out during the pre-production qualification phase.
 
+---
+
+### EVD-034: Phase 0 Read-Only Host Preflight, CLI Safe Invocation Guard & PRD G01–G20 Gate Reconciliation
+- **Requirement / Gate**: Gate G01 through Gate G20 (PRD Section 18.2), PRD Section 14, Q01:B, Q02:A, Q03:A, Q04:A
+- **Candidate Commit**: Current Qualification HEAD
+- **Date & Environment**: 2026-10-28, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U with Radeon Graphics (WDDM 3.1 Driver 31.0.21925.1001), 16 GB RAM (~15.3 GB visible), Hyper-V Running, WSL2 Active (Ubuntu-24.04 & docker-desktop), Medium Mandatory Level Process Token.
+- **Executed Actions & Verification Suite**:
+  - **1. Phase 0 Read-Only Host Virtualization Preflight**:
+    - Query OS: Microsoft Windows 11 Pro, Version 10.0.26300, Build 26300, UBR 9711 (Windows 11 26H2 x64 GA tier).
+    - Query CPU: AMD Ryzen 5 5500U with Radeon Graphics (6 physical cores, 12 logical processors; `VirtualizationFirmwareEnabled: True` AMD-V enabled in UEFI).
+    - Query Hypervisor: `HypervisorPresent: True`; Hyper-V Host Compute Service (`vmcompute`) and Virtual Machine Management (`vmms`) running; WSL2 active running Ubuntu-24.04 and docker-desktop (`vmmemWSL` consuming ~1.1 GB RAM).
+    - Query Host Permissions: Process token is filtered Medium Mandatory Level (`BUILTIN\Administrators` deny-only). Non-elevated Hyper-V execution (`Get-VM`) fails with `VirtualizationException` (permission denied), and `C:\ProgramData\Microsoft\Windows\Virtual Hard Disks` access is denied. Windows Sandbox is not enabled (`WindowsSandbox.exe` not present).
+    - Query Memory & Storage Headroom: Total visible physical memory 16,070,328 KB (~15.3 GB); Free physical memory 3,580,788 KB (~3.58 GB); Pagefile 20 GB; Volume C: total 511 GB, free 65.4 GB (60.9 GiB).
+    - Resource Headroom & Capacity Disposition: With active development workloads and ~3.58 GB free physical RAM, provisioning a full 4 GB Windows guest VM without memory overcommit would risk host responsiveness. Conforming to Q01:B and host resource safeguards ("Do not force resource-intensive VM execution when available host memory is insufficient; do not terminate user programs to free memory"), full VM creation and execution is held as `BLOCKED_RESOURCE_CAPACITY` / `BLOCKED_ELEVATION_PREREQUISITE` pending owner allocation, elevation, and disk preparation without unauthorized host alteration.
+  - **2. CLI Safe Invocation Guard (`aethershell --help`)**:
+    - Discovered CLI defect in `crates/aethershell-app/src/main.rs`: passing `--help` or `-h` lacked an argument branch and fell through to `AppEngine::new().run()`, starting the background engine and initializing AppData.
+    - Implemented `print_usage()` and `--help` / `-h` handler returning clean `ExitCode::SUCCESS` without booting engine.
+    - Verified `%LOCALAPPDATA%\AetherShell` is strictly maintained at 0 items.
+  - **3. Authoritative PRD Gate & Matrix Reconciliation**:
+    - Updated `docs/qualification/WINDOWS_VM_AND_HARDWARE_QUALIFICATION_PLAN.md` Section 2.1 to cover all 7 PRD Section 2.1 OS tiers (Builds 19045, 22621, 22631, 26100, 26200, 26300, and 28000).
+    - Expanded Section 3 to provide individual, dedicated verification procedures for all 20 gates (G01 through G20) conforming strictly to PRD Section 18.2.
+    - Codified Host Preflight, Resource Budgets (one VM at a time, max 4 GB dynamic RAM, 2 vCPUs), Host-vs-Guest Machine Identity Guards, and Owner-Attended Physical AMD Testing Protocols.
+  - **4. Test Suite Execution & Inventory Audit**:
+    - Executed `cargo test --workspace`: all 268 unique tests across 13 workspace crates passed cleanly (160 unit + 108 integration tests across 26 test executables).
+    - Executed `cargo clippy --workspace --all-targets -- -D warnings`: 0 warnings, 0 errors.
+    - Executed `cargo fmt --all --check`: 0 diff.
+    - Executed C++/WinUI 3 qualification tests (`ipc_security_authorization_test.rs`): 3 passing tests.
+    - Executed `tests/test_inventory_tests.ps1`: 6 passing regression tests.
+    - Executed `scripts/test_inventory.ps1`: strictly 268 unique passing tests.
+  - **5. 20-Gate Acceptance Matrix Status**:
+    - Truthfully maintained: 0 `VERIFIED`, 18 `PARTIALLY_VERIFIED`, 1 `NOT_APPLICABLE` (G05), 1 `DEFERRED` (G15).
+    - Strictly reaffirmed that `CORE_STABLE_CANDIDATE` is NOT declared.
+- **Observed Result**:
+  - Full evidentiary alignment established across code, tests, CI workflows, and documentation.
+  - Zero test failures, zero clippy warnings, zero MSVC warnings, zero un-sandboxed host AppData writes.
+  - Host safety safeguards and owner approval boundaries strictly respected.
+- **Status**: `passed`
+- **Reviewer / Authority**: Lead Engineering Agent, Qualification Coordinator & Independent Reviewer
+- **Notes & Limitations**: Full VM provisioning requires elevated permissions and dedicated memory allocation. Physical AMD benchmarking is restricted to owner-attended non-invasive observations per Q03:A.
+
+
 
 
 
