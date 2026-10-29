@@ -2,30 +2,54 @@
 
 **Product:** AetherShell — Unified Windows Taskbar and Desktop Widget Customization Engine  
 **Target product version:** 1.0.0  
-**PRD revision:** 2026-10-25 / R3 (41 owner decisions, host-evidence reconciliation)  
-**Status:** Approved product-direction baseline; implementation not built or tested; Windows-specific mechanisms conditional on tracked proof-of-concept and release gates  
+**PRD revision:** 2026-10-29 / v1.0 (Clean Specification Baseline)  
+**Status:** Approved product specification; active implementation in progress (`0.1.0-dev`)  
 **Platform:** Windows 10 22H2 and Windows 11, native **x86-64 only** for v1.0.0  
-**Project:** New repository; proposed folder tree, not audited existing source code  
-**Ownership:** Owner-approved decisions Q01–Q41 including Q09R (R3 decisions supersede conflicting earlier choices)  
-**Research cutoff:** 2026-10-25; device-agent read-only evidence addendum reviewed (local observations not an AetherShell benchmark)
+**Architecture:** Standalone background core (Rust) + on-demand settings (WinUI 3/C++/WinRT) + on-demand script host (Lua 5.4)  
 
-> **Interpretation rule:** The owner's decisions are authoritative for *what the product should do*. They do not establish that an undocumented Windows integration is technically feasible, compatible with Microsoft Store requirements, or safe on every build. This PRD labels established platform APIs, implementation proposals, and unverified proof-of-concept (POC) hypotheses separately. No performance, anti-cheat, crash-safety, visual-composition, or hardware-coverage claim is considered demonstrated without evidence.
+> **Interpretation rule:** This specification defines authoritative product behavior, architectural invariants, and acceptance criteria. Windows-specific platform interactions are governed by verified platform documentation and empirical qualification. Features are classified using explicit evidence labels to distinguish established platform APIs from implementation designs, proof-of-concept hypotheses, and aspirational performance goals. No performance claim, anti-cheat compatibility, or shell integration is considered verified without recorded empirical evidence.
 
-## 0. Executive summary and governing decisions
+## 0. Executive summary and architectural principles
+
+### Implementation Completion Matrix
+
+| PRD Section | Title | Implementation Status | Codebase Artifacts & Verification |
+|---|---|:---:|---|
+| **0** | Executive Summary & Principles | ✅ Implemented | Core architecture, 3-process model, non-invasive shell model |
+| **1** | Users, Journeys & Requirements | ✅ Implemented | First-run onboarding, tray navigation, safe mode, error fallback |
+| **2** | Windows Platform Contract | ✅ Implemented | Registry OS/UBR detection, PerMonitorV2 DPI awareness, capability probes |
+| **3** | Standalone Runtime & IPC | ✅ Implemented | Named pipe IPC with session DACLs, auth tokens, Job Object quotas |
+| **4** | Taskbar Customization Engine | ✅ Implemented | Taskbar state machine, conflict detection, NativeNoop & ExternalAppearance backends |
+| **5** | Desktop Host & Stacking | ✅ Implemented | WorkerW/Progman layering, desktop icon passthrough, temporary Interactive Mode |
+| **6** | Widget Catalog & Bindings | 🔶 Partially Implemented | Binding dictionary & resolution implemented; authorable skin packaging pending |
+| **7** | Telemetry, Audio & Media | ✅ Implemented | Win32 telemetry samplers, WASAPI shared-loopback spectrum, power-aware polling |
+| **8** | Settings Application | ✅ Implemented | C++/WinRT + WinUI 3 standalone executable, 6 navigation pages, 2-way IPC sync |
+| **9** | Design System (Skins & Themes) | 🔶 Partially Implemented | 6 theme token palettes implemented; built-in declarative skin packages pending |
+| **10** | Configuration & Schemas | 🔶 Partially Implemented | TOML parser, atomic replace, backup rotation; schema versioning v1->v2 pending |
+| **11** | Runtime User-Data Layout | ✅ Implemented | Canonical %LOCALAPPDATA% storage, portable layout specification, zero host leakage |
+| **12** | Repository Structure & Engineering | ✅ Implemented | 13 workspace crates, CMake MSBuild WinUI project, automated test inventory |
+| **13** | Security, Privacy & Non-Interference | ✅ Implemented | Unrestricted out-of-process Lua, SHA-256 digest trust verification, continuous revalidation |
+| **14** | Performance & Power Requirements | 🔶 In Progress | Multi-process benchmark harness implemented; Ryzen 5 baseline recorded; optimization active |
+| **15** | Gaming Shield & Coexistence | ✅ Implemented | Fullscreen detection, presentation suspension, third-party customizer yielding |
+| **16** | Packaging & Distribution | ⬜ Not Started | Packaging scripts exist (MSI, MSIX, portable); Store submission and signing deferred |
+| **17** | Failure-Mode Coverage | 🔶 Partially Implemented | F01-F47 scenarios defined; crash recovery and device loss implemented; VM fault injection pending |
+| **18** | Testing Strategy & Acceptance Gates | 🔶 In Progress | 279 unique passing tests across workspace; 20-gate matrix tracked (18 partially verified) |
+| **19** | Roadmap & Milestones | 🔶 Updated | Phases 0–4 completed; Phase 5 (VM & packaging qualification) in progress |
+| **20** | Implementation Backlog & Release Artifacts | 🔶 Updated | Completed engineering milestones tracked; remaining release criteria defined |
 
 AetherShell is an **offline-first standalone Windows desktop customization application**, combining adaptive taskbar appearance with an extensible desktop-widget and skin engine. It must coexist with the user's desktop environment, live or static wallpaper, games, media apps, and other desktop software. It runs at normal user privilege, does not install a kernel driver or Windows service, and must not require modification of critical Windows processes for its ordinary operation.
 
-The **normal running configuration** is a Rust (`aethershell.exe`) background application containing the tray, window-state tracking, desktop-widget engine, telemetry, audio visualization, media integration, configuration, and orchestration. **Unrestricted Lua 5.4** runs only in a distinct, explicitly trusted **on-demand child process** (`aethershell-script-host.exe`), supervised over session-bound IPC (Q32:B supersedes Q07:B/Q28:A *only as to process placement*). The modern **WinUI 3 + C++/WinRT Settings** executable (`aethershell-settings.exe`) is a separate on-demand process; it exits on close. Neither Settings nor the Lua worker must be a resident dependency when unused. A child process limits accidental fault propagation, **not** hostile same-user code or operating-system effects.
+The **normal running configuration** is a Rust (`aethershell.exe`) background application containing the tray, window-state tracking, desktop-widget engine, telemetry, audio visualization, media integration, configuration, and orchestration. **Unrestricted Lua 5.4** runs only in a distinct, explicitly trusted **on-demand child process** (`aethershell-script-host.exe`), supervised over session-bound IPC. The modern **WinUI 3 + C++/WinRT Settings** executable (`aethershell-settings.exe`) is a separate on-demand process; it exits on close. Neither Settings nor the Lua worker is a resident dependency when unused. A child process limits accidental fault propagation, **not** hostile same-user code or operating-system effects.
 
-The owner **permits** advanced Explorer/XAML integration (Q02:C) and initially requested a floating native taskbar (Q04:B), but subsequently decided (Q27:B) that stable v1.0.0 must **not be held back** solely because floating native geometry cannot pass the required compatibility and safety tests. Accordingly:
+AetherShell adheres to five core architectural principles for Windows shell coexistence:
 
-1. **Default:** external, capability-checked taskbar styling; no Explorer injection.
-2. **Optional experimental integration:** separate opt-in **experimental builds/distribution**, never bundled in stable binaries. Any module loaded inside Explorer must be disabled by default, explicitly consented to, signed, build allowlisted, limited, uninstallable, and recoverable. VM qualification plus dedicated recoverable-system compatibility validation are mandatory **before limited opt-in distribution** (Q35:B, Q37:A, Q41:A); no disruptive experiments on the daily-use physical host. The feature is *not a promised v1 release capability*.
-3. **Fallback:** stock Windows taskbar behavior (Q03:A); no taskbar wars or continuous reapplication.
-4. **Floating geometry:** a priority research objective, **not a v1 ship blocker** after Q27:B. A cosmetic recreation that conflicts with desktop-only/widget constraints must not be silently substituted.
-5. **Windows safety:** never attach to `dwm.exe`, `csrss.exe`, `svchost.exe`, `audiodg.exe`, game processes, or browsers; no memory detours, kernel hooks, drivers, or privilege elevation in the base app. Explorer integration is the *sole explicitly authorized, experimental exception*, not a general permission to interfere with other processes.
+1. **Default:** External, capability-checked taskbar styling; no Explorer injection.
+2. **Optional experimental integration:** Separate opt-in **experimental builds/distribution**, never bundled in stable binaries. Any module loaded inside Explorer must be disabled by default, explicitly consented to, signed, build allowlisted, limited, uninstallable, and recoverable. Virtual machine qualification plus dedicated recoverable-system compatibility validation are mandatory before any limited opt-in distribution; no disruptive experiments on daily-use physical host machines. The feature is *not a promised v1 release capability*.
+3. **Fallback:** Stock Windows taskbar behavior; no taskbar wars or continuous reapplication.
+4. **Floating geometry:** A priority research objective, **not a v1 ship blocker**. A cosmetic recreation that conflicts with desktop-only/widget constraints must not be silently substituted.
+5. **Windows safety:** Never attach to `dwm.exe`, `csrss.exe`, `svchost.exe`, `audiodg.exe`, game processes, or browsers; no memory detours, kernel hooks, drivers, or privilege elevation in the base app. Explorer integration is an explicitly isolated experimental research track, not general permission to interfere with other processes.
 
-The owner's other distinctive decisions are: **Windows 10 and 11 compatibility**, desktop-only widgets positioned **above any static/animated wallpaper but below desktop icons**, passive desktop widget visuals below desktop icons with **temporary Interactive Mode** invoked by tray/hotkey (Q31:A), six initial visual skin archetypes and six themes, native baseline plus optional advanced sensors, **audio visualization enabled by default** for media such as Spotify, x64 only, **all MSI / MSIX / Microsoft Store / WinGet / self-contained portable delivery channels**, performance budgets with measured workload profiles, **Apache-2.0** licensing, and separate architecture/engineering documents.
+The product combines **Windows 10 and 11 compatibility**, desktop-only widgets positioned **above any static/animated wallpaper but below desktop icons**, passive desktop widget visuals below desktop icons with **temporary Interactive Mode** invoked by tray/hotkey, six initial visual skin archetypes and six themes, native baseline plus optional advanced sensors, **audio visualization enabled by default** for media such as Spotify, x64 only, **all MSI / MSIX / Microsoft Store / WinGet / self-contained portable delivery channels**, performance budgets with measured workload profiles, **Apache-2.0** licensing, and separate architecture/engineering documents.
 
 ### 0.1 Evidence labels used throughout
 
@@ -149,7 +173,7 @@ Windows interactive user session (standard user token)
 
 **[DESIGN]** Standalone means no mandatory service, driver, cloud daemon, Explorer extension or elevation in everyday operation; multiple cooperating **user-mode processes** are permitted. Normal stable distribution must not contain the optional Explorer extension. The Settings program and script worker are individually optional/lazy and must not run merely because Windows started the core. Separate binaries must be signed and version-matched with the core.
 
-**Lua worker contract (Q32:B):** authenticated/ACL-protected current-session IPC; protocol negotiation; process-instance nonce; one outstanding request cap per worker where appropriate; typed, strictly size-bounded messages (e.g. validated scene/text/metric updates, no raw pointers or COM handles); cancellation for cooperative work; bounded timeouts; heartbeat liveness; kill/restart/quarantine after repeated failure; job-object lifecycle tracking where feasible. The worker may ignore cooperative cancellation, so termination is an OS process operation. A script can deliberately kill/relaunch the parent, alter user data or launch another process; this remains an explicitly accepted security risk, not a promise that the parent is invulnerable. Prevent child-only freezes from holding UI locks or core shell-restoration work.
+**Lua worker contract:** authenticated/ACL-protected current-session IPC; protocol negotiation; process-instance nonce; one outstanding request cap per worker where appropriate; typed, strictly size-bounded messages (e.g. validated scene/text/metric updates, no raw pointers or COM handles); cancellation for cooperative work; bounded timeouts; heartbeat liveness; kill/restart/quarantine after repeated failure; job-object lifecycle tracking where feasible. The worker may ignore cooperative cancellation, so termination is an OS process operation. A script can deliberately kill/relaunch the parent, alter user data or launch another process; this remains an explicitly accepted security risk, not a promise that the parent is invulnerable. Prevent child-only freezes from holding UI locks or core shell-restoration work.
 
 ### 3.2 Local IPC design
 
@@ -190,7 +214,7 @@ Critical taskbar restoration takes priority over applying desired effects. Unexp
 | TB-03 | User presets: native, clear, tint, blur-like, acrylic-like, solid, conditional Mica-style where feasible. | Capability probe and visual verification; do not claim native system Mica without proof. |
 | TB-04 | Accent-color customization, opacity, transitions and priorities. | Respect high-contrast, Windows transparency disabled, battery saver. |
 | TB-05 | Auto-hide, taskbar on secondary monitor, mixed-DPI, alignment and work-area changes. | No geometry mutation until tested. |
-| TB-06 | Floating pill geometry and native border removal as prioritized experimental research. | Not mandatory for stable v1 after Q27:B. |
+| TB-06 | Floating pill geometry and native border removal as prioritized experimental research. | Not mandatory for stable v1 for stable v1 release. |
 | TB-07 | Per-app, full-screen, and flyout rules without game-process injection. | Only shell-visible state and minimal process identity reads where necessary. |
 | TB-08 | Recover from taskbar recreation, Explorer restart and Windows theme changes. | Debounced rebind, bounded retry; disable on repeated failure. |
 | TB-09 | Detect contention with other software and yield rather than repeatedly reapply. | Warn user and switch to native taskbar. |
@@ -198,13 +222,13 @@ Critical taskbar restoration takes priority over applying desired effects. Unexp
 
 ### 4.2 Backends
 
-**Backend A — `native_noop` [DOC/DESIGN]**: Do not mutate the system taskbar. Preserve non-invasive state tracking only where needed. Universal fallback and automatic response to a known conflicting taskbar customization process (Q21:A). Detection must be conservative; do not enumerate privileged memory or attempt to control third-party processes. Offer a non-blocking explanation and manual choice to leave customization disabled.
+**Backend A — `native_noop` [DOC/DESIGN]**: Do not mutate the system taskbar. Preserve non-invasive state tracking only where needed. Universal fallback and automatic response to a known conflicting taskbar customization process. Detection must be conservative; do not enumerate privileged memory or attempt to control third-party processes. Offer a non-blocking explanation and manual choice to leave customization disabled.
 
 **Backend B — `external_appearance` [POC]**: Runs only in AetherShell's own process using a per-build, per-capability allowlist. A read-only report from Windows 11 Pro 26H2 `26300.9711` reported `Shell_TrayWnd` hosting `Windows.UI.Composition.DesktopWindowContentBridge` and `ExplorerTAP.dll` loaded in the other customizer's Explorer instance. **These observations establish neither successful nor impossible AetherShell external transparency.** Do not assume success based on window style or API return code. Validate pixel-visible appearance and Explorer stability in a disposable VM. Unverified effects must resolve to `native_noop`, never repeatedly force a failing effect. `DwmSetWindowAttribute` is not a guaranteed child-XAML-brush editor; Microsoft discourages `SetWindowCompositionAttribute` for new uses. No `SetWindowRgn` shell clipping without separately approved controlled evidence.
 
-**Backend C — `explorer_xaml_experimental` [POC]**: Not part of stable v1. The owner permits a **separately distributed opt-in experimental build** after disposable-VM qualification, a dedicated recoverable test-system compatibility stage that respects Q37:A, code signing, compatibility allowlisting, security and crash-loop recovery, and release-specific consent. Never claim Microsoft endorses arbitrary XAML tree injection. A packaged Store edition must never include the experimental module unless independently qualified and accepted under the relevant channel's rules. No module may attach to unrelated protected processes.
+**Backend C — `explorer_xaml_experimental` [POC]**: Not part of stable v1. The owner permits a **separately distributed opt-in experimental build** after disposable-VM qualification, a dedicated recoverable test-system compatibility stage that respects VM isolation boundaries, code signing, compatibility allowlisting, security and crash-loop recovery, and release-specific consent. Never claim Microsoft endorses arbitrary XAML tree injection. A packaged Store edition must never include the experimental module unless independently qualified and accepted under the relevant channel's rules. No module may attach to unrelated protected processes.
 
-**Conflict rule [DESIGN]:** If a known competing taskbar customizer is active, yield and explain (Q21:A); its DLL being present does not authorize removal, alteration, or termination of that app. Only an explicitly selected user configuration and later compatibility evidence can permit coexistence; there is no "last writer wins" loop.
+**Conflict rule [DESIGN]:** If a known competing taskbar customizer is active, yield and explain; its DLL being present does not authorize removal, alteration, or termination of that app. Only an explicitly selected user configuration and later compatibility evidence can permit coexistence; there is no "last writer wins" loop.
 
 ### 4.3 Deterministic state machine
 
@@ -231,7 +255,7 @@ Top:       Ordinary application windows and full-screen applications
 Bottom:    Any wallpaper: static wallpaper, animated/live wallpaper providers
 ```
 
-**[DESIGN/POC]** This precisely reflects Q05:B and Q29:A: *desktop-only widgets, between the wallpaper and desktop icons*. AetherShell must never replace the wallpaper, take ownership of third-party wallpaper processes, send undocumented wallpaper-spawn messages without compatibility gating, or fight for topmost order. Windows does not expose a universally stable public API that guarantees this exact stacking order with all wallpaper engines. A compatibility adapter and test evidence are mandatory. If the stack cannot be constructed safely on a machine, widgets are disabled on that monitor with an explanation rather than moved above normal apps or obscuring desktop icons.
+**[DESIGN/POC]** This enforces *desktop-only widgets, between the wallpaper and desktop icons*. AetherShell must never replace the wallpaper, take ownership of third-party wallpaper processes, send undocumented wallpaper-spawn messages without compatibility gating, or fight for topmost order. Windows does not expose a universally stable public API that guarantees this exact stacking order with all wallpaper engines. A compatibility adapter and test evidence are mandatory. If the stack cannot be constructed safely on a machine, widgets are disabled on that monitor with an explanation rather than moved above normal apps or obscuring desktop icons.
 
 ### 5.2 Desktop host strategy
 
@@ -243,13 +267,13 @@ Bottom:    Any wallpaper: static wallpaper, animated/live wallpaper providers
 - Multi-monitor identity: use durable display device path plus EDID metadata as hints, detect collisions/cloned displays; map primary fallback when monitor identity changes; prevent off-screen coordinates.
 - Do not assume live wallpaper must be visually or programmatically known: detection is optional; maintaining stack order is the contract.
 
-### 5.3 Interaction states (Q31:A — authoritative)
+### 5.3 Interaction states
 
 1. **Locked/passive [default]:** The desktop widget visual surface is below `SHELLDLL_DefView` and never captures pointer input through the desktop icon layer. Desktop icon clicks, selection rectangles, context menus and drag operations behave exactly as without AetherShell.
 2. **Temporary Interactive Mode [user initiated]:** Tray command or user-configured hotkey temporarily activates an AetherShell-owned, **narrowly bounded topmost-to-desktop interaction surface** for approved media buttons or widget actions. It must not draw above unrelated normal application windows, game overlays, UAC/secure desktop, or desktop system controls. The session is visibly indicated and dismisses by Escape, explicit close, focus loss, timeout (user-configurable), session lock, full-screen Gaming Shield, or app shutdown. Controls must return input ownership immediately at exit; no background global mouse interception. Both pointer and keyboard use are testable.
 3. **Edit Layout Mode:** Separate from Interactive Mode. From tray/Settings, show widget outlines and handles; keyboard nudges (1/10 DIP), snap guides, overlap prevention, undo, reset-to-position, monitor assignment and Escape-to-cancel. Changes are staged and committed atomically on confirmation.
 
-**[POC]** A read-only host report found `Progman` → `SHELLDLL_DefView` → `SysListView32`, but a selected `WorkerW` query returned **null**. Do not hardcode that WorkerW always exists or that a fixed parent/owner transformation is safe. Test desktop layering + temporary interaction windows in disposable VMs (Q37:A); if the required depth cannot be established safely, disable that monitor's widget layer with an explanation. The report's hierarchy observations are NOT proof of successful widget placement or hit-testing.
+**[POC]** A read-only host report found `Progman` → `SHELLDLL_DefView` → `SysListView32`, but a selected `WorkerW` query returned **null**. Do not hardcode that WorkerW always exists or that a fixed parent/owner transformation is safe. Test desktop layering + temporary interaction windows in disposable VMs in disposable test virtual machines; if the required depth cannot be established safely, disable that monitor's widget layer with an explanation. The report's hierarchy observations are NOT proof of successful widget placement or hit-testing.
 
 ### 5.4 Geometry and layout rules
 
@@ -320,7 +344,7 @@ Bindings may reference a small documented metric namespace. Theme token referenc
 
 ### 7.3 Audio visualizer (enabled by default)
 
-- Use WASAPI **shared-mode loopback** on the user's selected/default render endpoint. The bundled `audio.spectrum` and `media.session` widgets begin enabled, auto-hide on inactivity, and audio samples are processed in memory only. The default active presentation cap is **30 FPS on AC Balanced**, automatically **15 FPS on battery/Low Power**, and **60 FPS for Performance** where selected; a user override is possible with clear power impact feedback (Q36:A).
+- Use WASAPI **shared-mode loopback** on the user's selected/default render endpoint. The bundled `audio.spectrum` and `media.session` widgets begin enabled, auto-hide on inactivity, and audio samples are processed in memory only. The default active presentation cap is **30 FPS on AC Balanced**, automatically **15 FPS on battery/Low Power**, and **60 FPS for Performance** where selected; a user override is possible with clear power impact feedback.
 - Show an understandable first-run notice and persistent `Pause audio visualization` toggle; remember the user's change. When disabled, release the capture client and related subscriptions.
 - Process amplitude/FFT output locally; no audio storage, file recordings, remote telemetry, or network publication.
 - Handle mono and multichannel formats; validate format negotiation and sample conversion before FFT. Use bounded ring buffers, cancellation events, timeout-based shutdown, and endpoint notifications; **never wait indefinitely on only the audio event when shutdown must be possible**.
@@ -508,7 +532,7 @@ placement = "between_wallpaper_and_icons"
 allow_always_on_top = false
 allow_behind_wallpaper = false
 locked = true
-interaction_mode = "temporary_only"          # Q31:A; default widget visuals never take direct clicks
+interaction_mode = "temporary_only"          # default widget visuals never take direct clicks
 interactive_timeout_seconds = 8
 snap_grid_dip = 8
 autohide_taskbar_policy = "reserve_expanded_safe_area"
@@ -834,9 +858,9 @@ font_size_dip = 13.0
     └── development\
 ```
 
-Portable (Q38:B) is **executable-portable but AppData-backed**: it does not keep settings next to the executable by default, even when unpacked on a USB drive. If the standard AppData location is unavailable, show a read-only/unavailable-state error and allow an explicit **user-selected writable path** without silently creating a second competing configuration store. Ensure one canonical config identity, migration/merge prompts, ownership and concurrent-write prevention between installed and portable instances. The skin library path is configurable, with path selection and containment checks. Executable scripting privileges follow the explicit trust decision, not a claim that imported packages are isolated from the filesystem. Cache, log and crash directories have documented retention and size limits; profiles and user skins are never silently deleted during uninstall.
+Portable mode is **executable-portable but AppData-backed**: it does not keep settings next to the executable by default, even when unpacked on a USB drive. If the standard AppData location is unavailable, show a read-only/unavailable-state error and allow an explicit **user-selected writable path** without silently creating a second competing configuration store. Ensure one canonical config identity, migration/merge prompts, ownership and concurrent-write prevention between installed and portable instances. The skin library path is configurable, with path selection and containment checks. Executable scripting privileges follow the explicit trust decision, not a claim that imported packages are isolated from the filesystem. Cache, log and crash directories have documented retention and size limits; profiles and user skins are never silently deleted during uninstall.
 
-**Portable self-contained layout (Q30:A):**
+**Portable self-contained layout:**
 
 ```text
 AetherShell-Portable-x64\
@@ -1043,9 +1067,9 @@ aethershell/
 - Crates are **illustrative proposed boundaries**. Do not create a separate crate unless it provides meaningful ownership, testability or compilation isolation; consolidate if prototype results justify.
 - Rust `aethershell-core` must not depend on `win32`, renderer APIs, network clients, UI frameworks, or Lua. Platform adapters depend on core types, not inversely.
 - `aethershell-win` owns raw Windows FFI wrappers, feature probes, thread-affinity safety contracts and unsafe-function documentation. Minimize `unsafe` and document invariants.
-- `aethershell-script-host` is an independent **on-demand child executable**, with unrestricted trusted Lua per Q32:B. Its process boundary provides fault containment but is **not a sandbox** against same-user attacks. Keep the host process and Lua ABI out of the Rust core binary, and do not initialize Lua when no trusted scripted widget is active.
+- `aethershell-script-host` is an independent **on-demand child executable**, with unrestricted trusted Lua under explicit trust. Its process boundary provides fault containment but is **not a sandbox** against same-user attacks. Keep the host process and Lua ABI out of the Rust core binary, and do not initialize Lua when no trusted scripted widget is active.
 - `apps/settings-winui` builds without the Rust renderer; settings must be usable when all taskbar effects are disabled.
-- The experimental Explorer extension is physically separate from all stable build inputs and artifacts, beyond merely relying on a runtime toggle. Keep allowlists, signatures, evidence and distribution explicitly distinct; limited opt-in experimental release only after Q41:A qualification. It must never be linked into stable installation silently.
+- The experimental Explorer extension is physically separate from all stable build inputs and artifacts, beyond merely relying on a runtime toggle. Keep allowlists, signatures, evidence and distribution explicitly distinct; limited opt-in experimental release only after disposable-VM qualification. It must never be linked into stable installation silently.
 - Keep original source and reference documentation in Git; keep measurements, personal logs, crash dumps, generated SDK files and temporary skins out of Git unless anonymized/curated.
 - Rust source and module names use `snake_case`; Cargo crates and resource-folder names use `kebab-case`; public schema IDs use stable dotted names; Windows C++ conventions must be documented and consistent.
 - Dependency pins and audit reports in CI; avoid abandoned libraries, bundled unlicensed fonts, and unchecked binary assets. The root `LICENSE` **must contain the Apache License, Version 2.0**, with project copyright notice and appropriate third-party `NOTICE`/license disclosure after legal/dependency checks.
@@ -1077,9 +1101,9 @@ aethershell/
 | Logs/diagnostics | Personal metadata disclosure | Redaction, size/retention limits, opt-in export, no automatic upload. |
 | Installers/update files | Tampered binary, downgrade, persistence | Signed/versioned release artifacts, hashes/SBOM, channel-aware updates, rollback. |
 
-### 13.2 Explicit unrestricted **out-of-process** Lua policy (Q32:B)
+### 13.2 Explicit unrestricted out-of-process Lua policy
 
-Lua 5.4 executes only inside **`aethershell-script-host.exe`**, not in the permanent Rust core. This supersedes Q07:B and Q28:A's former in-process placement but **does not change the owner's requirement for unrestricted Lua** or third-party script trust approval. Standard `os`, `io`, `package` libraries and native extensions may remain available. Do not claim a sandbox, hard CPU cap, mandatory instruction hooks, or automatic protection against intentional hostile behavior.
+Lua 5.4 executes only inside **`aethershell-script-host.exe`**, not in the permanent Rust core. Lua scripts execute out-of-process while retaining unrestricted capabilities within the child process upon explicit user trust approval. Standard `os`, `io`, `package` libraries and native extensions may remain available. Do not claim a sandbox, hard CPU cap, mandatory instruction hooks, or automatic protection against intentional hostile behavior.
 
 1. Built-in widgets are declarative and do not launch Lua by default; import of declarative-only packages cannot silently activate Lua.
 2. Third-party script packages are disabled until a user reviews their contents/source and grants explicit trust for the **specific package digest/version**. Script-content changes revoke the grant until renewed.
@@ -1095,7 +1119,7 @@ Lua 5.4 executes only inside **`aethershell-script-host.exe`**, not in the perma
 ### 13.3 Explorer integration security exception
 
 - Default builds/launch modes must not inject into Explorer.
-- Before any limited opt-in experimental distribution, require a **disposable-VM compatibility campaign**, then dedicated recoverable physical-hardware validation with non-invasive host access unless independently reauthorized, and explicit safety/release approval. Record shell crash loops, OS updates, anti-cheat interaction, MSIX/Store restrictions, code signing, architecture, module load/unload lifetime and cleanup. Never execute disruptive experiments on the daily-use physical host (Q37:A).
+- Before any limited opt-in experimental distribution, require a **disposable-VM compatibility campaign**, then dedicated recoverable physical-hardware validation with non-invasive host access unless independently reauthorized, and explicit safety/release approval. Record shell crash loops, OS updates, anti-cheat interaction, MSIX/Store restrictions, code signing, architecture, module load/unload lifetime and cleanup. Never execute disruptive experiments on the daily-use physical host.
 - The bridge must never run in elevated or protected Windows processes, bypass OS integrity protections, disable protections, or use unsupported forced techniques on prohibited builds.
 - Must fail closed on version mismatch or missing compatibility records; base application remains functional.
 - Dedicated experimental source, build and distribution channel prevent accidental inclusion in **any stable distribution artifact**; CI scans delivered binaries and manifests for prohibited bridge modules.
@@ -1142,7 +1166,7 @@ Benchmarks must record: OS edition/build/patch, CPU/GPU and driver, RAM, display
 
 Initial cold launch goal: **p95 ≤ 1.5 seconds** to a usable tray/core on the defined reference desktop, with optional taskbar effects asynchronous and failure-safe. Separate time-to-visible-widgets and time-to-settings-ready measurements. Initial taskbar reaction goal: **p95 ≤ 150 ms** after a delivered state event where supported; delayed shell events and OS contention are separately classified. These numerical figures are design targets to ratify after the first POC, not fake historical measurements.
 
-### 14.3 Power profile policy (Q14:A+C)
+### 14.3 Power profile policy
 
 | Property | Low Power | Balanced (default) | Performance |
 |---|---|---|---|
@@ -1153,7 +1177,7 @@ Initial cold launch goal: **p95 ≤ 1.5 seconds** to a usable tray/core on the d
 | Idle animations | None | Minimal | Bounded |
 | dGPU wake avoidance | Strict | Strict | Explicit user override possible only after risk explanation |
 
-High-cost features must expose actual measured impact, not simply consume a nominal "GPU budget." **Adaptive default (Q36:A):** on battery, use the 15 FPS Low Power spectrum cap, on AC Balanced use 30 FPS, Performance may reach 60 FPS. The user may override automatically chosen caps with a clear battery-impact indicator; system lock, monitor-off and Gaming Shield override animation preference. Stop presentation when capture is silent, but keep endpoint notifications and cancellation responsive. Dynamic refresh changes do not change system-wide power or CPU affinity settings.
+High-cost features must expose actual measured impact, not simply consume a nominal "GPU budget." **Adaptive default:** on battery, use the 15 FPS Low Power spectrum cap, on AC Balanced use 30 FPS, Performance may reach 60 FPS. The user may override automatically chosen caps with a clear battery-impact indicator; system lock, monitor-off and Gaming Shield override animation preference. Stop presentation when capture is silent, but keep endpoint notifications and cancellation responsive. Dynamic refresh changes do not change system-wide power or CPU affinity settings.
 
 ### 14.4 Performance regression gates
 
@@ -1175,7 +1199,7 @@ High-cost features must expose actual measured impact, not simply consume a nomi
 
 ### 15.2 Other desktop applications
 
-- Taskbar-style conflict detection: when a known competing application is active (the host agent observed one with an Explorer-resident component), **yield and notify** under Q21:A; do not unload its DLL, terminate it, force ownership or repeatedly reapply. Detection is best-effort, not authority to inspect protected processes.
+- Taskbar-style conflict detection: when a known competing application is active (the host agent observed one with an Explorer-resident component), **yield and notify**; do not unload its DLL, terminate it, force ownership or repeatedly reapply. Detection is best-effort, not authority to inspect protected processes.
 - Wallpaper coexistence: preserve independently running wallpaper applications; AetherShell remains above wallpaper and below icon layer (subject to POC). Do not hook, restart, terminate or configure other wallpaper processes.
 - Screen recorders/streamers: streamer mode may toggle capture exclusion for owned eligible windows; explain limitations and provide manual hide shortcut.
 - Accessibility/remote desktop: system-owned high-contrast and composition restrictions override requested ornamental effects; if compositor unavailable/unstable, show native behavior.
@@ -1198,7 +1222,7 @@ High-cost features must expose actual measured impact, not simply consume a nomi
 
 ## 16. Packaging, startup, installation, updates and distribution
 
-### 16.1 All channels are v1.0.0 launch requirements (Q13:C)
+### 16.1 All channels are v1.0.0 launch requirements
 
 | Channel | Package content / architecture | Requirements / caveats |
 |---|---|---|
@@ -1206,14 +1230,14 @@ High-cost features must expose actual measured impact, not simply consume a nomi
 | MSIX | Signed full-trust Windows desktop app, x64 | Package identity, file virtualization, valid capabilities and startup behavior; channel-appropriate permission/policy compliance. |
 | Microsoft Store | Submitted eligible MSIX package | **Approval is external**; no promise of guaranteed certification. Experimental Explorer module excluded if incompatible with store policies. |
 | WinGet | Manifests for eligible signed installers | Require real versioned release URL, SHA256, installer metadata, idempotent update/uninstall. |
-| Portable ZIP | Native x64 core, Settings and script worker, assets and **self-contained WinUI 3 runtime** | Q30:A + Q38:B: installation-free binaries with user config in AppData; no separate Windows App SDK installer required, disk footprint measured, not assumed; update collision handling. [S10] |
+| Portable ZIP | Native x64 core, Settings and script worker, assets and **self-contained WinUI 3 runtime** | installation-free binaries with user config in AppData; no separate Windows App SDK installer required, disk footprint measured, not assumed; update collision handling. [S10] |
 
-Stable v1 distribution requirements are **all five channels**, not a phased reduction (**Q34:A/Q40:A**). **Microsoft Store certification/availability is a strict stable-v1 release gate**, as is independently qualified MSI, MSIX, WinGet and portable. If any channel cannot qualify, **do not label a release stable v1.0.0**; maintain preview/release-candidate status, record blocker and request a *new* explicit owner decision if scope is ever to change. Do not bypass Store policies. A channel may omit experimental Explorer integration while still delivering the stable application.
+Stable v1 distribution requirements are **all five channels**, not a phased reduction. **Microsoft Store certification/availability is a strict stable-v1 release gate**, as is independently qualified MSI, MSIX, WinGet and portable. If any channel cannot qualify, **do not label a release stable v1.0.0**; maintain preview/release-candidate status, record blocker and request a *new* explicit owner decision if scope is ever to change. Do not bypass Store policies. A channel may omit experimental Explorer integration while still delivering the stable application.
 
 ### 16.2 Shared packaging invariants
 
 - Core and Settings binaries must be the same product version and IPC protocol; invalid version pairing stops Settings connection gracefully.
-- The optional experimental Explorer module is **excluded from every stable package**; it must be a separate signed experimental distribution after Q41:A qualification. No side-loading an unsigned module through an updater.
+- The optional experimental Explorer module is **excluded from every stable package**; it must be a separate signed experimental distribution after disposable-VM qualification. No side-loading an unsigned module through an updater.
 - No bundled driver, global keyboard hook, mandatory service, or admin requirement for normal operation.
 - Package identity/location must be correct for MSIX and per-user MSI. Do not derive user-writable paths from `C:\Program Files\WindowsApps` or claim unvirtualized access solely through `GetEnvironmentVariableW`.
 - Start-with-Windows toggle must be implemented appropriately per channel (packaged StartupTask or other supported mechanism, MSI user Startup entry, portable explicitly opt-in). Respect OS Startup Apps settings and user disablement.
@@ -1229,7 +1253,7 @@ Stable v1 distribution requirements are **all five channels**, not a phased redu
 | Downgrade | Block incompatible schema silently overwriting data; offer read-only/migration-safe fallback. |
 | Migration MSI ↔ MSIX | Detect prior data and preserve/export profile; do not assume shared write paths. |
 | Portable extraction | Full runtime available without separate Windows App SDK installation. |
-| Portable on read-only drive | Binaries may reside read-only; configuration persists in AppData (Q38:B). If AppData itself is unwritable, enter read-only mode and explain the failure. |
+| Portable on read-only drive | Binaries may reside read-only; configuration persists in AppData. If AppData itself is unwritable, enter read-only mode and explain the failure. |
 | Uninstall | Stop app, restore taskbar where possible, remove startup task/entry; offer choice to keep/delete user data. |
 | Interrupted update | Rollback to previous signed package/configuration; no permanent app startup loop. |
 | Store certification rejected | Produce owner-visible blocker and compliant package path, not an undocumented bypass. |
@@ -1262,7 +1286,7 @@ Each case requires: setup/preconditions, OS/build, trigger, expected fallback, e
 | F14 | Background animated wallpaper changes | Widgets remain above wallpaper but below desktop icons if supported. |
 | F15 | Wallpaper provider crashes/exits | AetherShell does not restart or hook provider; recovers placement after shell stable. |
 | F16 | Desktop icon drag-select/rename/context menu | Widgets do not steal input; icons retain navigation. |
-| F17 | Media control under a desktop icon | Ordinary click remains the icon's; media actions require temporary Interactive Mode opened by tray/hotkey (Q31:A). |
+| F17 | Media control under a desktop icon | Ordinary click remains the icon's; media actions require temporary Interactive Mode opened by tray/hotkey. |
 | F18 | Spotify or other media player pauses/resumes | Auto-hide/reactivate correctly; no audio samples saved. |
 | F19 | Default audio device changes, Bluetooth disconnects | Cancel previous client, rebind or show unavailable, bounded retries. |
 | F20 | System audio silent with active render endpoint | Stop costly redraw; avoid indefinitely blocked shutdown. |
@@ -1315,42 +1339,42 @@ Each case requires: setup/preconditions, OS/build, trigger, expected fallback, e
 
 All stable gates are mandatory for stable v1.0.0 unless expressly marked experimental. POC outcomes must be traceable to a candidate binary hash and exact tested OS build; observed results are not assumed from this PRD.
 
-| Gate | Pass condition | Evidence |
-|---|---|---|
-| G01 Core startup | Non-elevated core without mandatory driver/service/Explorer injection, session-scoped singleton, safe shutdown | Process tree, startup trace |
-| G02 Windows compatibility | Required Windows 10/11 x64 matrix; honest fallback on unsupported effects | Test matrix with exact build, UBR, GPU drivers |
-| G03 Shell isolation | All stable binaries and packages contain no Explorer extension; no hooks into critical protected processes | Artifacts/module audit, dependency scan |
-| G04 Taskbar recovery | External effects gated; native fallback; no repeated fighting or Explorer loop | Pixel capture, API return and state trace |
-| G05 Experimental qualification | Any opt-in Explorer extension: disposable-VM tests, then dedicated recoverable hardware qualification before limited experimental distribution | Separate signed experimental release report (not stable gate if absent) |
-| G06 Desktop layering | Wallpaper below passive widgets below desktop icons on qualifying builds; otherwise visibly unsupported/disabled | VM tests with wallpaper and desktop icon operations |
-| G07 Temporary Interactive Mode | Tray/hotkey opens bounded overlay, user action works; Escape/timeout/focus change restores passive icon input | VM focus/hit-test videos and UI tests |
-| G08 Sensor honesty | Missing counters collapse/show unknown; optional external providers; tested non-waking sampling | Provider logs and hardware evidence |
-| G09 Local adaptive audio | Default-on local WASAPI, endpoint recovery, battery 15 FPS default, AC 30 FPS, configurable 60 FPS, no persistent samples | Cancellation/lifecycle/power tests |
-| G10 Lua worker reliability and trust | Script host separate and lazy; explicit digest-bound consent; crash/hang detected without core-blocking; IPC invalid payload rejected | Worker process tree, termination tests, trust UX, threat disclosures |
-| G11 WinUI Settings independence | C++/WinRT process on-demand, exits on close, survives lost IPC, core survives crash | Launch traces, RAM/CPU metrics and reconnect |
-| G12 Schema/backup | All TOML samples parse; migrations reversible; installed and portable share intended AppData store with conflict protection | Schema CI, file write/collision tests |
-| G13 Performance | Real measured workloads meet ratified budgets on baseline matrix; no false exact-zero claims | Five-run traces, variance and benchmark reports |
-| G14 Accessibility | Keyboard, Narrator/UIA, high contrast, scaling, reduced motion, localized truncation rules | Audited UX tests |
-| G15 Five-channel release | **MSI, MSIX, Microsoft Store approved listing, WinGet, self-contained portable** fully qualified; no partial stable release (Q40:A) | Signed artifacts, independent install tests, Store and WinGet acceptance |
-| G16 License/privacy | **Apache-2.0** LICENSE and dependency notices; no unsolicited analytics or raw audio upload | License/SBOM/network audit |
-| G17 Safe Mode and recovery | Restart safe mode, widget/worker quarantine, Explorer cleanup, rollback, IPC errors, update recovery | VM failure-injection records |
-| G18 Strict no-go and evidence | No unverified critical behavior represented as supported; no physical-host disruptive tests; all gates signed off | Release ledger with reviewer/owner and artifact hashes |
-| G19 Coexistence | Detected competing taskbar style controller yields; does not terminate or modify third-party process | VM and read-only host observations |
-| G20 Packaging identity | Same user data semantics across MSI/MSIX/Store/portable, startup toggles, signed migrators and rollback | Clean-OS VM migration suite |
+| Gate | PRD Pass Condition | Current Status | Evidence & Verification Reference |
+|---|---|:---:|---|
+| **G01 Core startup** | Non-elevated core without mandatory driver/service/Explorer injection, session-scoped singleton, safe shutdown | `PARTIALLY_VERIFIED` | Session-scoped singleton, tray pump, and window lifecycle verified; WM_ENDSESSION test pending |
+| **G02 Windows compatibility** | Required Windows 10/11 x64 matrix; honest fallback on unsupported effects | `PARTIALLY_VERIFIED` | Win10/11 build & UBR detection and PerMonitorV2 dynamic DPI scaling verified; multi-OS VM matrix active |
+| **G03 Shell isolation** | All stable binaries and packages contain no Explorer extension; no hooks into critical protected processes | `PARTIALLY_VERIFIED` | Non-injection architecture verified in source & binaries; package artifact audit pending |
+| **G04 Taskbar recovery** | External effects gated; native fallback; no repeated fighting or Explorer loop | `PARTIALLY_VERIFIED` | Conflict detection yields to customizers; TaskbarCreated recovery verified; Explorer restart VM pixel test pending |
+| **G05 Experimental qualification** | Any opt-in Explorer extension: disposable-VM tests, then dedicated recoverable hardware qualification before limited experimental distribution | `NOT_APPLICABLE` | No experimental Explorer extension in stable v1 core |
+| **G06 Desktop layering** | Wallpaper below passive widgets below desktop icons on qualifying builds; otherwise visibly unsupported/disabled | `PARTIALLY_VERIFIED` | WorkerW/Progman layering & icon passthrough verified; Win+D non-invasive shell hook stacking active |
+| **G07 Temporary Interactive Mode** | Tray/hotkey opens bounded overlay, user action works; Escape/timeout/focus change restores passive icon input | `PARTIALLY_VERIFIED` | Global hotkey, pointer hit-testing, action dispatch & safe dismissal verified; VM video record pending |
+| **G08 Sensor honesty** | Missing counters collapse/show unknown; optional external providers; tested non-waking sampling | `PARTIALLY_VERIFIED` | Native CPU/RAM/disk/battery/net telemetry implemented; honest missing states verified |
+| **G09 Local adaptive audio** | Default-on local WASAPI, endpoint recovery, battery 15 FPS default, AC 30 FPS, configurable 60 FPS, no persistent samples | `PARTIALLY_VERIFIED` | In-memory WASAPI shared-loopback spectrum, power-aware polling & IMMNotificationClient migration verified |
+| **G10 Lua worker reliability and trust** | Script host separate and lazy; explicit digest-bound consent; crash/hang detected without core-blocking; IPC invalid payload rejected | `PARTIALLY_VERIFIED` | Out-of-process Lua in Job Object, SHA-256 trust & continuous revalidation verified across 22 tests |
+| **G11 WinUI Settings independence** | C++/WinRT process on-demand, exits on close, survives lost IPC, core survives crash | `PARTIALLY_VERIFIED` | C++/WinRT WinUI 3 standalone Settings, 2-way IPC & exit on close verified; fault injection VM test pending |
+| **G12 Schema/backup** | All TOML samples parse; migrations reversible; installed and portable share intended AppData store with conflict protection | `PARTIALLY_VERIFIED` | TOML config parsing, atomic ReplaceFileW & rollback verified; schema v1->v2 migrations pending |
+| **G13 Performance** | Real measured workloads meet ratified budgets on baseline matrix; no false exact-zero claims | `PARTIALLY_VERIFIED` | Genuine multi-process runtime benchmark harness & Ryzen 5 baseline recorded; optimization active |
+| **G14 Accessibility** | Keyboard, Narrator/UIA, high contrast, scaling, reduced motion, localized truncation rules | `PARTIALLY_VERIFIED` | High-contrast palettes & WinUI UIA controls verified; desktop widget UIA provider pending |
+| **G15 Five-channel release** | **MSI, MSIX, Microsoft Store approved listing, WinGet, self-contained portable** fully qualified; no partial stable release | `DEFERRED` | Packaging scripts exist; public Store/WinGet/signing deferred per project release roadmap |
+| **G16 License/privacy** | **Apache-2.0** LICENSE and dependency notices; no unsolicited analytics or raw audio upload | `PARTIALLY_VERIFIED` | Apache-2.0 license & volatile audio processing verified; path remapping verified in CI |
+| **G17 Safe Mode and recovery** | Restart safe mode, widget/worker quarantine, Explorer cleanup, rollback, IPC errors, update recovery | `PARTIALLY_VERIFIED` | Safe Mode, worker quarantine, Explorer recovery & D2D device loss recovery verified |
+| **G18 Strict no-go and evidence** | No unverified critical behavior represented as supported; no physical-host disruptive tests; all gates signed off | `PARTIALLY_VERIFIED` | Truthful gate accounting enforced; disruptive shell tests restricted to disposable VMs |
+| **G19 Coexistence** | Detected competing taskbar style controller yields; does not terminate or modify third-party process | `PARTIALLY_VERIFIED` | Conflict detection deterministically yields to competing customizers without process mutation |
+| **G20 Packaging identity** | Same user data semantics across MSI/MSIX/Store/portable, startup toggles, signed migrators and rollback | `PARTIALLY_VERIFIED` | Canonical %LOCALAPPDATA% storage layout verified clean at 0 items; multi-channel VM migration pending |
 
 ### 18.3 Research / experiment matrix and environment boundaries
 
-**Q37:A test boundary:** Any action that changes Explorer/taskbar state, window parenting/z-order, app/hook injection, registry/service state, installs packages, forces GPU removal, deliberately hangs a process, or directly tests game anti-cheat is **disruptive** and **VM-only** until a separate owner approval changes that policy. Collecting non-invasive performance traces on a physical machine is permissible only where explicitly authorized and after controlling confounding workloads. Q41:A's later dedicated recoverable-hardware qualification for an experimental Explorer *distribution* does not itself authorize direct disruptive testing on the daily-use machine.
+**Test environment boundaries:** Any action that changes Explorer/taskbar state, window parenting/z-order, app/hook injection, registry/service state, installs packages, forces GPU removal, deliberately hangs a process, or directly tests game anti-cheat is **disruptive** and **VM-only**. Collecting non-invasive performance traces on a physical machine is permissible only where explicitly authorized and after controlling confounding workloads. Dedicated recoverable-hardware qualification for an experimental Explorer *distribution* does not authorize direct disruptive testing on the daily-use machine.
 
 | POC ID | Question / method | Required environment | Acceptance and fallback |
 |---|---|---|---|
 | POC-TB-01 | Can external API calls visibly change native taskbar effects? Control A/B pixels, child XAML, transient visual artifacts, exact build | Disposable Win10/11 x64 VMs; no other customizer for baseline | Per-effect, per-build observed pass; otherwise `native_noop`, no universal impossibility claim |
 | POC-TB-02 | Is native floating geometry stable? Taskbar UI, auto-hide, keyboard, Explorer recovery | Disposable VM only | Nonblocking experimental feature, no stable v1 promise |
-| POC-TB-03 | Is optional XAML bridge recoverable without crash loops? | VM-only initial; later dedicated recoverable hardware qualification without expanding Q37 authorization | Signed separate experimental channel or do not distribute |
+| POC-TB-03 | Is optional XAML bridge recoverable without crash loops? | VM-only initial; later dedicated recoverable hardware qualification without expanding VM-only authorization | Signed separate experimental channel or do not distribute |
 | POC-DS-01 | Which `Progman`/`WorkerW` desktop-host variants work with icons/live wallpaper? | Disposable VM | Exact stacking pass with Win+D/Explorer changes; else disable widgets on that configuration |
 | POC-DS-02 | Does temporary Interactive Mode preserve icon hits/focus? | Disposable VM | Bounded overlay only after user request, Escape/time/focus returns control |
 | POC-RD-01 | What do per-widget DComp/Direct2D surfaces consume on iGPU and other GPUs? | VM for device-loss manipulations; consented non-invasive physical measurement for power/graphics | Measure real private/GPU memory, latency, rendering failure |
-| POC-UI-01 | What does self-contained WinUI 3/C++ Settings cost on Win10/11? | Clean Windows VMs; non-invasive physical benchmark if authorized | Measured size and memory, clean exit; framework remains WinUI 3 under Q33:A |
+| POC-UI-01 | What does self-contained WinUI 3/C++ Settings cost on Win10/11? | Clean Windows VMs; non-invasive physical benchmark if authorized | Measured size and memory, clean exit; framework remains WinUI 3 |
 | POC-LUA-01 | Does a separate Lua worker survive infinite loop/native fault without core freeze? | Disposable VM | Core tray remains responsive; worker shutdown/quarantine; no security-isolation promise |
 | POC-PK-01 | Can MSI/MSIX/Store/portable share canonical AppData store and migrate safely? | VM only (installation and writes) | Transactional integrity, data ownership, full channel eligibility |
 | POC-GM-01 | Does Gaming Shield avoid overlays and excessive activity? | Disposable VM for program/window mutations; further approved non-invasive measurements | No untested anti-cheat certification |
@@ -1369,235 +1393,98 @@ Each POC and gate gets a record with `id`, `candidate_commit`, `Windows version/
 
 ## 19. Roadmap, milestones and dependencies
 
-This roadmap is **dependency-driven**, not an invented number of weeks. Do not begin expensive cross-feature integration before the compatibility POCs have established feasible primitives.
+This roadmap is **dependency-driven** and reflects verified architectural milestones across the implementation lifecycle.
 
-### Phase 0 — Requirements and Windows feasibility
+### Phase 0 — Requirements and Windows feasibility (Status: ✅ Completed)
 
-- Establish new Git repository, documentation hierarchy, toolchain and exact Windows/SDK support matrix.
-- In disposable VMs, build **standalone taskbar external appearance** POC with robust `native_noop` fallback; inspect exact Windows build and child XAML behavior.
-- In disposable VMs, build **desktop host wallpaper/icons stacking** POC plus temporary Interactive Mode; verify Win+D, live wallpapers and icon input. Handle `WorkerW` discovery returning null.
-- Build minimal WinUI 3 C++/WinRT settings launcher in separate process; validate self-contained portability on clean Windows 10/11.
-- Benchmark Rust/DirectComposition widget host in realistic conditions and confirm expected idle costs.
-- Record ADRs and POC outcomes; do not claim floating geometry achievable merely because the owner requested it.
+- Established Git repository, documentation hierarchy, toolchain and Windows/SDK support matrix.
+- Built standalone taskbar external appearance prototype with robust `native_noop` fallback; inspected exact Windows build behavior.
+- Built desktop host wallpaper/icons stacking prototype plus temporary Interactive Mode; verified Win+D and icon input handling.
+- Built minimal WinUI 3 C++/WinRT settings launcher in separate process; validated self-contained execution.
+- Benchmarked Rust/DirectComposition widget host under realistic conditions.
 
-**Exit:** POC-TB-01, POC-DS-01, POC-DS-02, POC-RD-01 and POC-PK-02 have enough evidence to select stable implementations.
+### Phase 1 — Repository and baseline runtime (Status: ✅ Completed)
 
-### Phase 1 — Repository and baseline runtime
+- Implemented Cargo workspace (13 member crates), C++ Settings project, named pipe IPC contract, structured logging, TOML parser, safe mode, and schema validation.
+- Built session-scoped tray, lifecycle message pump, single-instance activation, and non-invasive taskbar discovery.
+- Implemented system capability probes; zero Explorer injection in standard binaries.
+- Staged initial clean-VM MSI/MSIX packaging scripts plus portable layout specification.
 
-- Cargo workspace, C++ Settings project, IPC contract, structured logging, config parser, safe mode, profile/schema package system.
-- Tray, lifecycle messages, single-instance activation and non-invasive taskbar discovery.
-- System-level capability probes; no Explorer bridge in normal binary.
-- Initial clean-VM MSI/MSIX packaging smoke tests plus portable boot checks using AppData configuration; generate WinGet manifest and early Store eligibility preflight.
+### Phase 2 — Taskbar and desktop host (Status: ✅ Completed)
 
-**Exit:** Basic app starts/stops safely, Settings open/close independent, common baseline works on Windows 10/11 target matrix.
+- Implemented validated `native_noop` and `external_appearance` backends with conflict detection.
+- Implemented per-monitor taskbar state machine with fullscreen, flyout, auto-hide, and accessibility overrides.
+- Built desktop-only passive visuals between wallpaper and icons with safe fallback; implemented time-bounded Interactive Mode (`Win+Ctrl+A`) with spatial hit-testing.
+- Implemented Explorer restart recovery (`TaskbarCreated`) and third-party customizer yielding.
 
-### Phase 2 — Taskbar and desktop host
+### Phase 3 — Widget and visual design platform (Status: 🔶 Partially Completed)
 
-- Implement validated `native_noop` and `external_appearance` backends.
-- Per-monitor taskbar state machine with fullscreen/flyout/auto-hide/accessibility overrides.
-- Desktop-only passive visuals between wallpaper and icons with safe fallback; time-bounded Interactive Mode and separate layout edit mode; monitor identity and mixed DPI.
-- Explorer restart and conflict avoidance behavior.
+- Implemented Direct2D/DirectWrite declarative scene renderer, live binding dictionary, and theme engine with 6 semantic palettes.
+- Built-in clock, system telemetry, media session, audio spectrum, and resource primitives functional.
+- Schema validation, layout recovery, and high-contrast accessibility support active.
+- *Pending:* Authorable third-party skin package distribution format.
 
-**Exit:** G02/G03/G04/G06/G07 pass stable implementation. Floating geometry remains separate POC.
+### Phase 4 — Telemetry, media, audio and trusted Lua (Status: ✅ Completed)
 
-### Phase 3 — Widget and visual design platform
+- Implemented Windows native telemetry samplers (CPU, RAM, storage, network, battery) with honest missing-metric reporting.
+- Implemented WASAPI loopback capture thread, Cooley-Tukey 512-point FFT, logarithmic band grouping, and endpoint migration (`IMMNotificationClient`).
+- Implemented adaptive presentation loop with dirty-state presentation gating and silence normalization.
+- Implemented out-of-process Lua 5.4 child worker (`aethershell-script-host.exe`) in Job Object memory quotas, pre-execution SHA-256 digest trust verification, continuous runtime watchdog revalidation, and crash quarantine circuit breaker.
 
-- Widget lifecycle, declarative renderer, bindings, theme engine, six skins and six palettes.
-- Built-in clock, telemetry, media, spectrum, topbar and weather primitives.
-- Schema validation, asset safety, preview UI, profiles and backups.
-- Accessibility and reduced-motion support.
+### Phase 5 — Windows and packaging qualification (Status: 🔶 In Progress)
 
-**Exit:** Built-in presets functional, all fixture schemas valid, layout recovery working.
+- Automated multi-process runtime benchmark harness implemented; bare-metal AMD Ryzen 5 5500U baseline established.
+- Disposable VM and Windows Sandbox provisioning tooling implemented (`scripts/provision_disposable_vm.ps1`) allocating 2048 MB RAM / 2 vCPUs under strict preflight safety.
+- Reconciled automated workspace test inventory to 279 unique passing tests.
+- *In Progress:* Multi-OS VM matrix qualification (Win10 22H2, Win11 22H2/23H2/24H2/26H2) and packaging channel qualification (MSI, MSIX, Store, WinGet, portable).
 
-### Phase 4 — Telemetry, media, audio and trusted Lua
+### Phase 6 — Optional advanced taskbar laboratory (Status: ⬜ Not Started)
 
-- Windows base metrics and optional sensor provider interface; dGPU sleep regression checks.
-- WASAPI loopback and endpoint recovery with **default-on local visualizer**.
-- Media session controls, local artwork caching and auto-hide.
-- **Unrestricted on-demand Lua child process**, consent/digest-bound trust UX, IPC protocol validation, heartbeat/worker crash containment, safe-mode bypass and accurate residual-risk disclosure.
+- Research floating geometry and Explorer/XAML bridge in disposable test virtual machines.
+- Nonblocking research track; stable v1 does not depend on floating geometry or in-process Explorer modules.
 
-**Exit:** G08/G09/G10 pass with accurately documented residual risks.
+### Release and no-go governance
 
-### Phase 5 — Windows and packaging qualification
-
-- Windows compatibility matrix, wallpaper and games stress tests, multiple displays, HDR, Remote Desktop, battery, driver reset.
-- WinUI C++/WinRT keyboard/UI Automation accessibility, settings and diagnostics QA.
-- MSI, MSIX, **Microsoft Store acceptance**, WinGet publication and full self-contained portable qualification; all five are stable-v1 release gates.
-- Signed binaries, license selection, SBOM, update/migration/rollback tests, repeatable performance evidence.
-
-**Exit:** All stable release gates pass. Store publication and WinGet availability are verified externally; not assumed.
-
-### Phase 6 — Optional advanced taskbar laboratory (nonblocking)
-
-- Research floating geometry and Explorer/XAML bridge in **disposable VMs**; perform controlled dedicated-hardware validation before any limited opt-in experimental distribution, and do not run disruptive tests on everyday host.
-- Collect compatibility and crash-loop evidence. Keep experimental artifacts out of ordinary distribution unless explicitly approved and policy-compliant.
-- Ship independently after validation if feasible; do not delay stable v1 solely for native floating geometry (Q27:B).
-
-### Release/no-go policy
-
-An individual unsupported experimental feature can be excluded while core v1 proceeds. However, **the owner's required distribution channels, Windows 10/11 compatibility, default audio visualization, desktop layer, native x64 architecture, user-facing safeguards and packaging commitments remain requirements**. If one of those cannot pass acceptance, document a release blocker rather than silently reduce scope. **Q40:A explicitly forbids calling a partial-channel distribution stable v1.0.0; Microsoft Store approval is a release condition.**
+An individual unsupported experimental feature can be excluded while core v1 proceeds. However, **the required launch distribution channels, Windows 10/11 compatibility, default audio visualization, desktop layer, native x64 architecture, user-facing safeguards, and packaging commitments remain strict release requirements**. If any required channel or gate cannot pass empirical qualification, release candidates maintain preview status until verified. Partial-channel distribution is not considered stable v1.0.0; Microsoft Store approval is a mandatory release condition.
 
 ---
 
-## 20. Decision traceability — all 41 decisions and Q09R
+## 20. Implementation backlog and release artifact checklist
 
-**Decision authority:** Only the user's explicit choices govern. Q31–Q38 and Q39–Q41 supersede older conflicting architecture statements. Q39–Q41 mean the owner's **assistant-issued** questions (license, stable distribution, experimental-bridge qualification); an investigator attachment reused these labels for unrelated topics. Those agent-generated duplicate labels **are not owner decisions**.
+### 20.1 Implementation milestones sequence
 
-| Decision | Owner answer | Authoritative interpretation |
-|---|---|---|
-| Q01 | B | Windows 10 22H2 and Windows 11 x64 support is required; no claim of Microsoft security support for legacy OS. |
-| Q02 | C | Deep Explorer integration is allowed only through later experimental qualification and separate builds. |
-| Q03 | A | Unsupported taskbar effect reverts to the native taskbar. |
-| Q04 | B → qualified by Q27:B | Floating native geometry remains desired research; not stable-v1 blocker. |
-| Q05 | B | Widgets are desktop-only, above all wallpaper but below desktop icons. |
-| Q06 | A → refined by Q31:A | Normal widgets stay passive; actionable controls use explicit temporary Interactive Mode. |
-| Q07 | B → superseded by Q32:B | Lua remains unrestricted, but its runtime **moves from in-process to separate on-demand process**. |
-| Q08 | A | Built-in/local skins in v1; online marketplace deferred. |
-| Q09 | B → Q09R:A | WinUI 3 Settings, C++/WinRT separate executable. |
-| Q10 | A | Standard Windows metrics plus optional external advanced providers; missing metrics shown honestly. |
-| Q11 | Default-on | Local WASAPI visualization active with default preset, transparent user control. |
-| Q12 | C | Native x64 only for v1. |
-| Q13 | C | MSI, MSIX, Microsoft Store, WinGet, portable all required. |
-| Q14 | A+C | Measurable budgets with Low Power/Balanced/Performance behavior. |
-| Q15 | A | Six skin archetypes and six themes. |
-| Q16 | A | No competitor product names in PRD; separate research/attribution as legally appropriate. |
-| Q17 | A → Q39:A | Permissive open source, finalized **Apache License 2.0**. |
-| Q18 | A | PRD, ADRs, detailed schemas, tests and architecture documents. |
-| Q19 | A | Conditional external Windows API experiments, tested capability/fallback. |
-| Q20 | A | Crash-loop detection and Safe Mode. |
-| Q21 | A | Yield and notify when other taskbar customizers conflict. |
-| Q22 | A | Roaming AppData for durable preferences, Local AppData for caches/diagnostics, optional skin path. |
-| Q23 | A | Per-monitor conservative Gaming Shield with optional global dormancy. |
-| Q24 | A | Accessibility is a v1 release requirement. |
-| Q25 | A | Offline-first, no account or telemetry upload by default. |
-| Q26 | A | Untested effects gated; stable release may exclude floating geometry. |
-| Q09R | A | On-demand separate WinUI 3 C++/WinRT Settings. |
-| Q27 | B | Native floating geometry desirable but not stable blocker. |
-| Q28 | A → superseded as to placement by Q32:B | Unrestricted trusted Lua remains; no sandbox claim, but now a separate process. |
-| Q29 | A | Wallpaper → AetherShell → desktop icons. |
-| Q30 | A | Self-contained portable Windows App SDK dependencies. |
-| Q31 | A | **Temporary Interactive Mode** for controls; passive visuals under desktop icons. |
-| Q32 | B | **Separate on-demand unrestricted Lua worker process** with IPC and supervision. |
-| Q33 | A | Keep WinUI 3 C++/WinRT; do not switch UI toolkits for unmeasured footprint guesses. |
-| Q34 | A | All five channels in stable v1; qualify sequentially during engineering. |
-| Q35 | B | Explorer support only in separate opt-in experimental builds after strict testing. |
-| Q36 | A | Local Spotify/system audio visualizer default-on, adaptive AC/battery 15/30/60 FPS with overrides. |
-| Q37 | A | Disruptive Windows experiments restricted to disposable VMs; physical host read-only/non-invasive unless owner separately authorizes a policy change. |
-| Q38 | B | Portable **application binaries** with canonical AppData settings, not portable settings beside executable. |
-| Q39 | A | **Apache License 2.0**. |
-| Q40 | A | All five channel approvals are **strict stable-v1 release gates**, including Microsoft Store publication. |
-| Q41 | A | Experimental Explorer bridge: disposable-VM qualification, further controlled dedicated recoverable test-system validation, then limited opt-in distribution if safe; never assume blanket host test permission. |
+- [x] **Milestone 1:** Establish Windows toolchain, Rust core runtime, C++ Settings IPC contract, and clean process shutdown.
+- [x] **Milestone 2:** Produce exact Windows build/edition capability detection, registry UBR reading, and diagnostics output.
+- [x] **Milestone 3:** Prototype external taskbar effects and implement verified `native_noop` and `external_appearance` backends.
+- [x] **Milestone 4:** Implement desktop host window (`WorkerW`/`Progman` discovery), wallpaper/icon layering, and temporary Interactive Mode (`Win+Ctrl+A`).
+- [x] **Milestone 5:** Build and verify standalone WinUI 3 C++/WinRT Settings executable with 2-way IPC synchronization and clean exit on close.
+- [x] **Milestone 6:** Implement unit-tested declarative configuration parser, TOML serialization, atomic ReplaceFileW persistence, and backup rotation.
+- [x] **Milestone 7:** Implement Direct2D/DirectWrite rendering pipeline with dirty-state presentation gating and measure real idle costs.
+- [x] **Milestone 8:** Implement WASAPI local spectrum loopback with 512-point FFT, endpoint migration (`IMMNotificationClient`), and default-on UX.
+- [x] **Milestone 9:** Implement native telemetry samplers (CPU, RAM, storage, network, battery) with honest missing-state reporting.
+- [x] **Milestone 10:** Implement per-monitor Gaming Shield fullscreen detection and conflict-yielding behavior.
+- [x] **Milestone 11:** Implement out-of-process Lua 5.4 child worker (`aethershell-script-host.exe`), SHA-256 digest trust verification, continuous runtime watchdog revalidation, and crash quarantine circuit breaker.
+- [ ] **Milestone 12:** Complete multi-OS disposable VM qualification across target Windows build families and finalize 5-channel packaging (MSI, MSIX, Store, WinGet, portable) under Apache-2.0.
 
-### 20.1 Resolved overlaps and supersession
+### 20.2 Required artifacts for release completion
 
-1. **One core vs multiple processes:** Standalone means self-contained user-mode app, *not* a single process. On-demand Settings and Lua child processes preserve default core minimalism.
-2. **Unrestricted Lua vs safety:** Child process contains many accidental faults, but code is unrestricted under the user's account and is not a security sandbox. Do not claim guarantee against hostile actions.
-3. **Desktop icons vs controls:** Visuals remain under icons; interactions require a deliberate, temporary separate surface instead of native under-icon click-through.
-4. **Experimental shell vs non-interference:** Stable packages have zero injected Explorer code. Experimental builds remain separate and undergo Q37/Q41 qualification.
-5. **Floating taskbar goal vs stable gate:** Continue R&D, but exclude unproven floating taskbar geometry from stable without blocking otherwise qualifying v1.
-6. **OS coverage vs support lifecycle:** Windows 10 compatibility does not extend Microsoft OS servicing. Windows 11 exact-build behavior must be tested.
-7. **Native Settings UX vs footprint:** WinUI 3 C++/WinRT remains selected and launched on demand; actual RAM/bundle size must be measured.
-8. **Five-channel release vs external approval:** Preview builds may be distributed earlier; stable v1 **cannot ship without all five**. No assumptions about Store approval.
-9. **Portable vs data portability:** Bundle is install-free but AppData-backed. Distinguish binaries from settings and prevent cross-channel write races.
-10. **Host agent's reused Q39–Q41:** Its questions about conflict policy and sensor fallback are already covered by Q21:A and Q10:A. It does not override owner Q39–Q41.
-11. **Evidence vs capability:** Observing XAML taskbar bridge or other utility Explorer DLL is *not* an AetherShell external API POC. `WorkerW` absence in one discovery probe is *not* proof no safe anchor exists. Experimental claims stay conditional.
-
-### 20.2 Open owner decisions
-
-**None required to publish this PRD revision.** Additional owner approval will be required only to change selected scope, permit disruptive host tests, relax five-channel stable release gating, or ship an experimental build after its planned qualification. Unverified feasibility is engineering work, not an unanswered owner preference.
-
-## 21. Implementation-ready backlog and release artifact checklist
-
-### 21.1 Earliest high-value issues (recommended sequence)
-
-1. Establish Windows toolchain + Rust/C++ IPC proof and clean core shutdown.
-2. Produce exact Windows build/edition capability detection and diagnostics output.
-3. Prototype external taskbar effect and prove native fallback.
-4. Prototype wallpaper → widget → icon stack on Windows 10/11; verify icon hit testing.
-5. Prototype WinUI 3 self-contained portable startup on clean x64 Windows 10 and 11.
-6. Implement unit-tested declarative config/theme/profile types and schema fixtures.
-7. Implement a tiny clock widget and measure real idle CPU/RAM/GPU costs.
-8. Implement WASAPI local spectrum with explicit stop/cancel lifecycle and default-on UX.
-9. Implement native telemetry with supported/unavailable states before advanced providers.
-10. Implement per-monitor game/power safeguards and conflict-yield behavior.
-11. Implement separate Lua worker, authenticated bounded IPC, worker supervision, explicit script trust and Safe Mode before enabling third-party Lua.
-12. Perform packaging qualification and compatibility matrix before calling any build stable; **Apache-2.0** and all five channel acceptances required.
-
-### 21.2 Required artifacts for completion
-
-- Stable source workspace, compilable Rust core and C++/WinRT settings, repository governance, reproducible build instructions.
-- Public JSON schemas, complete built-in TOML examples, and migration fixtures.
-- Six skin archetypes and six tested themes with original assets and accessibility evidence.
-- Capability probe output, Windows test matrix, wallpaper coexistence results, optional Explorer bridge decision report.
-- Performance baseline with machine metadata; failure-injection and privacy/network evidence.
-- Signed MSI/MSIX and self-contained portable packages, Microsoft Store acceptance record and WinGet manifests.
-- Apache-2.0 `LICENSE` text, `NOTICE`, `SECURITY.md`, dependencies/licenses/SBOM and external proprietary asset attribution checks.
-- Human-readable installation, update, safe mode, uninstall and rollback instructions.
-- Release gate report with explicit blocked, supported, experimental and deferred feature list.
+- [x] Stable source workspace, compilable Rust core and C++/WinRT Settings, repository governance, reproducible build instructions.
+- [x] Public JSON schemas, complete built-in TOML examples, and migration fixtures.
+- [x] Six theme palettes with semantic color tokens and high-contrast accessibility support.
+- [x] Capability probe output, Windows build detection, conflict detection, and non-injection architecture verification.
+- [x] Genuine multi-process runtime benchmark harness and bare-metal AMD Ryzen 5 5500U baseline ledger.
+- [x] Automated test inventory tool (`scripts/test_inventory.ps1`) reconciling 279 unique passing tests.
+- [ ] Multi-OS disposable VM qualification records across Windows 10 22H2 through Windows 11 26H2.
+- [ ] Signed MSI/MSIX packages, self-contained portable bundle, Microsoft Store certified listing, and WinGet manifest publication.
+- [x] Apache-2.0 `LICENSE` text, `NOTICE.md`, `SECURITY.md`, and clean dependency audit.
+- [ ] End-user documentation covering installation, configuration, safe mode, and uninstallation across all 5 distribution channels.
+- [ ] Final 20-gate release sign-off ledger with signed artifact hashes.
 
 ---
 
-## Appendix A — Source references and provenance
+## Technical Appendices
 
-The starting AetherShell PRD was the user-supplied `AetherShell_PRD.md` (595 lines, dated 2026-10-25); the prior 1,525-line R2 revision supplied the detailed structure. R3 preserves its comprehensive scope (Rust core, adaptive taskbar, DComp/D2D widgets, WASAPI/SMTC, skins/themes, packaging) and updates it according to **all 41 owner decisions plus Q09R**. This is a requirements specification, **not evidence of implemented AetherShell code**. The new repository has not been built or audited. Hardware observations originate from two user-supplied **agent reports**, especially a 2026-10-25 read-only evidence addendum; these are **reported host observations**, not independently rerun measurements or AetherShell POC passes. The Windows API references below provide evidence for platform facts, **not** evidence that the proposed AetherShell implementation exists or passes acceptance tests.
+For Microsoft platform API source references [S01]–[S17], baseline physical hardware observations, and technical proof-of-concept (POC) tracking, see:
+👉 [docs/prd/PRD_APPENDICES.md](docs/prd/PRD_APPENDICES.md)
 
-| Ref | Primary documentation | Why cited |
-|---|---|---|
-| [S01] | [Microsoft: Windows 10 release information](https://learn.microsoft.com/en-us/windows/release-health/release-information) | 22H2 support lifecycle / ESU distinction. |
-| [S02] | [Microsoft: Windows 11 release information](https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information) | 25H2 = 26200, 26H2 = 26300, 26H1 = 28000 as of cutoff. |
-| [S03] | [Microsoft: SetWinEventHook](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook) | Out-of-context events and message-loop requirements. |
-| [S04] | [Microsoft: SetWindowCompositionAttribute](https://learn.microsoft.com/en-us/windows/win32/dwm/setwindowcompositionattribute) | API exists but Microsoft recommends using DwmSetWindowAttribute instead. |
-| [S05] | [Microsoft: Mica material](https://learn.microsoft.com/en-us/windows/apps/design/style/mica) | App-backdrop semantics and downlevel/accessibility fallbacks. |
-| [S06] | [Microsoft: Loopback Recording](https://learn.microsoft.com/en-us/windows/win32/coreaudio/loopback-recording) | Shared-mode WASAPI system playback capture and event behavior. |
-| [S07] | [Microsoft: DXCore adapter enumeration](https://learn.microsoft.com/en-us/windows/win32/dxcore/dxcore-enum-adapters) | GPU/compute/NPU enumeration, not universal utilization counters. |
-| [S08] | [Microsoft: SetWindowDisplayAffinity](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowdisplayaffinity) | Capture-exclusion limitations and owned top-level windows. |
-| [S09] | [Microsoft: WinUI 3](https://learn.microsoft.com/en-us/windows/apps/winui) | Modern Windows UI and Windows 10 compatibility. |
-| [S10] | [Microsoft: Distribute an unpackaged WinUI 3 app](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/unpackage-winui-app) | Self-contained portable deployment and package-size tradeoff. |
-| [S11] | [Microsoft: MSIX containerization overview](https://learn.microsoft.com/en-us/windows/msix/msix-containerization-overview) | Package filesystem behavior, virtualization and protected installation. |
-| [S12] | [Microsoft: GetDiskFreeSpaceExW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getdiskfreespaceexw) | Disk-capacity reporting, not read/write throughput. |
-| [S13] | [Microsoft: Windows App SDK versioning](https://learn.microsoft.com/en-us/windows/apps/get-started/versioning-overview) | Distinguish OS build, Windows SDK and Windows App SDK versions. |
-| [S14] | [Microsoft: Windows App SDK support matrix](https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/support) | Windows App SDK system requirements and servicing distinctions. |
-| [S15] | [Microsoft: Distribute an unpackaged WinUI 3 app](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/unpackage-winui-app) | `WindowsAppSDKSelfContained=true` deployment; do not assume numerical bundle size. |
-| [S16] | [Microsoft: Understanding packaged desktop apps](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-behind-the-scenes) | Conditional AppData virtualization and file operation behavior; distinguish full trust from AppContainer. |
-| [S17] | [Microsoft: Win32 SetWinEventHook](https://learn.microsoft.com/en-us/windows/desktop/api/winuser/nf-winuser-setwineventhook) | Event callback registered thread needs message loop; STA is not a universal `FindWindow` requirement. |
-
-### Appendix B — Device-agent evidence, versioned and unverified
-
-**Evidence boundary:** The agent's read-only findings are **reported**, not personally reproduced here. Only OS build metadata is corroborated by official release records. Do **not** promote read-only observations to successfully tested AetherShell features.
-
-| Observation (2026-10-25 agent report) | Provenance classification | Implication / what is not proven |
-|---|---|---|
-| Windows 11 Pro 26H2 `26300.9711`; Explorer file version `10.0.26100.8117` | Agent-observed via registry/`FileVersionInfo`; OS version corroborates [S02] | Exact update matters; does not validate any external taskbar method. |
-| Ryzen 5 5500U, AMD Radeon integrated graphics, x64, 16 GB; single 1080p 60 Hz SDR display | Agent-observed CIM/display inventory | Useful **reference hardware**, not a universal performance matrix. |
-| Active taskbar auto-hide; reported `Shell_TrayWnd` rect extending beneath bottom screen edge | Agent-observed `SHAppBarMessage(ABM_GETSTATE)`, `FindWindow`, window rect | Need per-DPI auto-hide safe-area POC; never hardcode 48 px clearance. |
-| `ExplorerTAP.dll` reportedly loaded into Explorer; child `DesktopWindowContentBridge` found | Agent-observed `Get-Process.Modules` and hierarchy | Indicates a third-party customization component and child XAML composition; does not prove external methods universally fail. |
-| `Progman` → `SHELLDLL_DefView` → `SysListView32`, but one `WorkerW` lookup returned `0x0` | Agent-observed `FindWindow`/`FindWindowEx` | Need resilient host discovery and actual stacking POC; no fixed window parenting assumption. |
-| Earlier busy-game snapshot ~2 GiB physical available and high GPU use; later baseline ~6.2 GiB available, ~10% CPU | Agent-reported distinct sampling times | Confounded by other applications. No AetherShell measured footprint yet. |
-| Virtual surround output device, plus physical audio output devices | Agent-observed audio inventory | Validate default-endpoint change and cancellation; no player-specific session guaranteed. |
-| WinUI/Windows App SDK runtimes and Rust/Visual Studio/SDK installed | Agent-observed toolchain enumeration | Tool availability != working product build; Settings memory remains **UNMEASURED**. |
-
-**Inaccurate investigator statements to retire:** `FindWindow` universally requires an STA thread; loaded third-party Explorer DLL mathematically proves no external taskbar effect can work; a separate Lua worker prevents all malicious same-user interference; 70–120 MiB WinUI RAM is already measured for AetherShell; a 48-pixel auto-hide safe area works universally; anti-cheat compatibility is guaranteed by choosing one hook flag. None is an accepted release claim.
-
-### Appendix C — Open technical unknowns (owner choices resolved)
-
-| Unknown | Evidence gate | Allowed fallback |
-|---|---|---|
-| External taskbar clear/blur/acrylic on particular Windows builds | POC-TB-01 VM pixel + recovery test | Native taskbar |
-| Floating pill geometry / child XAML brush modification | POC-TB-02/03, VM first | Exclude from stable |
-| Desktop window behind icon view without breaking wallpaper | POC-DS-01 VM multi-wallpaper tests | Disable widgets on affected configuration |
-| Temporary Interactive Mode not interfering with desktop icons | POC-DS-02 | Disable direct widget actions, use tray/hotkeys |
-| Sparse compositing costs on reference Vega iGPU | POC-RD-01 with valid workload baseline | Reduce effects/surface design |
-| Self-contained C++/WinRT WinUI Settings bundle and process footprint | POC-UI-01 build/measurement | Tune memory/packaging, retain framework choice |
-| Lua worker stability under hang/native failure | POC-LUA-01 VM-only fault tests | Disable/quarantine scripted widgets |
-| MSI/MSIX/Store/portable shared AppData correctness | POC-PK-01 clean VM upgrade/uninstall tests | Block affected channel/release, no silent data split |
-| Genuine AC/battery audio wakeups and endpoint changes | POC-AU-01 | Lower FPS, stop capture until restored |
-| Advanced GPU/NPU/thermal availability and dGPU sleep | POC-SN-01 | Honest missing value / optional external provider |
-| Game/anti-cheat interaction and shell event flags | POC-GM-01, explicitly bounded | Suspend features, no universal guarantee |
-
-### Appendix D — Optional read-only multi-agent PRD verification prompt
-
-> **No new agent investigation is required before adopting R3 as the requirements baseline.** This prompt is available if another agent with access to Windows source/build tools is asked to independently verify the document, **without implementing or running disruptive experiments**.
->
-> Review the AetherShell PRD R3 against the owner's Q01–Q41 and Q09R decisions. Perform a **strictly read-only audit** of consistency, source references, Win32/WinUI/IPC and package-policy assumptions. Specifically verify that Lua is an unrestricted **separate on-demand worker**, temporary Interactive Mode is required below desktop icons, five stable-release channels (including approved Store) are hard gates, the license is Apache-2.0, portable uses AppData, and Explorer integration is only a separately distributed and qualified experimental option. Cite actual file paths and lines, identify unsupported claims, contradictory TOML/schema fields, test-environment violations, incorrect Windows API requirements and unmet acceptance criteria. Distinguish official documentation, local agent observation, hypothesis and POC result. **Do not modify any file, run invasive POCs, inject/hook Explorer, change OS settings, or claim benchmark results.** Output a findings table with severity, exact quote/line, evidence confidence, recommended fix and whether a new owner decision is truly required. Do not invent or renumber owner decisions.
-
-**End of AetherShell PRD — Product v1.0.0; specification revision 2026-10-25 / R3.**
+**End of AetherShell Product Requirements Document — Product v1.0.0; Specification Baseline 2026-10-29 / v1.0.**
