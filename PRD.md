@@ -25,7 +25,7 @@
 | **7** | Telemetry, Audio & Media | ✅ Implemented | Win32 telemetry samplers, WASAPI shared-loopback spectrum, power-aware polling |
 | **8** | Settings Application | ✅ Implemented | C++/WinRT + WinUI 3 standalone executable, 6 navigation pages, 2-way IPC sync |
 | **9** | Design System (Skins & Themes) | 🔶 Partially Implemented | 6 theme token palettes implemented; built-in declarative skin packages pending |
-| **10** | Configuration & Schemas | 🔶 Partially Implemented | TOML parser, atomic replace, backup rotation; schema versioning v1->v2 pending |
+| **10** | Configuration & Schemas | ✅ Implemented | TOML parser, atomic replace, backup rotation; bidirectional reversible schema migrations (1.0.0 <-> 1.1.0 <-> 2.0.0), Win32 exclusive locking |
 | **11** | Runtime User-Data Layout | ✅ Implemented | Canonical %LOCALAPPDATA% storage, portable layout specification, zero host leakage |
 | **12** | Repository Structure & Engineering | ✅ Implemented | 13 workspace crates, CMake MSBuild WinUI project, automated test inventory |
 | **13** | Security, Privacy & Non-Interference | ✅ Implemented | Unrestricted out-of-process Lua, SHA-256 digest trust verification, continuous revalidation |
@@ -33,7 +33,7 @@
 | **15** | Gaming Shield & Coexistence | ✅ Implemented | Fullscreen detection, presentation suspension, third-party customizer yielding |
 | **16** | Packaging & Distribution | ⬜ Not Started | Packaging scripts exist (MSI, MSIX, portable); Store submission and signing deferred |
 | **17** | Failure-Mode Coverage | 🔶 Partially Implemented | F01-F47 scenarios defined; crash recovery and device loss implemented; VM fault injection pending |
-| **18** | Testing Strategy & Acceptance Gates | 🔶 In Progress | 279 unique passing tests across workspace; 20-gate matrix tracked (18 partially verified) |
+| **18** | Testing Strategy & Acceptance Gates | 🔶 In Progress | 300 unique Cargo tests + 36 PowerShell tests (336 total passing tests); 20-gate matrix tracked (18 partially verified) |
 | **19** | Roadmap & Milestones | 🔶 Updated | Phases 0–4 completed; Phase 5 (VM & packaging qualification) in progress |
 | **20** | Implementation Backlog & Release Artifacts | 🔶 Updated | Completed engineering milestones tracked; remaining release criteria defined |
 
@@ -1435,7 +1435,7 @@ This roadmap is **dependency-driven** and reflects verified architectural milest
 
 - Automated multi-process runtime benchmark harness implemented; bare-metal AMD Ryzen 5 5500U baseline established.
 - Disposable VM and Windows Sandbox provisioning tooling implemented (`scripts/provision_disposable_vm.ps1`) allocating 2048 MB RAM / 2 vCPUs under strict preflight safety.
-- Reconciled automated workspace test inventory to 279 unique passing tests.
+- Reconciled automated workspace test inventory to 300 unique Cargo tests + 36 PowerShell regression tests = 336 passing automated tests.
 - *In Progress:* Multi-OS VM matrix qualification (Win10 22H2, Win11 22H2/23H2/24H2/26H2) and packaging channel qualification (MSI, MSIX, Store, WinGet, portable).
 
 ### Phase 6 — Optional advanced taskbar laboratory (Status: ⬜ Not Started)
@@ -1473,7 +1473,7 @@ An individual unsupported experimental feature can be excluded while core v1 pro
 - [x] Six theme palettes with semantic color tokens and high-contrast accessibility support.
 - [x] Capability probe output, Windows build detection, conflict detection, and non-injection architecture verification.
 - [x] Genuine multi-process runtime benchmark harness and bare-metal AMD Ryzen 5 5500U baseline ledger.
-- [x] Automated test inventory tool (`scripts/test_inventory.ps1`) reconciling 279 unique passing tests.
+- [x] Automated test inventory tool (`scripts/test_inventory.ps1`) reconciling 300 unique Cargo tests + 36 PowerShell regression tests = 336 passing automated tests.
 - [ ] Multi-OS disposable VM qualification records across Windows 10 22H2 through Windows 11 26H2.
 - [ ] Signed MSI/MSIX packages, self-contained portable bundle, Microsoft Store certified listing, and WinGet manifest publication.
 - [x] Apache-2.0 `LICENSE` text, `NOTICE.md`, `SECURITY.md`, and clean dependency audit.

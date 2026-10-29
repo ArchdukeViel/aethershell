@@ -1,7 +1,7 @@
 # AetherShell — Engineering Qualification & Release-Gate Reconciliation Report
 
-**Document Baseline**: Active Working Branch `fix/g14-accessibility-winevent-and-status-reconciliation`  
-**Latest Merged Commit on Main**: `c3d6ec5 fix(audit): enforce fail-closed network isolation audit and NOASSERTION SPDX license conclusion (#60)`  
+**Document Baseline**: Active Working Branch `main`  
+**Latest Merged Commit on Main**: `b1b71ba feat(network,qualification): implement packet-level network isolation auditor, continuous socket sampling, and multi-component zero-leakage verification (Gate G16) (#63)`  
 **Remote Repository**: `https://github.com/ArchdukeViel/aethershell`  
 **Host Environment**: Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM  
 **Host AppData Status**: `%LOCALAPPDATA%\AetherShell` strictly maintained at 0 items (100% clean)  
@@ -21,7 +21,8 @@ In accordance with explicit project owner authorization (`/goal implement the re
 | **PR #59** | **Gate G12 Remediation** (Schema Loader Contract, Reversibility & Fail-Closed Backup) | - Reconciled `AppConfig` and `ConfigManager` to accept all supported versions (`1.0.0`, `1.1.0`, `2.0.0`) via `is_supported_schema_version`<br>- Non-destructive reversible migration via `_preserved_runtime` table stashing and restoration<br>- Enforced fail-closed pre-migration backup (`fs::copy(&self.config_path, &pre_backup)?`)<br>- Added integration test `test_migration_followed_by_normal_application_load` | All 4 CI checks pass<br>33/33 crate tests pass | `34829f1` |
 | **PR #60** | **Gate G16 Remediation** (Fail-Closed Network Audit & SPDX NOASSERTION License Conclusion) | - `scripts/audit_runtime_network_isolation.ps1`: In `-Strict` mode, fails closed with non-zero exit code if no target processes exist (Finding P2)<br>- Added `-SpawnTestProcess` switch: spawns isolated instance in sandbox and verifies 0 sockets/listeners while active<br>- `scripts/generate_sbom.ps1`: Sets `licenseConcluded = "NOASSERTION"` per SPDX 2.3 Section 7.13 pending separate legal conclusion (Finding P3)<br>- Updated regression tests in `network_isolation_tests.ps1` and `sbom_and_license_compliance_tests.ps1` | All 4 CI checks pass<br>8/8 PowerShell tests pass | `c3d6ec5` |
 | **PR #61** | **Gate G14 Remediation** (Accessibility Win32 WinEvents & Status Reconciliation) | - Dispatched Win32 `NotifyWinEvent(EVENT_OBJECT_FOCUS, hwnd, OBJID_CLIENT, child_id)` on keyboard focus navigation (Finding P4)<br>- Dispatched Win32 `NotifyWinEvent(EVENT_SYSTEM_ALERT, hwnd, OBJID_CLIENT, child_id)` on widget activation<br>- Transparently documented keyboard navigation vs future custom Direct2D UIA provider gap<br>- Reconciled workspace test inventory to 294 unique Cargo tests and updated `docs/STATUS.md` | All 4 CI checks pass<br>Full workspace suite passes | `28ace8a` |
-| **PR #62** | **Gate G14** (Native Windows UI Automation Provider & WM_GETOBJECT Bridge) | - Implemented Win32 `WM_GETOBJECT` returning `IRawElementProviderSimple` via `UiaReturnRawElementProvider`<br>- Implemented COM provider hierarchy (`IRawElementProviderSimple`, `IRawElementProviderFragment`, `IRawElementProviderFragmentRoot`, `IInvokeProvider`) in `accessibility.rs`<br>- Standard UIA properties: Name, ControlType, BoundingRectangle, HasKeyboardFocus, IsEnabled, IsKeyboardFocusable<br>- Dispatches `UiaRaiseAutomationEvent` for focus and invoke events alongside WinEvents | In-process test suite passes (28/28 desktop tests)<br>Full workspace passes | Candidate PR #62 |
+| **PR #62** | **Gate G14** (Native Windows UI Automation Provider & WM_GETOBJECT Bridge) | - Implemented Win32 `WM_GETOBJECT (0x003D)` returning `IRawElementProviderSimple` via `UiaReturnRawElementProvider`<br>- Implemented COM provider hierarchy (`IRawElementProviderSimple`, `IRawElementProviderFragment`, `IRawElementProviderFragmentRoot`, `IInvokeProvider`) in `accessibility.rs`<br>- Standard UIA properties: Name, ControlType, BoundingRectangle, HasKeyboardFocus, IsEnabled, IsKeyboardFocusable<br>- Dispatches `UiaRaiseAutomationEvent` for focus and invoke events alongside WinEvents | All 4 CI checks pass<br>28/28 desktop tests pass<br>300 Cargo tests pass | `d98155f` |
+| **PR #63** | **Gate G16** (Packet-Level Network Isolation Auditor & Multi-Component Verification) | - Implemented `scripts/audit_packet_level_network_isolation.ps1` with elevation-aware NDIS packet capture via `PktMon.exe`<br>- High-frequency continuous socket scanning (25ms cadence) via native `iphlpapi.dll` scanner (<1ms whole-system scans)<br>- Windows DNS Client Cache differential analysis (`Get-DnsClientCache`) verifying zero outbound DNS queries<br>- Concurrent multi-component testing (`-SpawnAllComponents`) simultaneously spawning and verifying Core, Settings, and Script Host in isolated sandbox | All 4 CI checks pass<br>7/7 packet tests pass<br>36 PowerShell tests pass | `b1b71ba` |
 
 ---
 
@@ -58,13 +59,36 @@ An adversarial review of PRs #56, #57, and #58 raised four key findings (P1–P4
 - **Remediation (PR #61)**:
   1. Implemented Win32 accessibility event bridge: on keyboard focus cycling (TAB, Shift+TAB, arrows), dispatched Win32 `NotifyWinEvent(EVENT_OBJECT_FOCUS /* 0x8005 */, hwnd, OBJID_CLIENT, (next_idx + 1) as i32)`.
   2. On widget activation (Enter, Space), dispatched Win32 `NotifyWinEvent(EVENT_SYSTEM_ALERT /* 0x8008 */, hwnd, OBJID_CLIENT, (idx + 1) as i32)`.
-  3. Documented qualification boundary: Keyboard navigation and focus cycling are fully functional and verified; full custom Direct2D UIA `IRawElementProviderFragment` provider implementation and physical audio Narrator verification remain explicitly tracked as partial/deferred pending dedicated UI automation test harness in VM. Gate G14 is truthfully maintained as `PARTIALLY_VERIFIED`.
+  3. Documented qualification boundary: Keyboard navigation and focus cycling are fully functional and verified; native COM UI Automation provider hierarchy implemented in PR #62. Gate G14 is truthfully maintained as `PARTIALLY_VERIFIED`.
+
+### 2.5 Advancement (Gate G14): Native Windows UI Automation Provider & WM_GETOBJECT Bridge (PR #62)
+- **Implementation**:
+  1. Handled Win32 `WM_GETOBJECT (0x003D)` in `desktop_host_wnd_proc` returning `IRawElementProviderSimple` via `UiaReturnRawElementProvider`.
+  2. Implemented native COM UI Automation provider hierarchy (`crates/aethershell-desktop/src/accessibility.rs`):
+     - `IRawElementProviderSimple` for window root and child widget fragments.
+     - `IRawElementProviderFragment` and `IRawElementProviderFragmentRoot` with spatial navigation and hit testing.
+     - `IInvokeProvider` for actionable widgets (buttons, media controls).
+  3. Mapped standard UIA properties: `UIA_NamePropertyId`, `UIA_ControlTypePropertyId`, `UIA_BoundingRectanglePropertyId`, `UIA_HasKeyboardFocusPropertyId`, `UIA_IsEnabledPropertyId`, and `UIA_IsKeyboardFocusablePropertyId`.
+  4. Handled fragment runtime IDs (`create_fragment_runtime_id`) using `VT_I4` SAFEARRAY with `UiaAppendRuntimeId`.
+  5. Connected `UiaRaiseAutomationEvent` dispatches alongside WinEvents and resolved mutex re-entrancy deadlock during synchronous UIA client callbacks.
+
+### 2.6 Advancement (Gate G16): Packet-Level Network Isolation Auditor & Multi-Component Zero-Leakage Verification (PR #63)
+- **Implementation**:
+  1. Implemented `scripts/audit_packet_level_network_isolation.ps1`:
+     - Elevation-aware NDIS packet capture via Windows Packet Monitor (`PktMon.exe`).
+     - Strict fail-closed elevation checking with `-RequirePktMon` (directing execution to disposable VM guest per Q37:A / Section 18.2).
+     - High-frequency continuous socket scanning (25ms cadence) using native `iphlpapi.dll` (`GetExtendedTcpTable` / `GetExtendedUdpTable`) scanning all IPv4/IPv6 TCP and UDP sockets across the operating system in sub-millisecond execution.
+     - Windows DNS Client Cache differential analysis (`Get-DnsClientCache`) verifying zero outbound DNS queries during the execution window.
+     - Concurrent multi-component testing (`-SpawnAllComponents`) simultaneously spawning and verifying Core (`aethershell.exe --benchmark 3`), Settings (`aethershell-settings.exe --test-sleep-secs 3`), and Script Host (`aethershell-script-host.exe --test-sleep-secs 3`) in temporary redirected sandbox.
+     - Structured JSON qualification ledger output (`-Json`).
+  2. Added `--test-sleep-secs <N>` test parameter to `crates/aethershell-settings/src/main.rs`.
+  3. Added automated regression test suite `tests/packet_level_network_isolation_tests.ps1` (7 tests, 100% pass rate).
 
 ---
 
 ## 3. Workspace Test Inventory & Audit Summary
 
-Following completion and integration of PRs #56 through #61, the workspace test suite contains **294 unique passing automated Cargo tests** across 13 member crates, plus **29 dedicated PowerShell regression tests**:
+Following completion and integration of PRs #56 through #63, the workspace test suite contains **300 unique passing automated Cargo tests** across 13 member crates, plus **36 dedicated PowerShell regression tests**:
 
 ```
 ================================================================================
@@ -81,7 +105,7 @@ aethershell-app                 8               93        101          13
 aethershell-audio               9                0          9           1
 aethershell-config             33                0         33           1
 aethershell-core                9                0          9           1
-aethershell-desktop            22                0         22           1
+aethershell-desktop            28                0         28           1
 aethershell-diagnostics        13               19         32           2
 aethershell-ipc                17                0         17           1
 aethershell-renderer           16                0         16           1
@@ -93,18 +117,19 @@ aethershell-win                18                0         18           1
 
 ================================================================================
 SUMMARY AUDIT VERDICT:
-  Unique Unit Tests        : 182
+  Unique Unit Tests        : 188
   Unique Integration Tests : 112
-  Total Unique Tests       : 294
+  Total Unique Tests       : 300
 ================================================================================
 ```
 
-### PowerShell Qualification & Regression Suites (29 Passing Tests)
-1. `tests/test_inventory_tests.ps1`: 6/6 passed.
-2. `tests/provision_disposable_vm_tests.ps1`: 4/4 passed.
-3. `tests/sbom_and_license_compliance_tests.ps1`: 5/5 passed.
-4. `tests/network_isolation_tests.ps1`: 3/3 passed.
-5. `tests/run_ryzen5_benchmark_tests.ps1`: 11/11 passed.
+### PowerShell Qualification & Regression Suites (36 Passing Tests Across 6 Suites)
+1. `tests/packet_level_network_isolation_tests.ps1`: 7/7 passed.
+2. `tests/test_inventory_tests.ps1`: 6/6 passed.
+3. `tests/run_ryzen5_benchmark_tests.ps1`: 11/11 passed.
+4. `tests/sbom_and_license_compliance_tests.ps1`: 5/5 passed.
+5. `tests/provision_disposable_vm_tests.ps1`: 4/4 passed.
+6. `tests/network_isolation_tests.ps1`: 3/3 passed.
 
 ---
 
@@ -123,11 +148,11 @@ SUMMARY AUDIT VERDICT:
 | **G09** | Local Adaptive Audio | `PARTIALLY_VERIFIED` | EVD-016, EVD-020, EVD-037 |
 | **G10** | Lua Worker Reliability & Trust | `PARTIALLY_VERIFIED` | EVD-023, EVD-025, EVD-027, EVD-029, EVD-032 |
 | **G11** | WinUI Settings Independence | `PARTIALLY_VERIFIED` | EVD-007, EVD-018 |
-| **G12** | Schema/Backup & Concurrency | `PARTIALLY_VERIFIED` | EVD-017, EVD-038 (PR #56, PR #59) |
+| **G12** | Schema/Backup & Concurrency | `PARTIALLY_VERIFIED` | EVD-017, EVD-038, EVD-041 (PR #56, PR #59) |
 | **G13** | Performance Budgets | `PARTIALLY_VERIFIED` | EVD-026, EVD-028, EVD-030, EVD-035, EVD-037 |
-| **G14** | Accessibility & Keyboard Nav | `PARTIALLY_VERIFIED` | EVD-040 (PR #58, PR #61) |
+| **G14** | Accessibility & Keyboard Nav | `PARTIALLY_VERIFIED` | EVD-040, EVD-043, EVD-044 (PR #58, PR #61, PR #62) |
 | **G15** | Five-Channel Release | `DEFERRED` | Public packaging intentionally deferred |
-| **G16** | License & Privacy Governance | `PARTIALLY_VERIFIED` | EVD-010, EVD-011, EVD-039 (PR #57, PR #60) |
+| **G16** | License & Privacy Governance | `PARTIALLY_VERIFIED` | EVD-010, EVD-011, EVD-039, EVD-042, EVD-045 (PR #57, PR #60, PR #63) |
 | **G17** | Safe Mode & Recovery | `PARTIALLY_VERIFIED` | EVD-004, EVD-014, EVD-019 |
 | **G18** | Strict No-Go & Evidence | `PARTIALLY_VERIFIED` | EVD-008, EVD-009, EVD-031, EVD-034 |
 | **G19** | Third-Party Coexistence | `PARTIALLY_VERIFIED` | EVD-004, EVD-009 |
