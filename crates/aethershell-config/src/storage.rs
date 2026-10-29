@@ -1,3 +1,4 @@
+use crate::migration::{migrate_toml_string, MigrationError, SchemaVersion};
 use crate::schema::{AppConfig, CURRENT_SCHEMA_VERSION};
 use std::fs;
 use std::io;
@@ -5,10 +6,13 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use windows::core::PCWSTR;
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Storage::FileSystem::{
-    MoveFileExW, ReplaceFileW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    REPLACE_FILE_FLAGS,
+    CreateFileW, MoveFileExW, ReplaceFileW, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_MODE,
+    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, REPLACE_FILE_FLAGS,
 };
+
+const GENERIC_READ_WRITE: u32 = 0x8000_0000 | 0x4000_0000;
 
 #[derive(Debug, Error)]
 pub enum ConfigStorageError {
@@ -24,6 +28,29 @@ pub enum ConfigStorageError {
     Validation(#[from] crate::schema::ConfigValidationError),
     #[error("Atomic rename failed: {0}")]
     AtomicRename(String),
+    #[error("Concurrent write conflict: {0}")]
+    ConcurrentConflict(String),
+    #[error("Schema migration error: {0}")]
+    Migration(#[from] MigrationError),
+}
+
+/// RAII guard representing an exclusive Win32 file lock on `config.lock`.
+///
+/// Prevents concurrent cross-process write collisions between AetherShell instances (Gate G12).
+pub struct ConfigLockGuard {
+    handle: HANDLE,
+    lock_path: PathBuf,
+}
+
+impl Drop for ConfigLockGuard {
+    fn drop(&mut self) {
+        if !self.handle.is_invalid() {
+            unsafe {
+                let _ = CloseHandle(self.handle);
+            }
+        }
+        let _ = fs::remove_file(&self.lock_path);
+    }
 }
 
 /// Manages loading, saving, and atomic rollbacks of AetherShell configurations.
@@ -46,6 +73,89 @@ impl ConfigManager {
 
     pub fn backup_path(&self) -> &Path {
         &self.backup_path
+    }
+
+    pub fn lock_path(&self) -> PathBuf {
+        self.config_path.with_extension("lock")
+    }
+
+    /// Attempts to acquire an exclusive, non-blocking Win32 file lock on `config.lock`.
+    ///
+    /// Resolves Gate G12: Prevents concurrent instance write collisions across multiple running processes.
+    /// If another process is holding the lock, returns `ConfigStorageError::ConcurrentConflict`.
+    pub fn acquire_exclusive_lock(&self) -> Result<ConfigLockGuard, ConfigStorageError> {
+        if let Some(parent) = self.config_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let lock_path = self.lock_path();
+        let lock_u16: Vec<u16> = lock_path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let handle = unsafe {
+            CreateFileW(
+                PCWSTR(lock_u16.as_ptr()),
+                GENERIC_READ_WRITE,
+                FILE_SHARE_MODE(0), // Exclusive: 0 sharing allowed
+                None,
+                CREATE_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+        };
+
+        match handle {
+            Ok(h) if !h.is_invalid() => Ok(ConfigLockGuard {
+                handle: h,
+                lock_path,
+            }),
+            _ => {
+                let err = io::Error::last_os_error();
+                if err.raw_os_error() == Some(32) {
+                    // ERROR_SHARING_VIOLATION (os error 32)
+                    Err(ConfigStorageError::ConcurrentConflict(
+                        "Another AetherShell process currently holds the configuration lock (ERROR_SHARING_VIOLATION)".into(),
+                    ))
+                } else {
+                    Err(ConfigStorageError::Io(err))
+                }
+            }
+        }
+    }
+
+    /// Saves the configuration atomically under an exclusive write lock.
+    pub fn save_atomic_exclusive(&self, config: &AppConfig) -> Result<(), ConfigStorageError> {
+        let _lock = self.acquire_exclusive_lock()?;
+        self.save_atomic(config)
+    }
+
+    /// Reversibly migrates the configuration on disk to the target schema version.
+    ///
+    /// Resolves Gate G12: Supports forward and rollback migrations while preserving pre-migration backup.
+    pub fn migrate_to(&self, target_version: SchemaVersion) -> Result<String, ConfigStorageError> {
+        let _lock = self.acquire_exclusive_lock()?;
+
+        if !self.config_path.exists() {
+            let default_cfg = AppConfig::default();
+            self.save_atomic(&default_cfg)?;
+            return Ok(toml::to_string_pretty(&default_cfg)?);
+        }
+
+        let content = fs::read_to_string(&self.config_path)?;
+        let migrated_str = migrate_toml_string(&content, target_version)?;
+
+        // Validate that migrated content is syntactically valid TOML
+        let _: toml::Table = toml::from_str(&migrated_str)?;
+
+        // Save pre-migration backup before writing
+        let pre_backup = self.config_path.with_extension("pre_migrate.bak");
+        let _ = fs::copy(&self.config_path, &pre_backup);
+
+        self.heal_from_backup(&migrated_str)?;
+        Ok(migrated_str)
     }
 
     /// Loads the configuration if the file exists on disk, healing from backup if corrupted.
@@ -778,6 +888,78 @@ mod tests {
         let res = manager.save_atomic(&invalid_cfg);
         assert!(res.is_err());
         assert!(!manager.config_path().exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_acquire_exclusive_lock_and_concurrent_conflict() {
+        let temp_dir = std::env::temp_dir().join(format!("test_lock_{}", uuid::Uuid::new_v4()));
+        let manager1 = ConfigManager::new(&temp_dir);
+        let manager2 = ConfigManager::new(&temp_dir);
+
+        // 1. First manager acquires exclusive lock
+        let lock1 = manager1.acquire_exclusive_lock().expect("lock1 acquire");
+        assert!(manager1.lock_path().exists());
+
+        // 2. Second manager attempts to acquire lock on same directory -> must fail with ConcurrentConflict
+        let lock2_res = manager2.acquire_exclusive_lock();
+        assert!(
+            lock2_res.is_err(),
+            "Concurrent lock acquisition must fail while first lock is held"
+        );
+        match lock2_res.err().unwrap() {
+            ConfigStorageError::ConcurrentConflict(msg) => {
+                assert!(msg.contains("ERROR_SHARING_VIOLATION"));
+            }
+            other => panic!("Expected ConcurrentConflict, got {:?}", other),
+        }
+
+        // 3. Drop first lock -> releases handle and removes lock file
+        drop(lock1);
+
+        // 4. Now second manager can acquire cleanly
+        let lock2 = manager2.acquire_exclusive_lock().expect("lock2 acquire");
+        drop(lock2);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_migrate_to_updates_disk_and_creates_backup() {
+        let temp_dir = std::env::temp_dir().join(format!("test_migrate_{}", uuid::Uuid::new_v4()));
+        let manager = ConfigManager::new(&temp_dir);
+
+        // 1. Save initial 1.0.0 config
+        let initial = AppConfig::default();
+        manager.save_atomic(&initial).expect("initial save");
+
+        // 2. Perform forward migration to 1.1.0
+        let migrated_str = manager
+            .migrate_to(SchemaVersion::V1_1_0)
+            .expect("migration to 1.1.0");
+        assert!(migrated_str.contains(r#"schema_version = "1.1.0""#));
+
+        // 3. Verify on-disk file was updated
+        let on_disk_str = fs::read_to_string(&manager.config_path).expect("read on-disk config");
+        assert!(on_disk_str.contains(r#"schema_version = "1.1.0""#));
+        assert!(on_disk_str.contains("dynamic_battery_backoff_ms = 5000"));
+
+        // 4. Verify pre-migration backup was created
+        let pre_backup = manager.config_path.with_extension("pre_migrate.bak");
+        assert!(pre_backup.exists(), "pre_migrate.bak must exist");
+        let backup_str = fs::read_to_string(&pre_backup).expect("read pre_migrate.bak");
+        assert!(backup_str.contains(r#"schema_version = "1.0.0""#));
+
+        // 5. Reversible rollback migration back to 1.0.0
+        let rolled_back_str = manager
+            .migrate_to(SchemaVersion::V1_0_0)
+            .expect("rollback to 1.0.0");
+        assert!(rolled_back_str.contains(r#"schema_version = "1.0.0""#));
+
+        let on_disk_v1 = fs::read_to_string(&manager.config_path).expect("read on-disk v1");
+        assert!(on_disk_v1.contains(r#"schema_version = "1.0.0""#));
+        assert!(!on_disk_v1.contains("dynamic_battery_backoff_ms"));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
