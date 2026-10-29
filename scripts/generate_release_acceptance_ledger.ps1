@@ -264,7 +264,7 @@ if ($verifiedCount -ne 4) {
 
 # 3. Test Inventory Audit
 Write-Host "`n[3/4] Recording Automated Test Inventory Baseline..." -ForegroundColor Yellow
-$cargoTestsDiscovered = 349
+$cargoTestsDiscovered = 352
 $powerShellTestsDiscovered = 96
 
 Write-Host "  Discovered Unique Cargo Tests     : $cargoTestsDiscovered"
