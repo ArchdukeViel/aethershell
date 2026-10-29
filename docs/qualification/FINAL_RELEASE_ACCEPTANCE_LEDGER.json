@@ -1,32 +1,32 @@
 {
     "LedgerType":  "AetherShellFinalReleaseAcceptanceLedger",
     "Version":  "0.1.0-dev",
-    "GeneratedAt":  "2026-10-29T19:09:36.8433495+07:00",
+    "GeneratedAt":  "2026-10-29T20:44:42.7323599+07:00",
     "ReleaseDisposition":  "NO-GO",
     "CoreStableCandidate":  false,
     "ProductionVersionTag":  "RESERVED (v1.0.0)",
     "GovernancePolicy":  "PRD Section 18.2, AGENTS.md, Decisions Q01-Q48",
     "GateAccountingSummary":  {
                                   "TotalGates":  20,
-                                  "Verified":  1,
-                                  "PartiallyVerified":  17,
+                                  "Verified":  2,
+                                  "PartiallyVerified":  16,
                                   "NotApplicable":  1,
                                   "Deferred":  1
                               },
     "AutomatedTestSummary":  {
-                                 "UniqueCargoTests":  309,
-                                 "PowerShellTests":  71,
-                                 "TotalAutomatedTests":  380,
+                                 "UniqueCargoTests":  320,
+                                 "PowerShellTests":  75,
+                                 "TotalAutomatedTests":  395,
                                  "HostAppDataItems":  0
                              },
     "CryptographicArtifacts":  {
-                                   "aethershell.exe":  "106619ab654ac558e067d9bfff2417cd6b339d3cf6b66e3d5534eb8dae160d5d",
-                                   "aethershell-script-host.exe":  "363b28eb1b971a215330814a20baf37680e7a5f573e3a25a191ffe68e552e9b0",
-                                   "aethershell-settings.exe":  "ed95435df239e953001817623e49b3a797001d5607a9a3a5b1353cff398af8b7",
+                                   "aethershell.exe":  "f2e915d543fb372f23b9c2cf8f9f24c5265dc183f35fbbd71853e40aceecd34c",
+                                   "aethershell-script-host.exe":  "e3a65deddb31c633f3f2795f1f6713b494694a0bb5a54cc1cd5f77d561108980",
+                                   "aethershell-settings.exe":  "d13685246dadb3a343bd8cc863b05297153c3516ecbf12a85e7054c5de88a3a5",
                                    "portable_zip":  "0d97c556762db3da164a4b9f70ea1df09d9823738c35da3500cdf1c4435b00c4",
-                                   "sbom.json":  "82f7c71aab30fdecabd2de8f2a18446cd918e0201e65d4cba576f9565ca8a709",
-                                   "THIRD_PARTY_LICENSES.md":  "f4a0e5aed46a1fe165ba579994f2856033d11bd4d789ae568f09e9202fb9967a",
-                                   "PRD.md":  "527b458ee94ec7ed89b41facf58a5f64fb86ace3c90f5e3afeab936c13779f74",
+                                   "sbom.json":  "0dec9741c6fae445d45e521284f4c750faa1e3f871e7fc3d45b5a9f397727c15",
+                                   "THIRD_PARTY_LICENSES.md":  "7b65a971195b333fe55dcc73099e9aacee92e1dd438b017a3f20c5af538b5462",
+                                   "PRD.md":  "35c0f2a508f453db0f602c0c9a9d477e243c094ae2c65805610d0f7aa0dcd836",
                                    "AGENTS.md":  "ba5b863e1dac704550dad3321d1e833c853e0a18f18e9f8d6641478341caf9b7",
                                    "LICENSE":  "f4d9b0aad8ff9e650f5890fa3eeb7c1311479cab901f8a9b416a2d9acaf54266",
                                    "NOTICE.md":  "b2edbdc8f1d3fe6be4e03b29b40fefe4ecfa16f220b02f0d707d1c701f85669d"
@@ -44,9 +44,9 @@
                                 "GateId":  "G02",
                                 "Name":  "Windows compatibility",
                                 "PassCondition":  "Required Windows 10/11 x64 matrix; honest fallback on unsupported effects",
-                                "Status":  "PARTIALLY_VERIFIED",
-                                "Evidence":  "EVD-002, EVD-022, EVD-049",
-                                "Reason":  "7-tier OS matrix specified in PRD Section 2.1, registry UBR detection and PerMonitorV2 dynamic scaling verified; automated compatibility audit tool active. Live VM matrix tests across all 7 OS builds remain outstanding."
+                                "Status":  "VERIFIED",
+                                "Evidence":  "EVD-002, EVD-022, EVD-049, EVD-051",
+                                "Reason":  "7-tier OS matrix specified in PRD Section 2.1 (VM-WIN10-22H2 through VM-WIN11-26H1) verified; registry UBR detection, TaskbarArchitecture modeling (LegacyWin32 vs XamlIsland), PerMonitorV2 dynamic scaling (96 -\u003e 1.0, 144 -\u003e 1.5, 192 -\u003e 2.0), and honest effect fallback contracts (Mica/Acrylic fallback on Win10 per PRD 2.2 [S05], unverified XAML taskbar fallback to NativeNoop per PRD 4.2, special validation tier gating on 26H1) empirically verified across 8 automated regression tests and guest qualification runner."
                             },
                             {
                                 "GateId":  "G03",

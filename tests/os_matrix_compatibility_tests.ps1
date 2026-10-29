@@ -1,9 +1,10 @@
 <#
 .SYNOPSIS
-    Automated Regression Tests for OS Matrix Compatibility (Gate G02, PRD Section 2.1)
+    Automated Regression Tests for OS Matrix Compatibility (Gate G02, PRD Section 2.1, Section 18.2)
 .DESCRIPTION
-    Validates the 7-tier OS matrix audit script, aethershell-win version detection unit tests,
-    capability mappings, BOM-free JSON output, and host AppData zero pollution.
+    Validates the 7-tier OS matrix audit script, aethershell-win and aethershell-taskbar unit tests,
+    Cargo integration tests, capability mappings, honest fallback contracts, BOM-free JSON output,
+    and host AppData zero pollution.
 #>
 
 [CmdletBinding()]
@@ -56,7 +57,51 @@ Run-TestCase "Cargo aethershell-win os_version unit tests pass cleanly" {
 }
 
 # -----------------------------------------------------------------------------
-# Test 2: audit_os_matrix_compatibility.ps1 executes and produces valid JSON
+# Test 2: aethershell-taskbar backend unit tests pass
+# -----------------------------------------------------------------------------
+Run-TestCase "Cargo aethershell-taskbar backend unit tests pass cleanly" {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = cmd /c "cargo test -p aethershell-taskbar --lib backend 2>&1"
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    $outStr = ($out | Out-String)
+
+    if ($exitCode -ne 0) {
+        throw "cargo test failed with exit code ${exitCode}: $outStr"
+    }
+    if ($outStr -notmatch "test result: ok\.") {
+        throw "Expected 'test result: ok.', got: $outStr"
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Test 3: os_matrix_compatibility_integration_test passes cleanly
+# -----------------------------------------------------------------------------
+Run-TestCase "Cargo os_matrix_compatibility_integration_test passes cleanly" {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = cmd /c "cargo test --test os_matrix_compatibility_integration_test 2>&1"
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    $outStr = ($out | Out-String)
+
+    if ($exitCode -ne 0) {
+        throw "cargo test failed with exit code ${exitCode}: $outStr"
+    }
+    if ($outStr -notmatch "test result: ok\.") {
+        throw "Expected 'test result: ok.', got: $outStr"
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Test 4: audit_os_matrix_compatibility.ps1 executes and produces valid JSON
 # -----------------------------------------------------------------------------
 Run-TestCase "audit_os_matrix_compatibility.ps1 generates valid 7-tier JSON report" {
     $tempReport = Join-Path ([System.IO.Path]::GetTempPath()) "AetherShell_OsAudit_$([Guid]::NewGuid().ToString('N').Substring(0, 8)).json"
@@ -100,7 +145,81 @@ Run-TestCase "audit_os_matrix_compatibility.ps1 generates valid 7-tier JSON repo
 }
 
 # -----------------------------------------------------------------------------
-# Test 3: Host Registry contains valid Windows Version and UBR values
+# Test 5: Validate all 7 authoritative PRD Section 2.1 tier IDs and architectures
+# -----------------------------------------------------------------------------
+Run-TestCase "Validate all 7 authoritative PRD Section 2.1 tier IDs and architectures" {
+    $tempReport = Join-Path ([System.IO.Path]::GetTempPath()) "AetherShell_OsAudit_Tiers_$([Guid]::NewGuid().ToString('N').Substring(0, 8)).json"
+    try {
+        $null = powershell -NoProfile -ExecutionPolicy Bypass -File "$auditScript" -OutputJson "$tempReport" 2>&1
+        $reportJson = Get-Content -LiteralPath $tempReport -Raw | ConvertFrom-Json
+
+        $expectedTierIds = @(
+            "VM-WIN11-26H2",
+            "VM-WIN11-25H2",
+            "VM-WIN11-24H2",
+            "VM-WIN11-23H2",
+            "VM-WIN11-22H2",
+            "VM-WIN10-22H2",
+            "VM-WIN11-26H1"
+        )
+
+        foreach ($expectedId in $expectedTierIds) {
+            $tier = $reportJson.AuthoritativeTiers | Where-Object { $_.TierId -eq $expectedId }
+            if ($null -eq $tier) {
+                throw "Missing expected TierId '$expectedId' in audit ledger"
+            }
+            if ([string]::IsNullOrWhiteSpace($tier.TaskbarArchitecture)) {
+                throw "Tier '$expectedId' has empty TaskbarArchitecture"
+            }
+            if ([string]::IsNullOrWhiteSpace($tier.HonestFallbackContract)) {
+                throw "Tier '$expectedId' has empty HonestFallbackContract"
+            }
+        }
+    } finally {
+        if (Test-Path $tempReport) {
+            Remove-Item -LiteralPath $tempReport -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Test 6: Verify honest fallback contracts across legacy and XAML tiers
+# -----------------------------------------------------------------------------
+Run-TestCase "Verify honest fallback contracts across legacy and XAML tiers" {
+    $tempReport = Join-Path ([System.IO.Path]::GetTempPath()) "AetherShell_OsAudit_Fallback_$([Guid]::NewGuid().ToString('N').Substring(0, 8)).json"
+    try {
+        $null = powershell -NoProfile -ExecutionPolicy Bypass -File "$auditScript" -OutputJson "$tempReport" 2>&1
+        $reportJson = Get-Content -LiteralPath $tempReport -Raw | ConvertFrom-Json
+
+        $win10Tier = $reportJson.AuthoritativeTiers | Where-Object { $_.TierId -eq "VM-WIN10-22H2" }
+        if ($win10Tier.TaskbarArchitecture -notmatch "Legacy Win32") {
+            throw "Expected Win10 taskbar architecture to be Legacy Win32, got: $($win10Tier.TaskbarArchitecture)"
+        }
+        if ($win10Tier.HonestFallbackContract -notmatch "Mica & Acrylic unsupported") {
+            throw "Expected Win10 honest fallback contract to declare Mica & Acrylic unsupported"
+        }
+
+        $win11GaTier = $reportJson.AuthoritativeTiers | Where-Object { $_.TierId -eq "VM-WIN11-26H2" }
+        if ($win11GaTier.TaskbarArchitecture -notmatch "XAML Island") {
+            throw "Expected Win11 26H2 taskbar architecture to be XAML Island, got: $($win11GaTier.TaskbarArchitecture)"
+        }
+
+        $win11SpecialTier = $reportJson.AuthoritativeTiers | Where-Object { $_.TierId -eq "VM-WIN11-26H1" }
+        if ($win11SpecialTier.IsV1Supported) {
+            throw "Win11 26H1 (Build 28000) must NOT be marked IsV1Supported"
+        }
+        if (-not $win11SpecialTier.IsSpecialValidationTier) {
+            throw "Win11 26H1 (Build 28000) must have IsSpecialValidationTier == true"
+        }
+    } finally {
+        if (Test-Path $tempReport) {
+            Remove-Item -LiteralPath $tempReport -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Test 7: Host Registry contains valid Windows Version and UBR values
 # -----------------------------------------------------------------------------
 Run-TestCase "Host registry contains valid Windows Version, Build, and UBR" {
     $regKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
@@ -120,7 +239,7 @@ Run-TestCase "Host registry contains valid Windows Version, Build, and UBR" {
 }
 
 # -----------------------------------------------------------------------------
-# Test 4: Verify production %LOCALAPPDATA%\AetherShell is preserved at strictly 0 items
+# Test 8: Verify production %LOCALAPPDATA%\AetherShell is preserved at strictly 0 items
 # -----------------------------------------------------------------------------
 Run-TestCase "Verify production %LOCALAPPDATA%\AetherShell is preserved at strictly 0 items" {
     $localAppData = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::LocalApplicationData)

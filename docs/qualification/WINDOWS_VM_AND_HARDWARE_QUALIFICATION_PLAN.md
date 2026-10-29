@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary & Objective
 
-AetherShell has achieved clean component-level unit and integration test verification across its 13 workspace crates (309 unique passing tests across 27 test executables + 71 passing PowerShell regression tests across 13 test suites = 380 total passing automated tests). Gate G01 is empirically `VERIFIED` across live subprocess and guest qualification harnesses. However, under the strict evidentiary governance defined in **PRD Section 18.2** and **AGENTS.md**, **subsequent disruptive shell and hardware gates require isolated disposable VM and bare-metal qualification before transitioning to `VERIFIED`**.
+AetherShell has achieved clean component-level unit and integration test verification across its 13 workspace crates (320 unique passing tests across 28 test executables + 75 passing PowerShell regression tests across 13 test suites = 395 total passing automated tests). Gates G01 and G02 are empirically `VERIFIED` across live subprocess, 7-tier OS matrix capabilities, honest fallback contracts, dynamic DPI scaling, and guest qualification harnesses. However, under the strict evidentiary governance defined in **PRD Section 18.2** and **AGENTS.md**, **subsequent disruptive shell and hardware gates require isolated disposable VM and bare-metal qualification before transitioning to `VERIFIED`**.
 
 The objective of this Qualification Plan is to establish a rigorous, repeatable, and non-destructive empirical test campaign to evaluate AetherShell across:
 1. Isolated, disposable Windows Virtual Machines (VMs) for disruptive shell and fault-injection testing.
@@ -74,6 +74,7 @@ Every gate from G01 through G20 is mapped directly to its canonical PRD requirem
 
 ### Gate G02: Windows Compatibility, Multi-Build Matrix & Dynamic DPI
 - **Authoritative Requirement:** Required Windows 10/11 x64 matrix; honest fallback on unsupported effects; dynamic PerMonitorV2 DPI awareness.
+- **Current Status:** `VERIFIED` (Empirically verified across 7-tier OS matrix capabilities in `aethershell-win`, honest fallback contracts in `aethershell-taskbar`, PerMonitorV2 dynamic scaling matrix, IPC capability reporting, and guest sandbox qualification Test 2; see [EVD-051](../EVIDENCE.md#evd-051-gate-g02-windows-compatibility-7-tier-os-matrix--honest-fallback-full-verification)).
 - **Target Environment:** Clean disposable VMs across all 7 target tiers (VM-WIN10-22H2 through VM-WIN11-26H1), HW-TIER-AMD.
 - **Test Procedure:**
   1. Execute AetherShell on each OS build in the matrix; verify OS build and UBR detection via registry (`crates/aethershell-win/src/os_version.rs`).

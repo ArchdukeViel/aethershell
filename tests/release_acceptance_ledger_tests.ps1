@@ -77,18 +77,18 @@ Run-TestCase "FINAL_RELEASE_ACCEPTANCE_LEDGER.json exists and conforms to schema
 # -----------------------------------------------------------------------------
 # Test 3: Reconciled 20 gates strictly adhere to PRD Section 18.2
 # -----------------------------------------------------------------------------
-Run-TestCase "Gate accounting strictly enforces 1 VERIFIED (G01), 17 PARTIAL, 1 N/A, 1 DEFERRED" {
+Run-TestCase "Gate accounting strictly enforces 2 VERIFIED (G01, G02), 16 PARTIAL, 1 N/A, 1 DEFERRED" {
     $ledgerJson = Get-Content -LiteralPath $ledgerPath -Raw | ConvertFrom-Json
     $summary = $ledgerJson.GateAccountingSummary
 
     if ($summary.TotalGates -ne 20) {
         throw "Expected 20 TotalGates, got: $($summary.TotalGates)"
     }
-    if ($summary.Verified -ne 1) {
-        throw "GOVERNANCE BREACH: Verified count must be strictly 1 (Gate G01), got: $($summary.Verified)"
+    if ($summary.Verified -ne 2) {
+        throw "GOVERNANCE BREACH: Verified count must be strictly 2 (Gates G01, G02), got: $($summary.Verified)"
     }
-    if ($summary.PartiallyVerified -ne 17) {
-        throw "Expected 17 PartiallyVerified gates, got: $($summary.PartiallyVerified)"
+    if ($summary.PartiallyVerified -ne 16) {
+        throw "Expected 16 PartiallyVerified gates, got: $($summary.PartiallyVerified)"
     }
     if ($summary.NotApplicable -ne 1) {
         throw "Expected 1 NotApplicable gate (G05), got: $($summary.NotApplicable)"
@@ -104,6 +104,15 @@ Run-TestCase "Gate accounting strictly enforces 1 VERIFIED (G01), 17 PARTIAL, 1 
     }
     if ($g01.Evidence -notmatch "EVD-050") {
         throw "Expected G01 Evidence to cite EVD-050, got: $($g01.Evidence)"
+    }
+
+    # Verify G02 specifically
+    $g02 = $ledgerJson.AcceptanceGates | Where-Object { $_.GateId -eq "G02" }
+    if ($g02.Status -ne "VERIFIED") {
+        throw "Expected G02 to be VERIFIED, got: $($g02.Status)"
+    }
+    if ($g02.Evidence -notmatch "EVD-051") {
+        throw "Expected G02 Evidence to cite EVD-051, got: $($g02.Evidence)"
     }
 
     # Verify G05 and G15 specifically

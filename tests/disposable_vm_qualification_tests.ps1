@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Automated Regression Tests for Disposable VM & Sandbox Qualification (Gates G01, G04, G06, G07, G10, G11, G16, G17, G19)
+    Automated Regression Tests for Disposable VM & Sandbox Qualification (Gates G01, G02, G04, G06, G07, G10, G11, G16, G17, G19)
 .DESCRIPTION
     Validates host safety boundaries, preflight checks, guest bundle staging,
     Windows Sandbox (.wsb) XML profile generation, non-disruptive guest qualification execution,

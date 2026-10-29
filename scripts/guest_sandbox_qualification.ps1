@@ -4,6 +4,7 @@
 .DESCRIPTION
     Executes automated disruptive qualification tests inside a disposable Windows Sandbox or VM guest:
     - Gate G01: Core Startup, Session-Scoped Singleton & Clean Shutdown
+    - Gate G02: Windows Compatibility, 7-Tier OS Matrix & Honest Fallback
     - Gate G04: Dynamic Taskbar Recovery across Explorer kill & restart (TaskbarCreated handling)
     - Gate G06: Desktop Layering & Shell Hook Stacking Re-assertion
     - Gate G07: Temporary Interactive Mode Activation & Safe Dismissal
@@ -179,7 +180,7 @@ try {
     # -------------------------------------------------------------------------
     # TEST 1: Gate G01 — Core Startup, Singleton Enforcement & Clean Shutdown
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 1/7] Gate G01: Core Startup, Singleton & Clean Shutdown (PRD Section 18.2)..." -ForegroundColor Cyan
+    Write-Host "`n[Test 1/8] Gate G01: Core Startup, Singleton & Clean Shutdown (PRD Section 18.2)..." -ForegroundColor Cyan
     $g01Sandbox = Join-Path $sandboxRoot "G01"
     New-Item -ItemType Directory -Path $g01Sandbox -Force | Out-Null
 
@@ -246,9 +247,41 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # TEST 2: Gate G04 & G06 — Explorer Recovery & Dynamic Shell Hook Stacking
+    # TEST 2: Gate G02 — Windows Compatibility, 7-Tier OS Matrix & Honest Fallback
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 2/7] Gate G04 & G06: Taskbar Recovery & Shell Hook Stacking..." -ForegroundColor Cyan
+    Write-Host "`n[Test 2/8] Gate G02: Windows Compatibility & OS Matrix Fallback (PRD Section 2.1, Section 18.2)..." -ForegroundColor Cyan
+    $g02Sandbox = Join-Path $sandboxRoot "G02"
+    New-Item -ItemType Directory -Path $g02Sandbox -Force | Out-Null
+
+    $osMatrixAuditScript = Join-Path $workspaceRoot "scripts\audit_os_matrix_compatibility.ps1"
+    $matrixAuditJson = Join-Path $g02Sandbox "os_matrix_audit.json"
+    $matrixAuditOut = powershell -NoProfile -ExecutionPolicy Bypass -File "$osMatrixAuditScript" -OutputJson "$matrixAuditJson" 2>&1
+    $matrixAuditExit = $LASTEXITCODE
+
+    if ($matrixAuditExit -eq 0 -and (Test-Path $matrixAuditJson)) {
+        $matrixReport = Get-Content -LiteralPath $matrixAuditJson -Raw | ConvertFrom-Json
+        $hostBuild = $matrixReport.HostInformation.CurrentBuild
+        $matchStatus = $matrixReport.HostInformation.MatchStatus
+        $supportedCount = $matrixReport.SupportedV1Tiers
+        $totalTiers = $matrixReport.TotalTiers
+
+        $matrixTestsScript = Join-Path $workspaceRoot "tests\os_matrix_compatibility_tests.ps1"
+        $testOut = powershell -NoProfile -ExecutionPolicy Bypass -File "$matrixTestsScript" 2>&1
+        $testExit = $LASTEXITCODE
+
+        if ($testExit -eq 0 -and $totalTiers -eq 7 -and $supportedCount -eq 6) {
+            Record-GateResult "G02" "Windows Compatibility & OS Matrix" "PASSED" "7-tier OS matrix validated ($supportedCount v1 supported, $($matrixReport.SpecialTiers) special); host build $hostBuild ($matchStatus); honest fallback contracts and PerMonitorV2 DPI awareness verified across 8 automated tests."
+        } else {
+            Record-GateResult "G02" "Windows Compatibility & OS Matrix" "FAILED" "Matrix test exit=$testExit, totalTiers=$totalTiers, supportedCount=$supportedCount"
+        }
+    } else {
+        Record-GateResult "G02" "Windows Compatibility & OS Matrix" "FAILED" "Matrix audit script failed with exit code ${matrixAuditExit}: $($matrixAuditOut | Out-String)"
+    }
+
+    # -------------------------------------------------------------------------
+    # TEST 3: Gate G04 & G06 — Explorer Recovery & Dynamic Shell Hook Stacking
+    # -------------------------------------------------------------------------
+    Write-Host "`n[Test 3/8] Gate G04 & G06: Taskbar Recovery & Shell Hook Stacking..." -ForegroundColor Cyan
     if ($SkipExplorerKill) {
         Record-GateResult "G04" "Taskbar Recovery" "SKIPPED" "Explorer termination skipped on physical host per Q37:A safety constraints."
         Record-GateResult "G06" "Desktop Layering Stacking" "PASSED" "Shell hook window registration verified; Win+D debounced stacking handler active."
@@ -291,16 +324,16 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # TEST 3: Gate G07 — Temporary Interactive Mode Auto-Dismissal
+    # TEST 4: Gate G07 — Temporary Interactive Mode Auto-Dismissal
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 3/7] Gate G07: Temporary Interactive Mode..." -ForegroundColor Cyan
+    Write-Host "`n[Test 4/8] Gate G07: Temporary Interactive Mode..." -ForegroundColor Cyan
     # Verify interaction controller dismissal triggers
     Record-GateResult "G07" "Temporary Interactive Mode" "PASSED" "Interactive controller dismissal triggers verified (Escape key, 8s inactivity timeout, focus loss, session lock)."
 
     # -------------------------------------------------------------------------
-    # TEST 4: Gate G10 & G11 — Subsystem Fault Injection & Process Crash Isolation
+    # TEST 5: Gate G10 & G11 — Subsystem Fault Injection & Process Crash Isolation
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 4/7] Gate G10 & G11: Subsystem Fault Injection & Crash Isolation..." -ForegroundColor Cyan
+    Write-Host "`n[Test 5/8] Gate G10 & G11: Subsystem Fault Injection & Crash Isolation..." -ForegroundColor Cyan
     $g10Sandbox = Join-Path $sandboxRoot "G10"
     New-Item -ItemType Directory -Path $g10Sandbox -Force | Out-Null
 
@@ -333,9 +366,9 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # TEST 5: Gate G16 — Packet-Level Network Isolation
+    # TEST 6: Gate G16 — Packet-Level Network Isolation
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 5/7] Gate G16: Packet-Level Network Isolation..." -ForegroundColor Cyan
+    Write-Host "`n[Test 6/8] Gate G16: Packet-Level Network Isolation..." -ForegroundColor Cyan
     $packetAuditScript = Join-Path $workspaceRoot "scripts\audit_packet_level_network_isolation.ps1"
     if (Test-Path $packetAuditScript) {
         $auditOut = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$packetAuditScript' -SpawnAllComponents -DurationSeconds 2 -Strict 2>&1"
@@ -351,9 +384,9 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # TEST 6: Gate G17 — Safe Mode & Configuration Self-Healing
+    # TEST 7: Gate G17 — Safe Mode & Configuration Self-Healing
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 6/7] Gate G17: Safe Mode & Configuration Self-Healing..." -ForegroundColor Cyan
+    Write-Host "`n[Test 7/8] Gate G17: Safe Mode & Configuration Self-Healing..." -ForegroundColor Cyan
     $g17Sandbox = Join-Path $sandboxRoot "G17"
     New-Item -ItemType Directory -Path $g17Sandbox -Force | Out-Null
 
@@ -367,9 +400,9 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # TEST 7: Gate G19 — Coexistence Yielding
+    # TEST 8: Gate G19 — Coexistence Yielding
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 7/7] Gate G19: Third-Party Coexistence Yielding..." -ForegroundColor Cyan
+    Write-Host "`n[Test 8/8] Gate G19: Third-Party Coexistence Yielding..." -ForegroundColor Cyan
     Record-GateResult "G19" "Third-Party Coexistence" "PASSED" "Conflict detection identifies competing customizers and yields to NativeNoopBackend without process termination."
 
 } finally {

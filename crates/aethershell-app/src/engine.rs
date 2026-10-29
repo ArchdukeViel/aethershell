@@ -993,6 +993,7 @@ impl AppEngine {
         let desktop_renderer = Arc::clone(&self.desktop_renderer);
         let shutdown_flag = Arc::clone(&self.shutdown_flag);
         let os_build = self.os_info.build_number;
+        let os_info = self.os_info.clone();
         let session_token = Arc::clone(&self.session_token);
         let cached_bindings = Arc::clone(&self.cached_bindings);
         let config_manager = Arc::clone(&self.config_manager);
@@ -1013,6 +1014,7 @@ impl AppEngine {
             let cached_bindings = Arc::clone(&cached_bindings);
             let config_manager = Arc::clone(&config_manager);
             let active_config = Arc::clone(&active_config);
+            let os_info = os_info.clone();
 
             Box::pin(async move {
                 // 1. Session Isolation: Enforce same-session client callers
@@ -1163,6 +1165,12 @@ impl AppEngine {
                             req.message_id,
                             serde_json::json!({
                                 "os_build": os_build,
+                                "os_family": os_info.family.to_string(),
+                                "os_tier": os_info.family.tier_id(),
+                                "is_v1_supported": os_info.is_supported_v1,
+                                "taskbar_architecture": os_info.family.taskbar_architecture().to_string(),
+                                "per_monitor_v2_dpi_aware": true,
+                                "direct2d_available": true,
                                 "taskbar_count": taskbars.len(),
                                 "desktop_layering_available": desktop.shelldll_defview_hwnd.is_some(),
                                 "audio_spectrum_enabled": true,

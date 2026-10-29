@@ -22,7 +22,10 @@ pub use dpi::{
 };
 pub use memory::trim_working_set;
 pub use monitor::{enumerate_monitors, MonitorInfo};
-pub use os_version::{WindowsBuildFamily, WindowsVersionInfo};
+pub use os_version::{
+    EffectSupportVerdict, OsTierCapabilities, TaskbarArchitecture, WindowsBuildFamily,
+    WindowsVersionInfo,
+};
 pub use shell_events::{ShellEvent, ShellEventMonitor};
 pub use single_instance::SessionSingletonGuard;
 pub use taskbar_probe::{probe_taskbars, TaskbarWindowInfo};
