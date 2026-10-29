@@ -4,6 +4,12 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 pub const CURRENT_SCHEMA_VERSION: &str = "1.0.0";
+pub const SUPPORTED_SCHEMA_VERSIONS: &[&str] = &["1.0.0", "1.1.0", "2.0.0"];
+
+/// Returns true if the provided schema version is natively supported by the application.
+pub fn is_supported_schema_version(v: &str) -> bool {
+    SUPPORTED_SCHEMA_VERSIONS.contains(&v)
+}
 
 /// Master configuration model matching PRD Section 10.2.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -32,6 +38,8 @@ pub struct AppConfig {
     pub privacy: PrivacyConfig,
     #[serde(default)]
     pub updates: UpdatesConfig,
+    #[serde(default)]
+    pub runtime: RuntimeConfig,
 }
 
 fn default_profile() -> String {
@@ -53,6 +61,7 @@ impl Default for AppConfig {
             scripting: ScriptingConfig::default(),
             privacy: PrivacyConfig::default(),
             updates: UpdatesConfig::default(),
+            runtime: RuntimeConfig::default(),
         }
     }
 }
@@ -198,6 +207,8 @@ pub struct DesktopConfig {
     pub snap_grid_dip: f32,
     #[serde(default = "default_autohide_policy")]
     pub autohide_taskbar_policy: String,
+    #[serde(default = "default_true")]
+    pub enable_dirty_presentation_gating: bool,
 }
 
 impl Default for DesktopConfig {
@@ -211,6 +222,7 @@ impl Default for DesktopConfig {
             interactive_timeout_seconds: 8,
             snap_grid_dip: 8.0,
             autohide_taskbar_policy: "reserve_expanded_safe_area".into(),
+            enable_dirty_presentation_gating: true,
         }
     }
 }
@@ -229,6 +241,10 @@ pub struct AudioConfig {
     pub spectrum_bands: u32,
     #[serde(default = "default_auto_hide_delay")]
     pub auto_hide_delay_seconds: u32,
+    #[serde(default = "default_silence_threshold")]
+    pub silence_threshold: f32,
+    #[serde(default = "default_decay_rate")]
+    pub decay_rate: f32,
 }
 
 impl Default for AudioConfig {
@@ -240,6 +256,8 @@ impl Default for AudioConfig {
             render_fps: 30,
             spectrum_bands: 64,
             auto_hide_delay_seconds: 10,
+            silence_threshold: default_silence_threshold(),
+            decay_rate: default_decay_rate(),
         }
     }
 }
@@ -250,6 +268,8 @@ pub struct TelemetryConfig {
     pub sample_interval_ms: u64,
     #[serde(default = "default_battery_sample_interval")]
     pub on_battery_sample_interval_ms: u64,
+    #[serde(default = "default_battery_sample_interval")]
+    pub dynamic_battery_backoff_ms: u64,
     #[serde(default = "default_true")]
     pub allow_optional_vendor_providers: bool,
     #[serde(default = "default_true")]
@@ -261,6 +281,7 @@ impl Default for TelemetryConfig {
         Self {
             sample_interval_ms: 1000,
             on_battery_sample_interval_ms: 5000,
+            dynamic_battery_backoff_ms: 5000,
             allow_optional_vendor_providers: true,
             avoid_waking_discrete_gpu: true,
         }
@@ -385,6 +406,26 @@ impl Default for UpdatesConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RuntimeConfig {
+    #[serde(default = "default_true")]
+    pub process_isolation: bool,
+    #[serde(default = "default_job_object_limit")]
+    pub job_object_memory_limit_mb: u64,
+    #[serde(default = "default_ipc_timeout")]
+    pub ipc_timeout_ms: u64,
+}
+
+impl Default for RuntimeConfig {
+    fn default() -> Self {
+        Self {
+            process_isolation: true,
+            job_object_memory_limit_mb: 128,
+            ipc_timeout_ms: 1500,
+        }
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -461,6 +502,18 @@ fn default_schema_version() -> String {
 fn default_one_float() -> f32 {
     1.0
 }
+fn default_silence_threshold() -> f32 {
+    0.001
+}
+fn default_decay_rate() -> f32 {
+    0.85
+}
+fn default_job_object_limit() -> u64 {
+    128
+}
+fn default_ipc_timeout() -> u64 {
+    1500
+}
 
 /// Errors occurring during configuration validation.
 #[derive(Debug, Error, PartialEq, Clone)]
@@ -496,10 +549,10 @@ pub enum ConfigValidationError {
 impl AppConfig {
     /// Validates the configuration model against integrity, safety, and operational constraints.
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
-        if self.schema_version != CURRENT_SCHEMA_VERSION {
+        if !is_supported_schema_version(&self.schema_version) {
             return Err(ConfigValidationError::UnsupportedSchemaVersion(
                 self.schema_version.clone(),
-                CURRENT_SCHEMA_VERSION.into(),
+                format!("{:?}", SUPPORTED_SCHEMA_VERSIONS),
             ));
         }
 
@@ -609,15 +662,29 @@ mod tests {
 
     #[test]
     fn test_schema_version_mismatch_rejected() {
+        // Supported schema versions validate cleanly
+        for ver in SUPPORTED_SCHEMA_VERSIONS {
+            let config = AppConfig {
+                schema_version: (*ver).into(),
+                ..Default::default()
+            };
+            assert!(
+                config.validate().is_ok(),
+                "Schema version {} must be supported",
+                ver
+            );
+        }
+
+        // Unsupported schema version is rejected
         let config = AppConfig {
-            schema_version: "2.0.0".into(),
+            schema_version: "999.0".into(),
             ..Default::default()
         };
         assert_eq!(
             config.validate(),
             Err(ConfigValidationError::UnsupportedSchemaVersion(
-                "2.0.0".into(),
-                CURRENT_SCHEMA_VERSION.into()
+                "999.0".into(),
+                format!("{:?}", SUPPORTED_SCHEMA_VERSIONS)
             ))
         );
     }
