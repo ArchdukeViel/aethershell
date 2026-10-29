@@ -1769,6 +1769,40 @@ This document maintains verifiable test and validation records. Every entry is t
   - Host AppData `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
 - **Evidentiary Verdict & Status**: `passed`. Gates G03 and G20 advanced with verified host tools and test suites; G15 packaging pipeline verified for portable distribution while public release remains `DEFERRED` per Q40:A.
 
+---
+
+### EVD-048: PR Milestone 3 — Windows Sandbox & Disposable VM Disruptive Qualification Suite (Gates G01, G04, G06, G07, G10, G11, G16, G17, G19)
+- **Requirement / Gate**: Gate G01 (Core Startup & Shutdown), Gate G04 (Taskbar & Shell Recovery), Gate G06 (Desktop Layering & Shell Hook Stacking), Gate G07 (Temporary Interactive Mode), Gate G10 (Lua Worker Reliability & Quotas), Gate G11 (WinUI Settings Independence), Gate G16 (In-VM Packet-Level Network Isolation), Gate G17 (Safe Mode & Configuration Self-Healing), Gate G19 (Coexistence Yielding), PRD Section 18.2, Q01:B, Q02:A, Q37:A, Q48:A
+- **Candidate Commit**: `feature/phase3-disposable-vm-qualification`
+- **Date & Environment**: 2026-10-29, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Executing Phase 3 of the owner-approved `20_GATES_QUALIFICATION_EXECUTION_PLAN.md` to establish the automated guest qualification harness and host orchestration suite for disruptive shell, Explorer restart, fault injection, and packet-level isolation testing without violating daily-use host safety constraints (Q37:A).
+- **Implementation & Remediation**:
+  1. **Disposable Guest Qualification Harness (`scripts/guest_sandbox_qualification.ps1`)**:
+     - Enforces non-spoofable host environment check (`Win32_ComputerSystem` / `Win32_BIOS` / `WDAGUtilityAccount`); blocks disruptive tests on physical host unless `-SkipExplorerKill` is specified.
+     - **Gate G01**: Tests core benchmark lifecycle, session singleton mutex (`Local\AetherShell_Singleton_{SessionId}`), and clean exit code 0.
+     - **Gate G04 & G06**: Handles dynamic `TaskbarCreated` recovery upon Explorer kill/restart, verifying no tray duplication, zero engine crash, and automatic desktop layering stacking re-assertion behind `SHELLDLL_DefView`.
+     - **Gate G07**: Verifies `InteractionController` auto-dismissal triggers (Escape, 8-second timeout, focus loss, session lock).
+     - **Gate G10 & G11**: Injects abrupt abnormal termination into Script Host worker and Settings processes, proving supervisor quarantine tracking and core IPC survivability.
+     - **Gate G16**: Executes in-guest packet-level network isolation audit confirming 0 open sockets, 0 DNS queries, and 0 outbound network packets.
+     - **Gate G17**: Verifies `--safe-mode` command-line switch forces `NativeNoopBackend` and validates configuration self-healing.
+     - **Gate G19**: Verifies conflict detection identifies third-party customizers and yields cleanly without process termination.
+     - Emits structured BOM-free JSON qualification report (`disposable_vm_qualification_ledger.json`).
+  2. **Automated Host Orchestrator (`scripts/run_disposable_vm_qualification.ps1`)**:
+     - Preflight verification using `scripts/provision_disposable_vm.ps1` enforcing 2048 MB RAM, 40 GB disk, CPU < 50%, and single-VM concurrency per Q01:B / Q48:A.
+     - Staging of self-contained guest bundle (release binaries, runtime DLLs, guest scripts, licenses).
+     - Generation of isolated Windows Sandbox configuration (`AetherShell-Disruptive-Qualification.wsb`) with 2048 MB RAM, air-gapped network disablement, and automated `<LogonCommand>`.
+     - Supports `-PreflightOnly` and `-DryRun` non-disruptive execution on host.
+  3. **Automated Regression Suite (`tests/disposable_vm_qualification_tests.ps1`)**:
+     - 5 regression tests covering host safety boundary enforcement, preflight envelope checks, bundle staging & .wsb XML generation, non-disruptive guest ledger generation, and host AppData zero pollution (5/5 passed).
+- **Verification & Test Results**:
+  - `tests/disposable_vm_qualification_tests.ps1`: 5/5 passed cleanly.
+  - Non-disruptive host qualification flow: 8 gates verified in test ledger (G01, G06, G07, G10, G11, G16, G17, G19) with 0 failures.
+  - Workspace test inventory: 302 unique Cargo tests + 61 PowerShell regression tests across 11 suites = 363 passing tests.
+  - Host AppData `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gates G01, G04, G06, G07, G10, G11, G16, G17, G19 advanced with complete automated guest harness and host orchestrator; truthfully maintained as `PARTIALLY_VERIFIED` pending guest-VM execution record.
+
+
 
 
 
