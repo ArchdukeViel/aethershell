@@ -33,7 +33,7 @@ $userHome = $env:USERPROFILE
 $remapFlags = "--remap-path-prefix=$workspaceRoot=. --remap-path-prefix=$userHome=~"
 $env:RUSTFLAGS = "-C target-feature=+crt-static $remapFlags"
 
-cargo build --workspace --bin aethershell --bin aethershell-script-host --release
+cargo build --workspace --bin aethershell --bin aethershell-script-host --bin aethershell-settings --release
 if ($LASTEXITCODE -ne 0) {
     throw "Cargo release build failed with exit code $LASTEXITCODE"
 }

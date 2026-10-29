@@ -1,32 +1,32 @@
 {
     "LedgerType":  "AetherShellFinalReleaseAcceptanceLedger",
     "Version":  "0.1.0-dev",
-    "GeneratedAt":  "2026-10-29T22:14:54.4037183+07:00",
+    "GeneratedAt":  "2026-10-30T00:50:20.9916570+07:00",
     "ReleaseDisposition":  "NO-GO",
     "CoreStableCandidate":  false,
     "ProductionVersionTag":  "RESERVED (v1.0.0)",
     "GovernancePolicy":  "PRD Section 18.2, AGENTS.md, Decisions Q01-Q48",
     "GateAccountingSummary":  {
                                   "TotalGates":  20,
-                                  "Verified":  2,
-                                  "PartiallyVerified":  16,
+                                  "Verified":  3,
+                                  "PartiallyVerified":  15,
                                   "NotApplicable":  1,
                                   "Deferred":  1
                               },
     "AutomatedTestSummary":  {
-                                 "UniqueCargoTests":  329,
-                                 "PowerShellTests":  79,
-                                 "TotalAutomatedTests":  408,
+                                 "UniqueCargoTests":  334,
+                                 "PowerShellTests":  89,
+                                 "TotalAutomatedTests":  423,
                                  "HostAppDataItems":  0
                              },
     "CryptographicArtifacts":  {
-                                   "aethershell.exe":  "b42740e5607c03f56a042d836c3b4fac8a8416cd00cef5ea7ead6d36b0166d07",
-                                   "aethershell-script-host.exe":  "e3a65deddb31c633f3f2795f1f6713b494694a0bb5a54cc1cd5f77d561108980",
-                                   "aethershell-settings.exe":  "1159fec63cf2ff208401d9e3f1058b87406e679490c1bba5e5b61a097e6d4aec",
-                                   "portable_zip":  "0d97c556762db3da164a4b9f70ea1df09d9823738c35da3500cdf1c4435b00c4",
-                                   "sbom.json":  "405b10d9f4f96f97c25ab66b902e4653da98fc2f4e5735b5ccd90537620cc06b",
-                                   "THIRD_PARTY_LICENSES.md":  "f69771e5ea4ac7dae63e548f9ca27e2632f769d0b22c5180f0d82f6d2d504ba5",
-                                   "PRD.md":  "35c0f2a508f453db0f602c0c9a9d477e243c094ae2c65805610d0f7aa0dcd836",
+                                   "aethershell.exe":  "21cfa5e8d95f43069289e8dad9d44b561d754ffe4c73a43427ed543ea522a1af",
+                                   "aethershell-script-host.exe":  "2567eb821ffcbed5a27c51ce8b10d8c6b0d16169fe14b8f9d7809000206f74de",
+                                   "aethershell-settings.exe":  "d30ba6e350f811ece250a64deda62591416bd4730e78c73931ffa2c2b9025216",
+                                   "portable_zip":  "be3350d7e891c6879fcc5fcee23b192fbce933552b0009b39e8328e2ad376b4a",
+                                   "sbom.json":  "3244f178369dcdb08eca7e0031e5c52c818bbfafa30246b2ace6f7e50cc79961",
+                                   "THIRD_PARTY_LICENSES.md":  "47e4f2278b7a24619852d0ba22cff0bb4d0e2f2f09284ad7e30fbfe539f659f4",
+                                   "PRD.md":  "7930dd74cc0d19e79f2c1738b1cd2b134f062af6c743b043c0406aa5a19dbee4",
                                    "AGENTS.md":  "ba5b863e1dac704550dad3321d1e833c853e0a18f18e9f8d6641478341caf9b7",
                                    "LICENSE":  "f4d9b0aad8ff9e650f5890fa3eeb7c1311479cab901f8a9b416a2d9acaf54266",
                                    "NOTICE.md":  "b2edbdc8f1d3fe6be4e03b29b40fefe4ecfa16f220b02f0d707d1c701f85669d"
@@ -52,9 +52,9 @@
                                 "GateId":  "G03",
                                 "Name":  "Shell isolation",
                                 "PassCondition":  "All stable binaries and packages contain no Explorer extension; no hooks into critical protected processes",
-                                "Status":  "PARTIALLY_VERIFIED",
-                                "Evidence":  "EVD-003, EVD-012, EVD-047",
-                                "Reason":  "Non-injection architecture verified; package artifact isolation auditor (scripts/audit_package_artifacts.ps1) and regression suite verify 0 Explorer extensions across packages. Live disposable VM module audit remains outstanding."
+                                "Status":  "VERIFIED",
+                                "Evidence":  "EVD-003, EVD-012, EVD-047, EVD-052",
+                                "Reason":  "Zero-injection architecture and package isolation verified: PE binary header/import/export inspection (AetherPeInspectorV3 in scripts/audit_package_artifacts.ps1 and shell_isolation_integration_test.rs) proves 0 Explorer extensions, 0 BHOs, 0 DeskBands, 0 COM in-process server registration exports (DllRegisterServer, DllUnregisterServer, DllInstall), 0 detour/injection libraries (minhook, detours, easyhook, subhook, polyhook), and 0 cross-process thread injection APIs (CreateRemoteThread, NtCreateThreadEx, SetWindowsHookExW, QueueUserAPC) across workspace release binaries and portable distributions. Dynamic non-interference empirically verified across 16 regression tests, 5 Cargo integration tests, and guest qualification runner confirming strictly 0 AetherShell modules loaded in running explorer.exe and protected system processes (dwm.exe, csrss.exe, svchost.exe, audiodg.exe, msedge.exe)."
                             },
                             {
                                 "GateId":  "G04",

@@ -200,6 +200,262 @@ Run-TestCase "Output manifest parameter produces valid BOM-free JSON" {
     }
 }
 
+# Test 7: Prohibited COM in-process server registration export fails closed (Gate G03)
+Run-TestCase "Prohibited COM in-process server registration export fails closed (Gate G03)" {
+    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pkg_test_com_" + [System.Guid]::NewGuid().ToString())
+    New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+    try {
+        [System.IO.File]::WriteAllText((Join-Path $sandbox "LICENSE"), "Apache License 2.0", (New-Object System.Text.UTF8Encoding($false)))
+        $dirtyPayload = "MZ_HEADER_DllRegisterServer_PAYLOAD"
+        [System.IO.File]::WriteAllBytes((Join-Path $sandbox "com_server.dll"), [System.Text.Encoding]::ASCII.GetBytes($dirtyPayload))
+
+        $output = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$auditScript' -PackageDir '$sandbox' -Strict 2>&1"
+        $code = $LASTEXITCODE
+        $outputStr = ($output | Out-String)
+
+        if ($code -eq 0) {
+            throw "Expected non-zero exit code for COM in-process server export, got 0"
+        }
+        if ($outputStr -notmatch "Gate G03 Violation in 'com_server.dll': Detected DllRegisterServer") {
+            throw "Expected Gate G03 violation message, got: $outputStr"
+        }
+    } finally {
+        Remove-Item -Recurse -Force -Path $sandbox -ErrorAction SilentlyContinue
+    }
+}
+
+# Test 8: Prohibited detour library import fails closed (Gate G03)
+Run-TestCase "Prohibited detour library import fails closed (Gate G03)" {
+    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pkg_test_detour_" + [System.Guid]::NewGuid().ToString())
+    New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+    try {
+        [System.IO.File]::WriteAllText((Join-Path $sandbox "LICENSE"), "Apache License 2.0", (New-Object System.Text.UTF8Encoding($false)))
+        $dirtyPayload = "MZ_HEADER_detours.dll_PAYLOAD"
+        [System.IO.File]::WriteAllBytes((Join-Path $sandbox "hooked_app.exe"), [System.Text.Encoding]::ASCII.GetBytes($dirtyPayload))
+
+        $output = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$auditScript' -PackageDir '$sandbox' -Strict 2>&1"
+        $code = $LASTEXITCODE
+        $outputStr = ($output | Out-String)
+
+        if ($code -eq 0) {
+            throw "Expected non-zero exit code for detour import, got 0"
+        }
+        if ($outputStr -notmatch "Gate G03 Violation in 'hooked_app.exe': Detected detours.dll") {
+            throw "Expected Gate G03 violation message, got: $outputStr"
+        }
+    } finally {
+        Remove-Item -Recurse -Force -Path $sandbox -ErrorAction SilentlyContinue
+    }
+}
+
+# Test 9: Prohibited cross-process thread injection API fails closed (Gate G03)
+Run-TestCase "Prohibited cross-process thread injection API fails closed (Gate G03)" {
+    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pkg_test_inject_" + [System.Guid]::NewGuid().ToString())
+    New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+    try {
+        [System.IO.File]::WriteAllText((Join-Path $sandbox "LICENSE"), "Apache License 2.0", (New-Object System.Text.UTF8Encoding($false)))
+        $dirtyPayload = "MZ_HEADER_CreateRemoteThread_PAYLOAD"
+        [System.IO.File]::WriteAllBytes((Join-Path $sandbox "injector.exe"), [System.Text.Encoding]::ASCII.GetBytes($dirtyPayload))
+
+        $output = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$auditScript' -PackageDir '$sandbox' -Strict 2>&1"
+        $code = $LASTEXITCODE
+        $outputStr = ($output | Out-String)
+
+        if ($code -eq 0) {
+            throw "Expected non-zero exit code for thread injection API, got 0"
+        }
+        if ($outputStr -notmatch "Gate G03 Violation in 'injector.exe': Detected CreateRemoteThread") {
+            throw "Expected Gate G03 violation message, got: $outputStr"
+        }
+    } finally {
+        Remove-Item -Recurse -Force -Path $sandbox -ErrorAction SilentlyContinue
+    }
+}
+
+# Test 10: Prohibited Browser Helper Object (BHO) marker fails closed (Gate G03)
+Run-TestCase "Prohibited Browser Helper Object (BHO) marker fails closed (Gate G03)" {
+    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pkg_test_bho_" + [System.Guid]::NewGuid().ToString())
+    New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+    try {
+        [System.IO.File]::WriteAllText((Join-Path $sandbox "LICENSE"), "Apache License 2.0", (New-Object System.Text.UTF8Encoding($false)))
+        $dirtyPayload = "MZ_HEADER_IBrowserHelperObject_PAYLOAD"
+        [System.IO.File]::WriteAllBytes((Join-Path $sandbox "bho_extension.dll"), [System.Text.Encoding]::ASCII.GetBytes($dirtyPayload))
+
+        $output = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$auditScript' -PackageDir '$sandbox' -Strict 2>&1"
+        $code = $LASTEXITCODE
+        $outputStr = ($output | Out-String)
+
+        if ($code -eq 0) {
+            throw "Expected non-zero exit code for BHO marker, got 0"
+        }
+        if ($outputStr -notmatch "Gate G03 Violation in 'bho_extension.dll': Detected IBrowserHelperObject") {
+            throw "Expected Gate G03 violation message, got: $outputStr"
+        }
+    } finally {
+        Remove-Item -Recurse -Force -Path $sandbox -ErrorAction SilentlyContinue
+    }
+}
+
+# Test 11: Prohibited DeskBand extension marker fails closed (Gate G03)
+Run-TestCase "Prohibited DeskBand extension marker fails closed (Gate G03)" {
+    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pkg_test_deskband_" + [System.Guid]::NewGuid().ToString())
+    New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+    try {
+        [System.IO.File]::WriteAllText((Join-Path $sandbox "LICENSE"), "Apache License 2.0", (New-Object System.Text.UTF8Encoding($false)))
+        $dirtyPayload = "MZ_HEADER_IDeskBand_PAYLOAD"
+        [System.IO.File]::WriteAllBytes((Join-Path $sandbox "deskband.dll"), [System.Text.Encoding]::ASCII.GetBytes($dirtyPayload))
+
+        $output = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$auditScript' -PackageDir '$sandbox' -Strict 2>&1"
+        $code = $LASTEXITCODE
+        $outputStr = ($output | Out-String)
+
+        if ($code -eq 0) {
+            throw "Expected non-zero exit code for DeskBand marker, got 0"
+        }
+        if ($outputStr -notmatch "Gate G03 Violation in 'deskband.dll': Detected IDeskBand") {
+            throw "Expected Gate G03 violation message, got: $outputStr"
+        }
+    } finally {
+        Remove-Item -Recurse -Force -Path $sandbox -ErrorAction SilentlyContinue
+    }
+}
+
+# Test 12: Real compiled workspace release binaries audit passes cleanly (Gate G03, G16, G20)
+Run-TestCase "Real compiled workspace release binaries audit passes cleanly (Gate G03, G16, G20)" {
+    $relDir = Join-Path $workspaceRoot "target\x86_64-pc-windows-msvc\release"
+    if (-not (Test-Path $relDir)) {
+        $relDir = Join-Path $workspaceRoot "target\release"
+    }
+
+    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pkg_test_realbins_" + [System.Guid]::NewGuid().ToString())
+    New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+    try {
+        [System.IO.File]::WriteAllText((Join-Path $sandbox "LICENSE"), "Apache License 2.0", (New-Object System.Text.UTF8Encoding($false)))
+        [System.IO.File]::WriteAllText((Join-Path $sandbox "NOTICE.md"), "AetherShell Notices", (New-Object System.Text.UTF8Encoding($false)))
+
+        $binsToCopy = @("aethershell.exe", "aethershell-script-host.exe", "aethershell-settings.exe")
+        $copiedCount = 0
+        foreach ($b in $binsToCopy) {
+            $src = Join-Path $relDir $b
+            if (Test-Path $src) {
+                Copy-Item $src (Join-Path $sandbox $b)
+                $copiedCount++
+            }
+        }
+
+        if ($copiedCount -eq 0) {
+            throw "No release binaries found to audit in $relDir"
+        }
+
+        $output = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$auditScript' -PackageDir '$sandbox' -Strict 2>&1"
+        $code = $LASTEXITCODE
+        $outputStr = ($output | Out-String)
+
+        if ($code -ne 0) {
+            throw "Expected exit code 0 for compiled release binaries, got $code. Output: $outputStr"
+        }
+        if ($outputStr -notmatch "Errors Found\s*:\s*0") {
+            throw "Expected 0 errors found: $outputStr"
+        }
+    } finally {
+        Remove-Item -Recurse -Force -Path $sandbox -ErrorAction SilentlyContinue
+    }
+}
+
+# Test 13: Live running Explorer process module scan confirms 0 AetherShell modules (Gate G03)
+Run-TestCase "Live running Explorer process module scan confirms 0 AetherShell modules (Gate G03)" {
+    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pkg_test_running_" + [System.Guid]::NewGuid().ToString())
+    New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+    try {
+        [System.IO.File]::WriteAllText((Join-Path $sandbox "LICENSE"), "Apache License 2.0", (New-Object System.Text.UTF8Encoding($false)))
+        [System.IO.File]::WriteAllBytes((Join-Path $sandbox "dummy.exe"), [System.Text.Encoding]::ASCII.GetBytes("MZ_CLEAN"))
+
+        $output = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$auditScript' -PackageDir '$sandbox' -ScanRunningProcesses -Strict 2>&1"
+        $code = $LASTEXITCODE
+        $outputStr = ($output | Out-String)
+
+        if ($code -ne 0) {
+            throw "Expected exit code 0 for running process audit, got $code. Output: $outputStr"
+        }
+        if ($outputStr -notmatch "Running Explorer Scan: Clean \(0 modules\)") {
+            throw "Expected clean Explorer scan confirmation, got: $outputStr"
+        }
+    } finally {
+        Remove-Item -Recurse -Force -Path $sandbox -ErrorAction SilentlyContinue
+    }
+}
+
+# Test 14: Prohibited subhook detour library import fails closed (Gate G03)
+Run-TestCase "Prohibited subhook detour library import fails closed (Gate G03)" {
+    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pkg_test_subhook_" + [System.Guid]::NewGuid().ToString())
+    New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+    try {
+        [System.IO.File]::WriteAllText((Join-Path $sandbox "LICENSE"), "Apache License 2.0", (New-Object System.Text.UTF8Encoding($false)))
+        $dirtyPayload = "MZ_HEADER_subhook.dll_PAYLOAD"
+        [System.IO.File]::WriteAllBytes((Join-Path $sandbox "hooked_app.exe"), [System.Text.Encoding]::ASCII.GetBytes($dirtyPayload))
+
+        $output = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$auditScript' -PackageDir '$sandbox' -Strict 2>&1"
+        $code = $LASTEXITCODE
+        $outputStr = ($output | Out-String)
+
+        if ($code -eq 0) {
+            throw "Expected non-zero exit code for subhook import, got 0"
+        }
+        if ($outputStr -notmatch "Gate G03 Violation in 'hooked_app.exe': Detected subhook.dll") {
+            throw "Expected Gate G03 violation message, got: $outputStr"
+        }
+    } finally {
+        Remove-Item -Recurse -Force -Path $sandbox -ErrorAction SilentlyContinue
+    }
+}
+
+# Test 15: Prohibited QueueUserAPC thread injection API fails closed (Gate G03)
+Run-TestCase "Prohibited QueueUserAPC thread injection API fails closed (Gate G03)" {
+    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pkg_test_apc_" + [System.Guid]::NewGuid().ToString())
+    New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+    try {
+        [System.IO.File]::WriteAllText((Join-Path $sandbox "LICENSE"), "Apache License 2.0", (New-Object System.Text.UTF8Encoding($false)))
+        $dirtyPayload = "MZ_HEADER_QueueUserAPC_PAYLOAD"
+        [System.IO.File]::WriteAllBytes((Join-Path $sandbox "apc_injector.exe"), [System.Text.Encoding]::ASCII.GetBytes($dirtyPayload))
+
+        $output = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$auditScript' -PackageDir '$sandbox' -Strict 2>&1"
+        $code = $LASTEXITCODE
+        $outputStr = ($output | Out-String)
+
+        if ($code -eq 0) {
+            throw "Expected non-zero exit code for QueueUserAPC API, got 0"
+        }
+        if ($outputStr -notmatch "Gate G03 Violation in 'apc_injector.exe': Detected QueueUserAPC") {
+            throw "Expected Gate G03 violation message, got: $outputStr"
+        }
+    } finally {
+        Remove-Item -Recurse -Force -Path $sandbox -ErrorAction SilentlyContinue
+    }
+}
+
+# Test 16: Multi-process critical protected process scan confirms 0 AetherShell modules (Gate G03)
+Run-TestCase "Multi-process critical protected process scan confirms 0 AetherShell modules (Gate G03)" {
+    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("pkg_test_multi_proc_" + [System.Guid]::NewGuid().ToString())
+    New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+    try {
+        [System.IO.File]::WriteAllText((Join-Path $sandbox "LICENSE"), "Apache License 2.0", (New-Object System.Text.UTF8Encoding($false)))
+        [System.IO.File]::WriteAllBytes((Join-Path $sandbox "dummy.exe"), [System.Text.Encoding]::ASCII.GetBytes("MZ_CLEAN"))
+
+        $output = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$auditScript' -PackageDir '$sandbox' -ScanRunningProcesses -Strict 2>&1"
+        $code = $LASTEXITCODE
+        $outputStr = ($output | Out-String)
+
+        if ($code -ne 0) {
+            throw "Expected exit code 0 for multi-process audit, got $code. Output: $outputStr"
+        }
+        if ($outputStr -notmatch "Running Protected Scan: Clean \(0 modules\)") {
+            throw "Expected clean Protected Scan confirmation, got: $outputStr"
+        }
+    } finally {
+        Remove-Item -Recurse -Force -Path $sandbox -ErrorAction SilentlyContinue
+    }
+}
+
 # Summary
 $passedCount = ($testResults | Where-Object { $_.Status -eq "Passed" }).Count
 $failedCount = ($testResults | Where-Object { $_.Status -eq "Failed" }).Count
