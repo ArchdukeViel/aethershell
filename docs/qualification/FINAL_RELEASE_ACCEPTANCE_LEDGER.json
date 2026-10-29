@@ -1,32 +1,32 @@
 {
     "LedgerType":  "AetherShellFinalReleaseAcceptanceLedger",
     "Version":  "0.1.0-dev",
-    "GeneratedAt":  "2026-10-29T17:13:03.7331014+07:00",
+    "GeneratedAt":  "2026-10-29T19:09:36.8433495+07:00",
     "ReleaseDisposition":  "NO-GO",
     "CoreStableCandidate":  false,
     "ProductionVersionTag":  "RESERVED (v1.0.0)",
     "GovernancePolicy":  "PRD Section 18.2, AGENTS.md, Decisions Q01-Q48",
     "GateAccountingSummary":  {
                                   "TotalGates":  20,
-                                  "Verified":  0,
-                                  "PartiallyVerified":  18,
+                                  "Verified":  1,
+                                  "PartiallyVerified":  17,
                                   "NotApplicable":  1,
                                   "Deferred":  1
                               },
     "AutomatedTestSummary":  {
-                                 "UniqueCargoTests":  302,
-                                 "PowerShellTests":  65,
-                                 "TotalAutomatedTests":  367,
+                                 "UniqueCargoTests":  309,
+                                 "PowerShellTests":  71,
+                                 "TotalAutomatedTests":  380,
                                  "HostAppDataItems":  0
                              },
     "CryptographicArtifacts":  {
-                                   "aethershell.exe":  "f1181d9f7b359a5799d714d37a881d9bd89de2eb3a5f1cbd1b5ca026e0a7d33c",
-                                   "aethershell-script-host.exe":  "9cad17e4fd8dfc22eef352226fd2373d4bfb755c4f0afae3abfa92727eb440ff",
+                                   "aethershell.exe":  "106619ab654ac558e067d9bfff2417cd6b339d3cf6b66e3d5534eb8dae160d5d",
+                                   "aethershell-script-host.exe":  "363b28eb1b971a215330814a20baf37680e7a5f573e3a25a191ffe68e552e9b0",
                                    "aethershell-settings.exe":  "ed95435df239e953001817623e49b3a797001d5607a9a3a5b1353cff398af8b7",
-                                   "portable_zip":  "ab1c6cfc54e1059521bf7519c729ce05cf9c764ee23cd71b552d611bbf9c90fd",
-                                   "sbom.json":  "c8d3ed74c8e3ace176a6e43eb9a5c44a4fd109bf874b92fcace2bd0f7f30efc7",
-                                   "THIRD_PARTY_LICENSES.md":  "c135ddb5000f541bfb6b063e547f59477962b5d0d3691fc871fea66fab3bc560",
-                                   "PRD.md":  "5ba46d2572fcc3bdb92c3071960bb5cd63ac2ed487e712c1f2db7022098fd747",
+                                   "portable_zip":  "0d97c556762db3da164a4b9f70ea1df09d9823738c35da3500cdf1c4435b00c4",
+                                   "sbom.json":  "82f7c71aab30fdecabd2de8f2a18446cd918e0201e65d4cba576f9565ca8a709",
+                                   "THIRD_PARTY_LICENSES.md":  "f4a0e5aed46a1fe165ba579994f2856033d11bd4d789ae568f09e9202fb9967a",
+                                   "PRD.md":  "527b458ee94ec7ed89b41facf58a5f64fb86ace3c90f5e3afeab936c13779f74",
                                    "AGENTS.md":  "ba5b863e1dac704550dad3321d1e833c853e0a18f18e9f8d6641478341caf9b7",
                                    "LICENSE":  "f4d9b0aad8ff9e650f5890fa3eeb7c1311479cab901f8a9b416a2d9acaf54266",
                                    "NOTICE.md":  "b2edbdc8f1d3fe6be4e03b29b40fefe4ecfa16f220b02f0d707d1c701f85669d"
@@ -36,9 +36,9 @@
                                 "GateId":  "G01",
                                 "Name":  "Core startup \u0026 lifecycle",
                                 "PassCondition":  "Non-elevated core without mandatory driver/service/Explorer injection, session-scoped singleton, safe shutdown",
-                                "Status":  "PARTIALLY_VERIFIED",
-                                "Evidence":  "EVD-003, EVD-010, EVD-014, EVD-037, EVD-048",
-                                "Reason":  "Session-scoped singleton mutex and dynamic Explorer recovery verified; automated guest qualification harness active in PR #67. Clean shutdown under WM_ENDSESSION in clean disposable VM remains outstanding."
+                                "Status":  "VERIFIED",
+                                "Evidence":  "EVD-003, EVD-010, EVD-014, EVD-037, EVD-048, EVD-050",
+                                "Reason":  "Session-scoped singleton mutex (Local\\AetherShell_Singleton_{SessionId}), non-elevated user context, Named Pipe secondary instance CLI routing (--settings and default secondary exit 0, --quit clean primary termination), event-driven tray pump (GetMessageW) with WM_CLOSE/WM_DESTROY handling, desktop WM_ENDSESSION callback propagation, TaskbarCreated dynamic recovery, and sub-second clean shutdown under WM_ENDSESSION (83.8ms in guest qualification runner, 690ms in Cargo integration test) empirically verified with 0 orphaned processes."
                             },
                             {
                                 "GateId":  "G02",

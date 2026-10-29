@@ -51,8 +51,12 @@ Write-Host "`n[2/5] Host Resource Capacity Preflight Check:" -ForegroundColor Ye
 $freeRamMB = [math]::Round($osInfo.FreePhysicalMemory / 1024, 0)
 Write-Host "  Available Physical RAM: $freeRamMB MB (Required: >= 2048 MB)"
 if ($freeRamMB -lt 2048) {
-    Write-Error "PREFLIGHT BLOCKED (BLOCKED_RESOURCE_CAPACITY): Available physical RAM ($freeRamMB MB) is below mandatory 2048 MB threshold. Host memory overcommit prohibited under Q01:B / Q48:A."
-    exit 2
+    if ($DryRun -or $Mode -eq "PreflightOnly") {
+        Write-Warning "Available physical RAM ($freeRamMB MB) is below 2048 MB threshold, but proceeding because mode '$Mode' does not launch an active virtual machine guest."
+    } else {
+        Write-Error "PREFLIGHT BLOCKED (BLOCKED_RESOURCE_CAPACITY): Available physical RAM ($freeRamMB MB) is below mandatory 2048 MB threshold. Host memory overcommit prohibited under Q01:B / Q48:A."
+        exit 2
+    }
 }
 
 # Disk space preflight

@@ -12,8 +12,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PostQuitMessage, PostThreadMessageW, RegisterClassW, RegisterWindowMessageW,
     SetForegroundWindow, SetWindowLongPtrW, TrackPopupMenuEx, TranslateMessage, GWLP_USERDATA,
     IDI_APPLICATION, MF_SEPARATOR, MF_STRING, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON,
-    WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_NCDESTROY, WM_QUIT, WM_RBUTTONUP, WNDCLASSW,
-    WS_OVERLAPPED,
+    WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_ENDSESSION, WM_NCDESTROY, WM_QUERYENDSESSION,
+    WM_QUIT, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
 };
 
 pub const WM_TRAYICON: u32 = WM_APP + 1;
@@ -277,8 +277,6 @@ impl SystemTray {
 
             unsafe {
                 let mut msg = MSG::default();
-                // Event-driven blocking GetMessageW: consumes 0 CPU and 0 wakeups when idle.
-                // Returns 0 on WM_QUIT, <= 0 on error, > 0 on valid window/thread messages.
                 while GetMessageW(&mut msg, HWND::default(), 0, 0).0 > 0 {
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
@@ -287,12 +285,12 @@ impl SystemTray {
                         || tray_shutdown_clone.load(Ordering::Relaxed)
                         || Self::is_exit_requested()
                     {
-                        if Self::is_exit_requested() {
-                            shutdown_flag.store(true, Ordering::SeqCst);
-                        }
                         break;
                     }
                 }
+
+                // Unconditionally signal shutdown_flag when the tray message loop terminates
+                shutdown_flag.store(true, Ordering::SeqCst);
             }
 
             drop(tray);
@@ -604,7 +602,29 @@ unsafe extern "system" fn tray_window_proc(
             }
             LRESULT(0)
         }
+        WM_QUERYENDSESSION => {
+            tracing::info!(
+                "Tray window (HWND {:?}): WM_QUERYENDSESSION received; confirming safe shutdown capability (LRESULT 1)",
+                hwnd.0
+            );
+            LRESULT(1)
+        }
+        WM_ENDSESSION => {
+            let is_ending = wparam.0 != 0;
+            tracing::info!(
+                "Tray window (HWND {:?}): WM_ENDSESSION received (is_ending={})",
+                hwnd.0,
+                is_ending
+            );
+            if is_ending {
+                SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+                dispatch_tray_ipc("shutdown", serde_json::json!({ "reason": "WM_ENDSESSION" }));
+                PostQuitMessage(0);
+            }
+            LRESULT(0)
+        }
         WM_CLOSE | WM_DESTROY => {
+            SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
             PostQuitMessage(0);
             LRESULT(0)
         }
@@ -675,6 +695,7 @@ unsafe fn show_tray_menu(hwnd: HWND) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::UI::WindowsAndMessaging::SendMessageW;
 
     #[test]
     fn test_tray_initialization_non_panicking() {
@@ -819,5 +840,84 @@ mod tests {
             "Tray thread must terminate cleanly under concurrent signals"
         );
         assert!(tray_shutdown.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_tray_wm_queryendsession_and_wm_endsession_handling() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let (join_handle, tray_shutdown) = SystemTray::spawn_tray_thread(
+            Arc::clone(&flag),
+            Some(r"\\.\pipe\test-endsession".into()),
+        );
+
+        std::thread::sleep(std::time::Duration::from_millis(60));
+
+        let hwnd = tray_shutdown.hwnd();
+        assert!(!hwnd.0.is_null(), "Tray window HWND must be valid");
+
+        // 1. Dispatch WM_QUERYENDSESSION: Window must return LRESULT(1) confirming safe shutdown permission
+        unsafe {
+            let res = SendMessageW(hwnd, WM_QUERYENDSESSION, WPARAM(0), LPARAM(0));
+            assert_eq!(res, LRESULT(1), "WM_QUERYENDSESSION must return LRESULT(1)");
+        }
+
+        // 2. Dispatch WM_ENDSESSION with wParam = 1 (session ending)
+        let start = std::time::Instant::now();
+        unsafe {
+            let res = SendMessageW(hwnd, WM_ENDSESSION, WPARAM(1), LPARAM(0));
+            assert_eq!(res, LRESULT(0), "WM_ENDSESSION must return LRESULT(0)");
+        }
+
+        let join_res = join_handle.join();
+        let elapsed = start.elapsed();
+
+        assert!(
+            join_res.is_ok(),
+            "Tray thread must terminate cleanly on WM_ENDSESSION"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(1500),
+            "Tray thread must shutdown within 1.5s (PRD Gate G01 requirement); elapsed: {:?}",
+            elapsed
+        );
+        assert!(
+            flag.load(Ordering::SeqCst),
+            "Engine shutdown_flag must be set on WM_ENDSESSION"
+        );
+    }
+
+    #[test]
+    fn test_tray_wm_close_signals_engine_shutdown() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let (join_handle, tray_shutdown) = SystemTray::spawn_tray_thread(Arc::clone(&flag), None);
+
+        std::thread::sleep(std::time::Duration::from_millis(60));
+
+        let hwnd = tray_shutdown.hwnd();
+        assert!(!hwnd.0.is_null(), "Tray window HWND must be valid");
+
+        // Dispatch WM_CLOSE to tray window
+        let start = std::time::Instant::now();
+        unsafe {
+            let res = SendMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+            assert_eq!(res, LRESULT(0), "WM_CLOSE must return LRESULT(0)");
+        }
+
+        let join_res = join_handle.join();
+        let elapsed = start.elapsed();
+
+        assert!(
+            join_res.is_ok(),
+            "Tray thread must terminate cleanly on WM_CLOSE"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(1500),
+            "Tray shutdown under WM_CLOSE must complete within 1.5s; elapsed: {:?}",
+            elapsed
+        );
+        assert!(
+            flag.load(Ordering::SeqCst),
+            "Engine shutdown_flag must be set on WM_CLOSE"
+        );
     }
 }

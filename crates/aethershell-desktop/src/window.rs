@@ -31,9 +31,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     TranslateMessage, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, GWL_EXSTYLE,
     HWND_BOTTOM, HWND_NOTOPMOST, IDC_ARROW, IDC_HAND, MSG, PM_REMOVE, SWP_FRAMECHANGED,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WINDOW_EX_STYLE,
-    WM_ACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ERASEBKGND, WM_GETOBJECT, WM_HOTKEY,
-    WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
-    WM_NCDESTROY, WM_PAINT, WM_QUIT, WNDCLASSEXW, WS_POPUP, WS_VISIBLE,
+    WM_ACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ENDSESSION, WM_ERASEBKGND, WM_GETOBJECT,
+    WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
+    WM_NCDESTROY, WM_PAINT, WM_QUERYENDSESSION, WM_QUIT, WNDCLASSEXW, WS_POPUP, WS_VISIBLE,
 };
 
 /// Hotkey ID for toggling Temporary Interactive Mode (PRD Section 5.3 & Q31:A).
@@ -133,6 +133,7 @@ pub type HotkeyCallback = Arc<dyn Fn(bool) + Send + Sync>;
 pub type DpiChangedCallback = Arc<dyn Fn(HWND, u32, &RECT) + Send + Sync>;
 pub type DisplayChangedCallback = Arc<dyn Fn() + Send + Sync>;
 pub type ShellEventCallback = Arc<dyn Fn(usize, isize) + Send + Sync>;
+pub type SessionEndCallback = Arc<dyn Fn() + Send + Sync>;
 
 /// Returns a verified safe Z-order target HWND.
 /// If `target` is Some and is still a valid OS window, returns it;
@@ -157,6 +158,7 @@ pub struct DesktopWindowState {
     pub on_dpi_changed: std::sync::Mutex<Option<DpiChangedCallback>>,
     pub on_display_change: std::sync::Mutex<Option<DisplayChangedCallback>>,
     pub on_shell_event: std::sync::Mutex<Option<ShellEventCallback>>,
+    pub on_session_end: std::sync::Mutex<Option<SessionEndCallback>>,
     pub interactive_regions: Arc<std::sync::Mutex<Vec<InteractiveRegion>>>,
     pub focused_region_index: Arc<std::sync::Mutex<Option<usize>>>,
     pub current_dpi: Arc<AtomicU32>,
@@ -243,6 +245,7 @@ impl DesktopHostWindow {
             on_dpi_changed: std::sync::Mutex::new(None),
             on_display_change: std::sync::Mutex::new(None),
             on_shell_event: std::sync::Mutex::new(None),
+            on_session_end: std::sync::Mutex::new(None),
             interactive_regions,
             focused_region_index,
             current_dpi: Arc::clone(&current_dpi),
@@ -420,6 +423,20 @@ impl DesktopHostWindow {
         if !self.state_ptr.is_null() {
             unsafe {
                 if let Ok(mut guard) = (*self.state_ptr).on_display_change.lock() {
+                    *guard = Some(Arc::new(cb));
+                }
+            }
+        }
+    }
+
+    /// Sets a session end callback invoked when WM_ENDSESSION is received.
+    pub fn set_on_session_end<F>(&mut self, cb: F)
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(mut guard) = (*self.state_ptr).on_session_end.lock() {
                     *guard = Some(Arc::new(cb));
                 }
             }
@@ -1359,6 +1376,34 @@ unsafe extern "system" fn desktop_host_wnd_proc(
             }
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
+        WM_QUERYENDSESSION => {
+            tracing::info!(
+                "DesktopHostWindow (HWND {:?}): WM_QUERYENDSESSION received; confirming safe shutdown capability (LRESULT 1)",
+                hwnd.0
+            );
+            LRESULT(1)
+        }
+        WM_ENDSESSION => {
+            let is_ending = wparam.0 != 0;
+            tracing::info!(
+                "DesktopHostWindow (HWND {:?}): WM_ENDSESSION received (is_ending={})",
+                hwnd.0,
+                is_ending
+            );
+            if is_ending {
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
+                if !ptr.is_null() {
+                    let state = &*ptr;
+                    dismiss_interactive_mode(hwnd, state, DismissalReason::SessionLocked);
+                    if let Ok(guard) = state.on_session_end.lock() {
+                        if let Some(ref cb) = *guard {
+                            cb();
+                        }
+                    }
+                }
+            }
+            LRESULT(0)
+        }
         WM_NCDESTROY => {
             let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -1427,6 +1472,7 @@ pub struct DesktopWindowManager {
     on_hotkey_cb: Option<HotkeyCallback>,
     on_dpi_changed_cb: Option<DpiChangedCallback>,
     on_display_changed_cb: Option<DisplayChangedCallback>,
+    on_session_end_cb: Option<SessionEndCallback>,
     interactive_regions: Vec<InteractiveRegion>,
     is_hotkey_registered: bool,
 }
@@ -1447,6 +1493,7 @@ impl DesktopWindowManager {
             on_hotkey_cb: None,
             on_dpi_changed_cb: None,
             on_display_changed_cb: None,
+            on_session_end_cb: None,
             interactive_regions: Vec::new(),
             is_hotkey_registered: false,
         }
@@ -1501,6 +1548,10 @@ impl DesktopWindowManager {
                     if let Some(ref cb) = self.on_display_changed_cb {
                         let cb_clone = Arc::clone(cb);
                         win.set_on_display_change(move || cb_clone());
+                    }
+                    if let Some(ref cb) = self.on_session_end_cb {
+                        let cb_clone = Arc::clone(cb);
+                        win.set_on_session_end(move || cb_clone());
                     }
                     win.set_interactive_regions(self.interactive_regions.clone());
 
@@ -1765,22 +1816,46 @@ impl DesktopWindowManager {
         }
     }
 
+    /// Sets a session end callback across all managed desktop host windows.
+    pub fn set_on_session_end<F>(&mut self, cb: F)
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        let cb_arc: SessionEndCallback = Arc::new(cb);
+        self.on_session_end_cb = Some(Arc::clone(&cb_arc));
+        for win in &mut self.windows {
+            let cb_clone = Arc::clone(&cb_arc);
+            win.set_on_session_end(move || {
+                cb_clone();
+            });
+        }
+    }
+
+    /// Destroys and cleans up all managed desktop host windows on the current thread.
+    pub fn clear_windows(&mut self) {
+        self.windows.clear();
+    }
+
     /// Returns whether any managed desktop host window has become an invalid or stale OS window.
     pub fn has_stale_windows(&self) -> bool {
         self.windows.iter().any(|w| !w.is_window_valid())
     }
 
     /// Drains and dispatches pending Win32 messages (WM_PAINT, WM_KEYDOWN, WM_ACTIVATE, etc.).
-    pub fn pump_messages() {
+    /// Returns true if WM_QUIT was encountered on the thread message queue.
+    pub fn pump_messages() -> bool {
         unsafe {
             let mut msg = MSG::default();
+            let mut quit_received = false;
             while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
                 if msg.message == WM_QUIT {
+                    quit_received = true;
                     break;
                 }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
+            quit_received
         }
     }
 }
@@ -2482,5 +2557,47 @@ mod tests {
         // 5. Explicit reassert_desktop_stacking() works in passive mode
         win.reassert_desktop_stacking();
         assert_eq!(win.win_d_restack_count(), 3);
+    }
+
+    #[test]
+    fn test_desktop_host_window_wm_endsession_handling() {
+        let mut win =
+            match DesktopHostWindow::create("MONITOR_ENDSESSION", 0, 0, 800, 600, None, None) {
+                Ok(w) => w,
+                Err(e) => {
+                    println!("DesktopHostWindow creation skipped in test env: {}", e);
+                    return;
+                }
+            };
+
+        // 1. WM_QUERYENDSESSION returns LRESULT(1)
+        unsafe {
+            let res = desktop_host_wnd_proc(win.hwnd, WM_QUERYENDSESSION, WPARAM(0), LPARAM(0));
+            assert_eq!(res, LRESULT(1), "WM_QUERYENDSESSION must return LRESULT(1)");
+        }
+
+        // 2. WM_ENDSESSION with wParam=1 (session ending) restores passive mode, triggers on_session_end, and returns LRESULT(0)
+        let session_ended = Arc::new(AtomicBool::new(false));
+        let session_ended_clone = Arc::clone(&session_ended);
+        win.set_on_session_end(move || {
+            session_ended_clone.store(true, Ordering::SeqCst);
+        });
+
+        win.set_interactive(true);
+        assert!(win.is_interactive());
+
+        unsafe {
+            let res = desktop_host_wnd_proc(win.hwnd, WM_ENDSESSION, WPARAM(1), LPARAM(0));
+            assert_eq!(res, LRESULT(0), "WM_ENDSESSION must return LRESULT(0)");
+        }
+
+        assert!(
+            !win.is_interactive(),
+            "WM_ENDSESSION must dismiss interactive mode"
+        );
+        assert!(
+            session_ended.load(Ordering::SeqCst),
+            "WM_ENDSESSION must trigger on_session_end callback"
+        );
     }
 }

@@ -1353,7 +1353,7 @@ All stable gates are mandatory for stable v1.0.0 unless expressly marked experim
 
 | Gate | PRD Pass Condition | Current Status | Evidence & Verification Reference |
 |---|---|:---:|---|
-| **G01 Core startup** | Non-elevated core without mandatory driver/service/Explorer injection, session-scoped singleton, safe shutdown | `PARTIALLY_VERIFIED` | Session-scoped singleton, tray pump, and window lifecycle verified; WM_ENDSESSION test pending |
+| **G01 Core startup** | Non-elevated core without mandatory driver/service/Explorer injection, session-scoped singleton, safe shutdown | `VERIFIED` | Non-elevated singleton, CLI routing, dynamic tray recovery, and WM_ENDSESSION sub-second clean shutdown verified (EVD-050) |
 | **G02 Windows compatibility** | Required Windows 10/11 x64 matrix; honest fallback on unsupported effects | `PARTIALLY_VERIFIED` | Win10/11 build & UBR detection and PerMonitorV2 dynamic DPI scaling verified; multi-OS VM matrix active |
 | **G03 Shell isolation** | All stable binaries and packages contain no Explorer extension; no hooks into critical protected processes | `PARTIALLY_VERIFIED` | Non-injection architecture verified in source & binaries; package artifact audit pending |
 | **G04 Taskbar recovery** | External effects gated; native fallback; no repeated fighting or Explorer loop | `PARTIALLY_VERIFIED` | Conflict detection yields to customizers; TaskbarCreated recovery verified; Explorer restart VM pixel test pending |

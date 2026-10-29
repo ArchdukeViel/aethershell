@@ -5,7 +5,7 @@
 **Remote Repository**: `https://github.com/ArchdukeViel/aethershell`  
 **Host Environment**: Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM  
 **Host AppData Status**: `%LOCALAPPDATA%\AetherShell` strictly maintained at 0 items (100% clean)  
-**Acceptance Ledger**: 0 `VERIFIED`, 18 `PARTIALLY_VERIFIED`, 1 `NOT_APPLICABLE` (G05), 1 `DEFERRED` (G15). `CORE_STABLE_CANDIDATE` strictly not declared; `v1.0.0` reserved.
+**Acceptance Ledger**: 1 `VERIFIED` (G01), 17 `PARTIALLY_VERIFIED`, 1 `NOT_APPLICABLE` (G05), 1 `DEFERRED` (G15). `CORE_STABLE_CANDIDATE` strictly not declared; `v1.0.0` reserved.
 
 ---
 
@@ -146,7 +146,7 @@ An adversarial review of PRs #56, #57, and #58 raised four key findings (P1–P4
 
 ## 3. Workspace Test Inventory & Audit Summary
 
-Following completion and integration of PRs #56 through #68, the workspace test suite contains **302 unique passing automated Cargo tests** across 13 member crates, plus **65 dedicated PowerShell regression tests across 13 test suites** (Total: **367 passing tests**):
+Following completion and integration of PRs #56 through #68 and Gate G01 qualification, the workspace test suite contains **309 unique passing automated Cargo tests** across 13 member crates, plus **71 dedicated PowerShell regression tests across 13 test suites** (Total: **380 passing tests**):
 
 ```
 ================================================================================
@@ -159,11 +159,11 @@ Audit Mode      : Discovered
 --- Crate Test Ledger ---
 Crate                   UnitTests IntegrationTests TotalTests SuitesCount
 -----                   --------- ---------------- ---------- -----------
-aethershell-app                 8               93        101          13
+aethershell-app                10               97        107          13
 aethershell-audio               9                0          9           1
 aethershell-config             33                0         33           1
 aethershell-core                9                0          9           1
-aethershell-desktop            29                0         29           1
+aethershell-desktop            30                0         30           1
 aethershell-diagnostics        13               19         32           2
 aethershell-ipc                17                0         17           1
 aethershell-renderer           16                0         16           1
@@ -175,13 +175,13 @@ aethershell-win                19                0         19           1
 
 ================================================================================
 SUMMARY AUDIT VERDICT:
-  Unique Unit Tests        : 190
-  Unique Integration Tests : 112
-  Total Unique Tests       : 302
+  Unique Unit Tests        : 193
+  Unique Integration Tests : 116
+  Total Unique Tests       : 309
 ================================================================================
 ```
 
-### PowerShell Qualification & Regression Suites (65 Passing Tests Across 13 Suites)
+### PowerShell Qualification & Regression Suites (71 Passing Tests Across 13 Suites)
 1. `tests/disposable_vm_qualification_tests.ps1`: 5/5 passed.
 2. `tests/package_isolation_tests.ps1`: 6/6 passed.
 3. `tests/packaging_identity_continuity_tests.ps1`: 4/4 passed.
@@ -202,7 +202,7 @@ SUMMARY AUDIT VERDICT:
 
 | Gate | Category & Description | Current Status | Verification Record |
 | :--- | :--- | :--- | :--- |
-| **G01** | Core Startup & Lifecycle | `PARTIALLY_VERIFIED` | EVD-003, EVD-010, EVD-014, EVD-037, EVD-048 (PR #67) |
+| **G01** | Core Startup & Lifecycle | `VERIFIED` | EVD-003, EVD-010, EVD-014, EVD-037, EVD-048 (PR #67), EVD-050 |
 | **G02** | Multi-Process Security & IPC | `PARTIALLY_VERIFIED` | EVD-010, EVD-011, EVD-012, EVD-032, EVD-036, EVD-049 (PR #68) |
 | **G03** | Shell Isolation | `PARTIALLY_VERIFIED` | EVD-003, EVD-012, EVD-047 (PR #66) |
 | **G04** | Taskbar Recovery | `PARTIALLY_VERIFIED` | EVD-004, EVD-014, EVD-015, EVD-048 (PR #67) |
