@@ -3,13 +3,13 @@
     "dataLicense":  "CC0-1.0",
     "SPDXID":  "SPDXRef-DOCUMENT",
     "name":  "AetherShell-SBOM",
-    "documentNamespace":  "https://github.com/ArchdukeViel/aethershell/sbom/20261029-112215",
+    "documentNamespace":  "https://github.com/ArchdukeViel/aethershell/sbom/20261029-122401",
     "creationInfo":  {
                          "creators":  [
                                           "Tool: AetherShell SBOM Generator v1.0",
                                           "Organization: AetherShell Contributors"
                                       ],
-                         "created":  "2026-10-29T04:22:15Z"
+                         "created":  "2026-10-29T05:24:01Z"
                      },
     "packages":  [
                      {
@@ -18,7 +18,7 @@
                          "downloadLocation":  "https://github.com/BurntSushi/aho-corasick",
                          "versionInfo":  "1.1.5",
                          "licenseDeclared":  "Unlicense OR MIT",
-                         "licenseConcluded":  "Unlicense OR MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Fast multiple substring searching."
                      },
                      {
@@ -27,7 +27,7 @@
                          "downloadLocation":  "https://github.com/nical/android_system_properties",
                          "versionInfo":  "0.1.6",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Minimal Android system properties wrapper"
                      },
                      {
@@ -36,7 +36,7 @@
                          "downloadLocation":  "https://github.com/cuviper/autocfg",
                          "versionInfo":  "1.5.1",
                          "licenseDeclared":  "Apache-2.0 OR MIT",
-                         "licenseConcluded":  "Apache-2.0 OR MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Automatic cfg for Rust compiler features"
                      },
                      {
@@ -45,7 +45,7 @@
                          "downloadLocation":  "https://github.com/bitflags/bitflags",
                          "versionInfo":  "2.13.2",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A macro to generate structures which behave like bitflags."
                      },
                      {
@@ -54,7 +54,7 @@
                          "downloadLocation":  "https://github.com/BurntSushi/bstr",
                          "versionInfo":  "1.13.1",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A string type that is not required to be valid UTF-8."
                      },
                      {
@@ -63,7 +63,7 @@
                          "downloadLocation":  "https://github.com/fitzgen/bumpalo",
                          "versionInfo":  "3.20.3",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A fast bump allocation arena for Rust."
                      },
                      {
@@ -72,7 +72,7 @@
                          "downloadLocation":  "https://github.com/tokio-rs/bytes",
                          "versionInfo":  "1.12.1",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Types and traits for working with bytes"
                      },
                      {
@@ -81,7 +81,7 @@
                          "downloadLocation":  "https://github.com/rust-lang/cc-rs",
                          "versionInfo":  "1.10.0",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A build-time dependency for Cargo build scripts to assist in invoking the native\nC compiler to compile native C code into a static archive to be linked into Rust\ncode."
                      },
                      {
@@ -90,7 +90,7 @@
                          "downloadLocation":  "https://github.com/rust-lang/cfg-if",
                          "versionInfo":  "1.0.5",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A macro to ergonomically define an item depending on a large number of #[cfg]\nparameters. Structured like an if-else chain, the first matching branch is the\nitem that gets emitted."
                      },
                      {
@@ -99,7 +99,7 @@
                          "downloadLocation":  "https://github.com/chronotope/chrono",
                          "versionInfo":  "0.4.45",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Date and time library for Rust"
                      },
                      {
@@ -108,7 +108,7 @@
                          "downloadLocation":  "https://github.com/servo/core-foundation-rs",
                          "versionInfo":  "0.8.7",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Bindings to Core Foundation for macOS"
                      },
                      {
@@ -117,7 +117,7 @@
                          "downloadLocation":  "https://github.com/rayon-rs/either",
                          "versionInfo":  "1.19.0",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "The enum `Either` with variants `Left` and `Right` is a general purpose sum type with two cases."
                      },
                      {
@@ -126,7 +126,7 @@
                          "downloadLocation":  "https://github.com/notpeter/env-home",
                          "versionInfo":  "0.1.0",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Get the user home directory in a cross-platform way."
                      },
                      {
@@ -135,7 +135,7 @@
                          "downloadLocation":  "https://github.com/indexmap-rs/equivalent",
                          "versionInfo":  "1.0.3",
                          "licenseDeclared":  "Apache-2.0 OR MIT",
-                         "licenseConcluded":  "Apache-2.0 OR MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Traits for key comparison in maps."
                      },
                      {
@@ -144,7 +144,7 @@
                          "downloadLocation":  "https://github.com/lambda-fairy/rust-errno",
                          "versionInfo":  "0.3.14",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Cross-platform interface to the `errno` variable."
                      },
                      {
@@ -153,7 +153,7 @@
                          "downloadLocation":  "https://github.com/rust-lang/cc-rs",
                          "versionInfo":  "0.1.15",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Find windows-specific tools, read MSVC versions from the registry and from COM interfaces"
                      },
                      {
@@ -162,7 +162,7 @@
                          "downloadLocation":  "https://github.com/rust-lang/futures-rs",
                          "versionInfo":  "0.3.34",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "The core traits and types in for the `futures` library."
                      },
                      {
@@ -171,7 +171,7 @@
                          "downloadLocation":  "https://github.com/rust-lang/futures-rs",
                          "versionInfo":  "0.3.34",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Tools for working with tasks."
                      },
                      {
@@ -180,7 +180,7 @@
                          "downloadLocation":  "https://github.com/rust-lang/futures-rs",
                          "versionInfo":  "0.3.34",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Common utilities and extension traits for the futures-rs library."
                      },
                      {
@@ -189,7 +189,7 @@
                          "downloadLocation":  "https://github.com/rust-random/getrandom",
                          "versionInfo":  "0.4.3",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A small cross-platform library for retrieving random data from system source"
                      },
                      {
@@ -198,7 +198,7 @@
                          "downloadLocation":  "https://github.com/rust-lang/hashbrown",
                          "versionInfo":  "0.17.1",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A Rust port of Google\u0027s SwissTable hash map"
                      },
                      {
@@ -207,7 +207,7 @@
                          "downloadLocation":  "https://github.com/strawlab/iana-time-zone",
                          "versionInfo":  "0.1.65",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "get the IANA time zone for the current system"
                      },
                      {
@@ -216,7 +216,7 @@
                          "downloadLocation":  "https://github.com/strawlab/iana-time-zone",
                          "versionInfo":  "0.1.2",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "iana-time-zone support crate for Haiku OS"
                      },
                      {
@@ -225,7 +225,7 @@
                          "downloadLocation":  "https://github.com/indexmap-rs/indexmap",
                          "versionInfo":  "2.14.2",
                          "licenseDeclared":  "Apache-2.0 OR MIT",
-                         "licenseConcluded":  "Apache-2.0 OR MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A hash table with consistent order and fast iteration."
                      },
                      {
@@ -234,7 +234,7 @@
                          "downloadLocation":  "https://github.com/dtolnay/itoa",
                          "versionInfo":  "1.0.18",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Fast integer primitive to string conversion"
                      },
                      {
@@ -243,7 +243,7 @@
                          "downloadLocation":  "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys",
                          "versionInfo":  "0.3.106",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Bindings for all JS global objects and functions in all JS environments like\nNode.js and browsers, built on `#[wasm_bindgen]` using the `wasm-bindgen` crate."
                      },
                      {
@@ -252,7 +252,7 @@
                          "downloadLocation":  "https://github.com/rust-lang-nursery/lazy-static.rs",
                          "versionInfo":  "1.5.1",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A macro for declaring lazily evaluated statics in Rust."
                      },
                      {
@@ -261,7 +261,7 @@
                          "downloadLocation":  "https://github.com/rust-lang/libc",
                          "versionInfo":  "0.2.191",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Raw FFI bindings to platform libraries like libc."
                      },
                      {
@@ -270,7 +270,7 @@
                          "downloadLocation":  "https://github.com/sunfishcode/linux-raw-sys",
                          "versionInfo":  "0.12.1",
                          "licenseDeclared":  "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
-                         "licenseConcluded":  "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Generated bindings for Linux\u0027s userspace API"
                      },
                      {
@@ -279,7 +279,7 @@
                          "downloadLocation":  "https://github.com/Amanieu/parking_lot",
                          "versionInfo":  "0.4.14",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Wrappers to create fully-featured Mutex and RwLock types. Compatible with no_std."
                      },
                      {
@@ -288,7 +288,7 @@
                          "downloadLocation":  "https://github.com/rust-lang/log",
                          "versionInfo":  "0.4.34",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A lightweight logging facade for Rust"
                      },
                      {
@@ -297,7 +297,7 @@
                          "downloadLocation":  "https://github.com/khvzak/luajit-src-rs",
                          "versionInfo":  "210.5.12+a4f56a4",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Sources of LuaJIT 2.1 and logic to build it."
                      },
                      {
@@ -306,7 +306,7 @@
                          "downloadLocation":  "https://github.com/khvzak/lua-src-rs",
                          "versionInfo":  "547.0.0",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Sources of Lua 5.1/5.2/5.3/5.4 and logic to build them."
                      },
                      {
@@ -315,7 +315,7 @@
                          "downloadLocation":  "https://github.com/hawkw/matchers",
                          "versionInfo":  "0.2.0",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Regex matching on character and byte streams."
                      },
                      {
@@ -324,7 +324,7 @@
                          "downloadLocation":  "https://github.com/BurntSushi/memchr",
                          "versionInfo":  "2.8.3",
                          "licenseDeclared":  "Unlicense OR MIT",
-                         "licenseConcluded":  "Unlicense OR MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Provides extremely fast (uses SIMD on x86_64, aarch64 and wasm32) routines for\n1, 2 or 3 byte search and single substring search."
                      },
                      {
@@ -333,7 +333,7 @@
                          "downloadLocation":  "https://github.com/tokio-rs/mio",
                          "versionInfo":  "1.2.4",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Lightweight non-blocking I/O."
                      },
                      {
@@ -342,7 +342,7 @@
                          "downloadLocation":  "https://github.com/khvzak/mlua",
                          "versionInfo":  "0.9.9",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "High level bindings to Lua 5.4/5.3/5.2/5.1 (including LuaJIT) and Roblox Luau\nwith async/await features and support of writing native Lua modules in Rust."
                      },
                      {
@@ -351,7 +351,7 @@
                          "downloadLocation":  "https://github.com/mlua-rs/mlua",
                          "versionInfo":  "0.6.8",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Low level (FFI) bindings to Lua 5.4/5.3/5.2/5.1 (including LuaJIT) and Luau"
                      },
                      {
@@ -360,7 +360,7 @@
                          "downloadLocation":  "https://github.com/nushell/nu-ansi-term",
                          "versionInfo":  "0.50.3",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Library for ANSI terminal colors and styles (bold, underline)"
                      },
                      {
@@ -369,7 +369,7 @@
                          "downloadLocation":  "https://github.com/rust-num/num-traits",
                          "versionInfo":  "0.2.19",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Numeric traits for generic mathematics"
                      },
                      {
@@ -378,7 +378,7 @@
                          "downloadLocation":  "https://github.com/matklad/once_cell",
                          "versionInfo":  "1.21.4",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Single assignment cells and lazy values."
                      },
                      {
@@ -387,7 +387,7 @@
                          "downloadLocation":  "https://github.com/Amanieu/parking_lot",
                          "versionInfo":  "0.12.5",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "More compact and efficient implementations of the standard synchronization primitives."
                      },
                      {
@@ -396,7 +396,7 @@
                          "downloadLocation":  "https://github.com/Amanieu/parking_lot",
                          "versionInfo":  "0.9.12",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "An advanced API for creating custom synchronization primitives."
                      },
                      {
@@ -405,7 +405,7 @@
                          "downloadLocation":  "https://github.com/taiki-e/pin-project-lite",
                          "versionInfo":  "0.2.17",
                          "licenseDeclared":  "Apache-2.0 OR MIT",
-                         "licenseConcluded":  "Apache-2.0 OR MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A lightweight version of pin-project written with declarative macros."
                      },
                      {
@@ -414,7 +414,7 @@
                          "downloadLocation":  "https://github.com/rust-lang/pkg-config-rs",
                          "versionInfo":  "0.3.34",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A library to run the pkg-config system tool at build time in order to be used in\nCargo build scripts."
                      },
                      {
@@ -423,7 +423,7 @@
                          "downloadLocation":  "https://github.com/dtolnay/proc-macro2",
                          "versionInfo":  "1.0.107",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A substitute implementation of the compiler\u0027s `proc_macro` API to decouple token-based libraries from the procedural macro use case."
                      },
                      {
@@ -432,7 +432,7 @@
                          "downloadLocation":  "https://github.com/dtolnay/quote",
                          "versionInfo":  "1.0.47",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Quasi-quoting macro quote!(...)"
                      },
                      {
@@ -441,7 +441,7 @@
                          "downloadLocation":  "https://gitlab.redox-os.org/redox-os/syscall",
                          "versionInfo":  "0.5.18",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A Rust library to access raw Redox system calls"
                      },
                      {
@@ -450,7 +450,7 @@
                          "downloadLocation":  "https://github.com/r-efi/r-efi",
                          "versionInfo":  "6.0.0",
                          "licenseDeclared":  "MIT OR Apache-2.0 OR LGPL-2.1-or-later",
-                         "licenseConcluded":  "MIT OR Apache-2.0 OR LGPL-2.1-or-later",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "UEFI Reference Specification Protocol Constants and Definitions"
                      },
                      {
@@ -459,7 +459,7 @@
                          "downloadLocation":  "https://github.com/rust-lang/regex",
                          "versionInfo":  "0.4.18",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Automata construction and matching using regular expressions."
                      },
                      {
@@ -468,7 +468,7 @@
                          "downloadLocation":  "https://github.com/rust-lang/regex",
                          "versionInfo":  "0.8.11",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A regular expression parser."
                      },
                      {
@@ -477,7 +477,7 @@
                          "downloadLocation":  "https://github.com/rust-lang/rustc-hash",
                          "versionInfo":  "2.1.3",
                          "licenseDeclared":  "Apache-2.0 OR MIT",
-                         "licenseConcluded":  "Apache-2.0 OR MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A speedy, non-cryptographic hashing algorithm used by rustc"
                      },
                      {
@@ -486,7 +486,7 @@
                          "downloadLocation":  "https://github.com/bytecodealliance/rustix",
                          "versionInfo":  "1.1.5",
                          "licenseDeclared":  "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
-                         "licenseConcluded":  "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Safe Rust bindings to POSIX/Unix/Linux/Winsock-like syscalls"
                      },
                      {
@@ -495,7 +495,7 @@
                          "downloadLocation":  "https://github.com/dtolnay/rustversion",
                          "versionInfo":  "1.0.23",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Conditional compilation according to rustc compiler version"
                      },
                      {
@@ -504,7 +504,7 @@
                          "downloadLocation":  "https://github.com/bluss/scopeguard",
                          "versionInfo":  "1.2.0",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A RAII scope guard that will run a given closure when it goes out of scope,\neven if the code between panics (assuming unwinding panic).\n\nDefines the macros `defer!`, `defer_on_unwind!`, `defer_on_success!` as\nshorthands for guards with one of the implemented strategies."
                      },
                      {
@@ -513,7 +513,7 @@
                          "downloadLocation":  "https://github.com/serde-rs/serde",
                          "versionInfo":  "1.0.229",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A generic serialization/deserialization framework"
                      },
                      {
@@ -522,7 +522,7 @@
                          "downloadLocation":  "https://github.com/serde-rs/serde",
                          "versionInfo":  "1.0.229",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Serde traits only, with no support for derive -- use the `serde` crate instead"
                      },
                      {
@@ -531,7 +531,7 @@
                          "downloadLocation":  "https://github.com/serde-rs/serde",
                          "versionInfo":  "1.0.229",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Macros 1.1 implementation of #[derive(Serialize, Deserialize)]"
                      },
                      {
@@ -540,7 +540,7 @@
                          "downloadLocation":  "https://github.com/serde-rs/json",
                          "versionInfo":  "1.0.154",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A JSON serialization file format"
                      },
                      {
@@ -549,7 +549,7 @@
                          "downloadLocation":  "https://github.com/toml-rs/toml",
                          "versionInfo":  "0.6.9",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Serde-compatible spanned Value"
                      },
                      {
@@ -558,7 +558,7 @@
                          "downloadLocation":  "https://github.com/hawkw/sharded-slab",
                          "versionInfo":  "0.1.7",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A lock-free concurrent slab."
                      },
                      {
@@ -567,7 +567,7 @@
                          "downloadLocation":  "https://github.com/comex/rust-shlex",
                          "versionInfo":  "2.0.1",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Split a string into shell words, like Python\u0027s shlex."
                      },
                      {
@@ -576,7 +576,7 @@
                          "downloadLocation":  "https://github.com/vorner/signal-hook",
                          "versionInfo":  "1.4.8",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Backend crate for signal-hook"
                      },
                      {
@@ -585,7 +585,7 @@
                          "downloadLocation":  "https://github.com/tokio-rs/slab",
                          "versionInfo":  "0.4.12",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Pre-allocated storage for a uniform data type"
                      },
                      {
@@ -594,7 +594,7 @@
                          "downloadLocation":  "https://github.com/servo/rust-smallvec",
                          "versionInfo":  "1.16.4",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "\u0027Small vector\u0027 optimization: store up to a small number of items on the stack"
                      },
                      {
@@ -603,7 +603,7 @@
                          "downloadLocation":  "https://github.com/rust-lang/socket2",
                          "versionInfo":  "0.6.5",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Utilities for handling networking sockets with a maximal amount of configuration\npossible intended."
                      },
                      {
@@ -612,7 +612,7 @@
                          "downloadLocation":  "https://github.com/dtolnay/syn",
                          "versionInfo":  "3.0.9",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Parser for Rust source code"
                      },
                      {
@@ -621,7 +621,7 @@
                          "downloadLocation":  "https://github.com/dtolnay/syn",
                          "versionInfo":  "2.0.119",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Parser for Rust source code"
                      },
                      {
@@ -630,7 +630,7 @@
                          "downloadLocation":  "https://github.com/dtolnay/thiserror",
                          "versionInfo":  "1.0.69",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "derive(Error)"
                      },
                      {
@@ -639,7 +639,7 @@
                          "downloadLocation":  "https://github.com/dtolnay/thiserror",
                          "versionInfo":  "1.0.69",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Implementation detail of the `thiserror` crate"
                      },
                      {
@@ -648,7 +648,7 @@
                          "downloadLocation":  "https://github.com/Amanieu/thread_local-rs",
                          "versionInfo":  "1.1.10",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Per-object thread-local storage"
                      },
                      {
@@ -657,7 +657,7 @@
                          "downloadLocation":  "https://github.com/tokio-rs/tokio",
                          "versionInfo":  "1.54.1",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "An event-driven, non-blocking I/O platform for writing asynchronous I/O\nbacked applications."
                      },
                      {
@@ -666,7 +666,7 @@
                          "downloadLocation":  "https://github.com/tokio-rs/tokio",
                          "versionInfo":  "2.7.2",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Tokio\u0027s proc macros."
                      },
                      {
@@ -675,7 +675,7 @@
                          "downloadLocation":  "https://github.com/toml-rs/toml",
                          "versionInfo":  "0.8.23",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A native Rust encoder and decoder of TOML-formatted files and streams. Provides\nimplementations of the standard Serialize/Deserialize traits for TOML data to\nfacilitate deserializing and serializing Rust structures."
                      },
                      {
@@ -684,7 +684,7 @@
                          "downloadLocation":  "https://github.com/toml-rs/toml",
                          "versionInfo":  "0.6.11",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A TOML-compatible datetime type"
                      },
                      {
@@ -693,7 +693,7 @@
                          "downloadLocation":  "https://github.com/toml-rs/toml",
                          "versionInfo":  "0.22.27",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Yet another format-preserving TOML parser."
                      },
                      {
@@ -702,7 +702,7 @@
                          "downloadLocation":  "https://github.com/toml-rs/toml",
                          "versionInfo":  "0.1.2",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A low-level interface for writing out TOML"
                      },
                      {
@@ -711,7 +711,7 @@
                          "downloadLocation":  "https://github.com/tokio-rs/tracing",
                          "versionInfo":  "0.1.44",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Application-level tracing for Rust."
                      },
                      {
@@ -720,7 +720,7 @@
                          "downloadLocation":  "https://github.com/tokio-rs/tracing",
                          "versionInfo":  "0.1.31",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Procedural macro attributes for automatically instrumenting functions."
                      },
                      {
@@ -729,7 +729,7 @@
                          "downloadLocation":  "https://github.com/tokio-rs/tracing",
                          "versionInfo":  "0.1.36",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Core primitives for application-level tracing."
                      },
                      {
@@ -738,7 +738,7 @@
                          "downloadLocation":  "https://github.com/tokio-rs/tracing",
                          "versionInfo":  "0.2.0",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Provides compatibility between `tracing` and the `log` crate."
                      },
                      {
@@ -747,7 +747,7 @@
                          "downloadLocation":  "https://github.com/tokio-rs/tracing",
                          "versionInfo":  "0.3.23",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Utilities for implementing and composing `tracing` subscribers."
                      },
                      {
@@ -756,7 +756,7 @@
                          "downloadLocation":  "https://github.com/dtolnay/unicode-ident",
                          "versionInfo":  "1.0.27",
                          "licenseDeclared":  "(MIT OR Apache-2.0) AND Unicode-3.0",
-                         "licenseConcluded":  "(MIT OR Apache-2.0) AND Unicode-3.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Determine whether characters have the XID_Start or XID_Continue properties according to Unicode Standard Annex #31"
                      },
                      {
@@ -765,7 +765,7 @@
                          "downloadLocation":  "https://github.com/uuid-rs/uuid",
                          "versionInfo":  "1.29.0",
                          "licenseDeclared":  "Apache-2.0 OR MIT",
-                         "licenseConcluded":  "Apache-2.0 OR MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A library to generate and parse UUIDs."
                      },
                      {
@@ -774,7 +774,7 @@
                          "downloadLocation":  "https://github.com/tokio-rs/valuable",
                          "versionInfo":  "0.1.1",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Object-safe value inspection, used to pass un-typed structured data across trait-object boundaries."
                      },
                      {
@@ -783,7 +783,7 @@
                          "downloadLocation":  "https://github.com/bytecodealliance/wasi",
                          "versionInfo":  "0.11.1+wasi-snapshot-preview1",
                          "licenseDeclared":  "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
-                         "licenseConcluded":  "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Experimental WASI API bindings for Rust"
                      },
                      {
@@ -792,7 +792,7 @@
                          "downloadLocation":  "https://github.com/wasm-bindgen/wasm-bindgen",
                          "versionInfo":  "0.2.129",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Easy support for interacting between JS and Rust."
                      },
                      {
@@ -801,7 +801,7 @@
                          "downloadLocation":  "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro",
                          "versionInfo":  "0.2.129",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Definition of the `#[wasm_bindgen]` attribute, an internal dependency"
                      },
                      {
@@ -810,7 +810,7 @@
                          "downloadLocation":  "https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support",
                          "versionInfo":  "0.2.129",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Implementation APIs for the `#[wasm_bindgen]` attribute"
                      },
                      {
@@ -819,7 +819,7 @@
                          "downloadLocation":  "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared",
                          "versionInfo":  "0.2.129",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Shared support between wasm-bindgen and wasm-bindgen cli, an internal\ndependency."
                      },
                      {
@@ -828,7 +828,7 @@
                          "downloadLocation":  "https://github.com/harryfei/which-rs.git",
                          "versionInfo":  "7.0.3",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A Rust equivalent of Unix command \"which\". Locate installed executable in cross platforms."
                      },
                      {
@@ -837,7 +837,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.58.0",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Rust for Windows"
                      },
                      {
@@ -846,7 +846,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.52.6",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Import lib for Windows"
                      },
                      {
@@ -855,7 +855,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.52.6",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Import lib for Windows"
                      },
                      {
@@ -864,7 +864,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.52.6",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Import lib for Windows"
                      },
                      {
@@ -873,7 +873,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.52.6",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Import lib for Windows"
                      },
                      {
@@ -882,7 +882,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.52.6",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Import lib for Windows"
                      },
                      {
@@ -891,7 +891,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.52.6",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Import lib for Windows"
                      },
                      {
@@ -900,7 +900,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.52.6",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Import lib for Windows"
                      },
                      {
@@ -909,7 +909,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.52.6",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Import lib for Windows"
                      },
                      {
@@ -918,7 +918,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.62.2",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Core type support for COM and Windows"
                      },
                      {
@@ -927,7 +927,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.58.0",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Rust for Windows"
                      },
                      {
@@ -936,7 +936,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.60.2",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "The implement macro for the Windows crates"
                      },
                      {
@@ -945,7 +945,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.58.0",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "The implement macro for the windows crate"
                      },
                      {
@@ -954,7 +954,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.59.3",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "The interface macro for the Windows crates"
                      },
                      {
@@ -963,7 +963,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.58.0",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "The interface macro for the windows crate"
                      },
                      {
@@ -972,7 +972,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.2.1",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Linking for Windows"
                      },
                      {
@@ -981,7 +981,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.4.1",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Windows error handling"
                      },
                      {
@@ -990,7 +990,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.2.0",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Windows error handling"
                      },
                      {
@@ -999,7 +999,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.5.1",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Windows string types"
                      },
                      {
@@ -1008,7 +1008,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.1.0",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Rust for Windows"
                      },
                      {
@@ -1017,7 +1017,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.61.2",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Rust for Windows"
                      },
                      {
@@ -1026,7 +1026,7 @@
                          "downloadLocation":  "https://github.com/microsoft/windows-rs",
                          "versionInfo":  "0.52.6",
                          "licenseDeclared":  "MIT OR Apache-2.0",
-                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Import libs for Windows"
                      },
                      {
@@ -1035,7 +1035,7 @@
                          "downloadLocation":  "https://github.com/winnow-rs/winnow",
                          "versionInfo":  "0.7.15",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A byte-oriented, zero-copy, parser combinators library"
                      },
                      {
@@ -1044,7 +1044,7 @@
                          "downloadLocation":  "https://github.com/rodrigocfd/winsafe",
                          "versionInfo":  "0.0.19",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "Windows API and GUI in safe, idiomatic Rust."
                      },
                      {
@@ -1053,7 +1053,7 @@
                          "downloadLocation":  "https://github.com/dtolnay/zmij",
                          "versionInfo":  "1.0.23",
                          "licenseDeclared":  "MIT",
-                         "licenseConcluded":  "MIT",
+                         "licenseConcluded":  "NOASSERTION",
                          "description":  "A double-to-string conversion algorithm based on Schubfach and xjb"
                      }
                  ]

@@ -29,9 +29,23 @@ function Run-TestCase([string]$Name, [scriptblock]$TestBlock) {
 
 Write-Host "Running network_isolation_tests.ps1 Regression Test Suite..." -ForegroundColor Cyan
 
-# Test 1: Standard audit with -Strict succeeds when no violating instances exist
-Run-TestCase "audit_runtime_network_isolation.ps1 succeeds in -Strict mode" {
+# Test 1: Standard audit with -Strict fails closed when no process exists (Finding P2)
+Run-TestCase "audit_runtime_network_isolation.ps1 fails closed in -Strict mode when no process exists" {
     $output = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$auditScript' -Strict 2>&1"
+    $exitCode = $LASTEXITCODE
+    $outputStr = ($output | Out-String)
+
+    if ($exitCode -eq 0) {
+        throw "Expected non-zero exit code when no processes exist in -Strict mode, got 0"
+    }
+    if ($outputStr -notmatch "No running AetherShell processes found to audit") {
+        throw "Expected fail-closed error message, got: $outputStr"
+    }
+}
+
+# Test 2: Live process isolation audit with -SpawnTestProcess succeeds and verifies 0 sockets
+Run-TestCase "audit_runtime_network_isolation.ps1 with -Strict and -SpawnTestProcess succeeds on live process" {
+    $output = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$auditScript' -Strict -SpawnTestProcess 2>&1"
     $exitCode = $LASTEXITCODE
     $outputStr = ($output | Out-String)
 
@@ -41,9 +55,12 @@ Run-TestCase "audit_runtime_network_isolation.ps1 succeeds in -Strict mode" {
     if ($outputStr -notmatch "Zero network sockets or remote connections detected") {
         throw "Expected zero network sockets confirmation, got: $outputStr"
     }
+    if ($outputStr -notmatch "Audited Process Count\s*:\s*[1-9]") {
+        throw "Expected at least 1 audited process in results table, got: $outputStr"
+    }
 }
 
-# Test 2: Non-existent PID fails gracefully
+# Test 3: Non-existent PID fails gracefully
 Run-TestCase "Non-existent PID produces error and fails gracefully" {
     $output = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$auditScript' -TargetPid 99999999 2>&1"
     $exitCode = $LASTEXITCODE
