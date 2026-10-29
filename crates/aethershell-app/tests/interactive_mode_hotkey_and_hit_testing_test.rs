@@ -2,7 +2,7 @@ use aethershell_app::{compile_live_scene_and_regions, extract_interactive_region
 use aethershell_core::{InteractionMode, NodeType};
 use aethershell_desktop::{
     DesktopHostWindow, DesktopWindowManager, DismissalReason, InteractionController,
-    InteractiveRegion, PointerHitResult,
+    InteractiveRegion, KeyboardNavigationResult, PointerHitResult,
 };
 use aethershell_renderer::ResolvedNode;
 use aethershell_win::DesktopHierarchyProbe;
@@ -351,4 +351,59 @@ fn test_compile_live_scene_and_regions_extraction() {
     assert_eq!(extracted[0].y, 10.0);
     assert_eq!(extracted[0].width, 80.0);
     assert_eq!(extracted[0].height, 25.0);
+    assert_eq!(
+        extracted[0].accessible_description(),
+        "Click Me button, action: custom.click"
+    );
+}
+
+#[test]
+fn test_keyboard_navigation_and_accessible_widget_extraction() {
+    let bindings = HashMap::new();
+    let (_, regions) = compile_live_scene_and_regions(1920.0, 1080.0, &bindings);
+
+    assert!(
+        !regions.is_empty(),
+        "Extracted regions must contain at least one interactive widget"
+    );
+
+    // Verify accessibility descriptions exist for extracted regions
+    for r in &regions {
+        let desc = r.accessible_description();
+        assert!(
+            !desc.is_empty(),
+            "Accessible description must not be empty for region {}",
+            r.id
+        );
+    }
+
+    let mut controller = InteractionController::new();
+    controller.enter_temporary_mode(10);
+
+    // Navigate with Tab
+    let nav_res = controller.handle_keyboard_navigation(0x09, false, &regions);
+    match nav_res {
+        KeyboardNavigationResult::FocusChanged { index, description } => {
+            assert_eq!(index, 0);
+            assert_eq!(description, regions[0].accessible_description());
+        }
+        other => panic!("Expected FocusChanged, got {:?}", other),
+    }
+
+    // Activate focused widget with Enter (0x0D)
+    let act_res = controller.handle_keyboard_navigation(0x0D, false, &regions);
+    match act_res {
+        KeyboardNavigationResult::Activated { action } => {
+            assert_eq!(Some(action), regions[0].action);
+        }
+        other => panic!("Expected Activated, got {:?}", other),
+    }
+
+    // Dismiss with Escape (0x1B)
+    let dis_res = controller.handle_keyboard_navigation(0x1B, false, &regions);
+    assert_eq!(
+        dis_res,
+        KeyboardNavigationResult::Dismissed(DismissalReason::EscapeKey)
+    );
+    assert_eq!(controller.current_mode(), InteractionMode::LockedPassive);
 }

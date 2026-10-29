@@ -15,7 +15,7 @@ use windows::Win32::System::RemoteDesktop::{
 };
 use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_NOREPEAT,
+    GetKeyState, RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_NOREPEAT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetWindowLongPtrW, IsWindow,
@@ -116,6 +116,7 @@ pub struct DesktopWindowState {
     pub on_dpi_changed: std::sync::Mutex<Option<DpiChangedCallback>>,
     pub on_display_change: std::sync::Mutex<Option<DisplayChangedCallback>>,
     pub interactive_regions: std::sync::Mutex<Vec<InteractiveRegion>>,
+    pub focused_region_index: std::sync::Mutex<Option<usize>>,
     pub current_dpi: Arc<AtomicU32>,
     pub current_bounds: std::sync::Mutex<[i32; 4]>,
     pub explorer_restart_count: Arc<AtomicUsize>,
@@ -177,6 +178,7 @@ impl DesktopHostWindow {
             on_dpi_changed: std::sync::Mutex::new(None),
             on_display_change: std::sync::Mutex::new(None),
             interactive_regions: std::sync::Mutex::new(Vec::new()),
+            focused_region_index: std::sync::Mutex::new(None),
             current_dpi: Arc::clone(&current_dpi),
             current_bounds,
             explorer_restart_count: Arc::clone(&explorer_restart_count),
@@ -346,6 +348,29 @@ impl DesktopHostWindow {
             unsafe {
                 if let Ok(mut guard) = (*self.state_ptr).on_display_change.lock() {
                     *guard = Some(Arc::new(cb));
+                }
+            }
+        }
+    }
+
+    /// Returns the currently keyboard-focused interactive region index (Gate G14).
+    pub fn focused_region_index(&self) -> Option<usize> {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(guard) = (*self.state_ptr).focused_region_index.lock() {
+                    return *guard;
+                }
+            }
+        }
+        None
+    }
+
+    /// Sets or clears the currently keyboard-focused interactive region index (Gate G14).
+    pub fn set_focused_region_index(&self, index: Option<usize>) {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(mut guard) = (*self.state_ptr).focused_region_index.lock() {
+                    *guard = index;
                 }
             }
         }
@@ -924,12 +949,114 @@ unsafe extern "system" fn desktop_host_wnd_proc(
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         WM_KEYDOWN => {
-            if wparam.0 == 0x1B {
-                // Escape key dismisses temporary interactive mode
-                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
-                if !ptr.is_null() {
-                    let state = &*ptr;
-                    dismiss_interactive_mode(hwnd, state, DismissalReason::EscapeKey);
+            let vk = wparam.0 as u32;
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
+            if !ptr.is_null() {
+                let state = &*ptr;
+                if state.is_interactive.load(Ordering::Relaxed) {
+                    match vk {
+                        0x1B => {
+                            // VK_ESCAPE: dismiss temporary interactive mode
+                            dismiss_interactive_mode(hwnd, state, DismissalReason::EscapeKey);
+                        }
+                        0x09 => {
+                            // VK_TAB: cycle focus forward (or backward if Shift is held)
+                            let shift = (GetKeyState(0x10 /* VK_SHIFT */) as u16 & 0x8000) != 0;
+                            if let Ok(regions) = state.interactive_regions.lock() {
+                                if !regions.is_empty() {
+                                    if let Ok(mut focus_guard) = state.focused_region_index.lock() {
+                                        let next_idx = match *focus_guard {
+                                            Some(curr) => {
+                                                if shift {
+                                                    if curr == 0 {
+                                                        regions.len() - 1
+                                                    } else {
+                                                        curr - 1
+                                                    }
+                                                } else {
+                                                    (curr + 1) % regions.len()
+                                                }
+                                            }
+                                            None => {
+                                                if shift {
+                                                    regions.len() - 1
+                                                } else {
+                                                    0
+                                                }
+                                            }
+                                        };
+                                        *focus_guard = Some(next_idx);
+                                        state
+                                            .last_activity_tick
+                                            .store(GetTickCount64(), Ordering::Relaxed);
+                                        let _ = InvalidateRect(hwnd, None, false);
+                                    }
+                                }
+                            }
+                        }
+                        0x27 | 0x28 => {
+                            // VK_RIGHT or VK_DOWN: move focus forward
+                            if let Ok(regions) = state.interactive_regions.lock() {
+                                if !regions.is_empty() {
+                                    if let Ok(mut focus_guard) = state.focused_region_index.lock() {
+                                        let next_idx = match *focus_guard {
+                                            Some(curr) => (curr + 1) % regions.len(),
+                                            None => 0,
+                                        };
+                                        *focus_guard = Some(next_idx);
+                                        state
+                                            .last_activity_tick
+                                            .store(GetTickCount64(), Ordering::Relaxed);
+                                        let _ = InvalidateRect(hwnd, None, false);
+                                    }
+                                }
+                            }
+                        }
+                        0x25 | 0x26 => {
+                            // VK_LEFT or VK_UP: move focus backward
+                            if let Ok(regions) = state.interactive_regions.lock() {
+                                if !regions.is_empty() {
+                                    if let Ok(mut focus_guard) = state.focused_region_index.lock() {
+                                        let prev_idx = match *focus_guard {
+                                            Some(curr) => {
+                                                if curr == 0 {
+                                                    regions.len() - 1
+                                                } else {
+                                                    curr - 1
+                                                }
+                                            }
+                                            None => regions.len() - 1,
+                                        };
+                                        *focus_guard = Some(prev_idx);
+                                        state
+                                            .last_activity_tick
+                                            .store(GetTickCount64(), Ordering::Relaxed);
+                                        let _ = InvalidateRect(hwnd, None, false);
+                                    }
+                                }
+                            }
+                        }
+                        0x0D | 0x20 => {
+                            // VK_RETURN or VK_SPACE: activate focused widget
+                            let focused_opt =
+                                state.focused_region_index.lock().ok().and_then(|g| *g);
+                            if let Some(idx) = focused_opt {
+                                if let Ok(regions) = state.interactive_regions.lock() {
+                                    if let Some(region) = regions.get(idx) {
+                                        state
+                                            .last_activity_tick
+                                            .store(GetTickCount64(), Ordering::Relaxed);
+                                        if let Ok(guard) = state.on_action.lock() {
+                                            if let Some(ref cb) = *guard {
+                                                cb(region, region.x, region.y);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
             LRESULT(0)
@@ -968,6 +1095,9 @@ unsafe fn dismiss_interactive_mode(
 ) {
     if state.is_interactive.load(Ordering::SeqCst) {
         state.is_interactive.store(false, Ordering::SeqCst);
+        if let Ok(mut guard) = state.focused_region_index.lock() {
+            *guard = None;
+        }
         let passive_styles = DesktopHost::surface_extended_styles(false);
         let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, passive_styles as isize);
         let behind = safe_stacking_target(state.shelldll_defview);
