@@ -77,18 +77,18 @@ Run-TestCase "FINAL_RELEASE_ACCEPTANCE_LEDGER.json exists and conforms to schema
 # -----------------------------------------------------------------------------
 # Test 3: Reconciled 20 gates strictly adhere to PRD Section 18.2
 # -----------------------------------------------------------------------------
-Run-TestCase "Gate accounting strictly enforces 3 VERIFIED (G01, G02, G03), 15 PARTIAL, 1 N/A, 1 DEFERRED" {
+Run-TestCase "Gate accounting strictly enforces 4 VERIFIED (G01, G02, G03, G04), 14 PARTIAL, 1 N/A, 1 DEFERRED" {
     $ledgerJson = Get-Content -LiteralPath $ledgerPath -Raw | ConvertFrom-Json
     $summary = $ledgerJson.GateAccountingSummary
 
     if ($summary.TotalGates -ne 20) {
         throw "Expected 20 TotalGates, got: $($summary.TotalGates)"
     }
-    if ($summary.Verified -ne 3) {
-        throw "GOVERNANCE BREACH: Verified count must be strictly 3 (Gates G01, G02, G03), got: $($summary.Verified)"
+    if ($summary.Verified -ne 4) {
+        throw "GOVERNANCE BREACH: Verified count must be strictly 4 (Gates G01, G02, G03, G04), got: $($summary.Verified)"
     }
-    if ($summary.PartiallyVerified -ne 15) {
-        throw "Expected 15 PartiallyVerified gates, got: $($summary.PartiallyVerified)"
+    if ($summary.PartiallyVerified -ne 14) {
+        throw "Expected 14 PartiallyVerified gates, got: $($summary.PartiallyVerified)"
     }
     if ($summary.NotApplicable -ne 1) {
         throw "Expected 1 NotApplicable gate (G05), got: $($summary.NotApplicable)"
@@ -122,6 +122,15 @@ Run-TestCase "Gate accounting strictly enforces 3 VERIFIED (G01, G02, G03), 15 P
     }
     if ($g03.Evidence -notmatch "EVD-052") {
         throw "Expected G03 Evidence to cite EVD-052, got: $($g03.Evidence)"
+    }
+
+    # Verify G04 specifically
+    $g04 = $ledgerJson.AcceptanceGates | Where-Object { $_.GateId -eq "G04" }
+    if ($g04.Status -ne "VERIFIED") {
+        throw "Expected G04 to be VERIFIED, got: $($g04.Status)"
+    }
+    if ($g04.Evidence -notmatch "EVD-053") {
+        throw "Expected G04 Evidence to cite EVD-053, got: $($g04.Evidence)"
     }
 
     # Verify G05 and G15 specifically

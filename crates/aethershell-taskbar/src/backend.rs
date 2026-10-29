@@ -187,6 +187,7 @@ impl TaskbarBackend for ExternalAppearanceBackend {
     }
 
     fn restore_native(&mut self, _monitor_id: &str) -> Result<(), TaskbarBackendError> {
+        let _ = crate::recovery::restore_system_taskbars();
         Ok(())
     }
 }

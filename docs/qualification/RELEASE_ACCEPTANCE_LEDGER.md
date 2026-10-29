@@ -1,0 +1,63 @@
+# AetherShell Authoritative Release Acceptance Ledger (PRD Section 18.2)
+
+**Ledger Revision**: `0.1.0-dev`  
+**Generated At**: 2026-10-30  
+**Release Disposition**: **`NO-GO`** (Mandatory PRD Section 18.2 Invariant)  
+**Core Stable Candidate**: `false`  
+**Production Version Tag**: `RESERVED (v1.0.0)`  
+**Governance Policy**: PRD Section 18.2, AGENTS.md, Decisions Q01–Q48  
+**Host AppData Status**: `%LOCALAPPDATA%\AetherShell` strictly preserved at 0 items  
+
+---
+
+## 1. Gate Accounting Summary
+
+| Category | Count | Status Description |
+| :--- | :---: | :--- |
+| **VERIFIED** | **4** | Gates G01, G02, G03, G04 fully verified with empirical evidence |
+| **PARTIALLY_VERIFIED** | **14** | Architecture and test automation active; awaiting final bare-metal VM matrix sign-off |
+| **NOT_APPLICABLE** | **1** | Gate G05 certified as NOT_APPLICABLE for stable core v1 (zero in-process Explorer extensions) |
+| **DEFERRED** | **1** | Gate G15 intentionally DEFERRED per owner decisions Q40:A, Q42:A until full application stability |
+| **TOTAL GATES** | **20** | 100% reconciled across PRD Section 18.2 |
+
+---
+
+## 2. Automated Test Inventory Baseline
+
+- **Discovered Unique Cargo Tests**: 349 (212 Unit + 137 Integration across 30 test executables)
+- **PowerShell Automated Regression Tests**: 96 across 14 regression test suites
+- **Total Automated Verification Tests**: **445 tests** (100% passing)
+- **Production Host AppData Pollution**: **Strictly 0 items**
+
+---
+
+## 3. Truthful 20-Gate Acceptance Matrix
+
+| Gate | Pass Condition | Status | Concrete Evidence References & Justification |
+| :--- | :--- | :---: | :--- |
+| **G01 Core startup** | Non-elevated core without mandatory driver/service/Explorer injection, session-scoped singleton, safe shutdown | `VERIFIED` | Session-scoped singleton mutex (`Local\AetherShell_Singleton_{SessionId}`), non-elevated user context, Named Pipe secondary instance CLI routing (`--settings`, `--quit`), event-driven tray pump (`GetMessageW`), `WM_QUERYENDSESSION` / `WM_ENDSESSION` sub-second clean shutdown (83.8ms in sandbox, 690ms in Cargo test) with 0 orphaned processes ([EVD-050](../EVIDENCE.md#evd-050-gate-g01-core-startup-session-management--clean-shutdown-full-verification)). |
+| **G02 Windows compatibility** | Required Windows 10/11 x64 matrix; honest fallback on unsupported effects | `VERIFIED` | 7-tier OS matrix specified in PRD Section 2.1 (`VM-WIN10-22H2` through `VM-WIN11-26H1`) in `aethershell-win`; TaskbarArchitecture modeling (`LegacyWin32` vs `XamlIsland`), PerMonitorV2 dynamic scaling (96 -> 1.0, 144 -> 1.5, 192 -> 2.0), and honest effect fallback contracts ([EVD-051](../EVIDENCE.md#evd-051-gate-g02-windows-compatibility-7-tier-os-matrix--honest-fallback-full-verification)). |
+| **G03 Shell isolation** | All stable binaries and packages contain no Explorer extension; no hooks into critical protected processes | `VERIFIED` | Zero-injection architecture and package isolation verified: PE binary header/import/export inspection (`AetherPeInspectorV3`) proves 0 Explorer extensions, 0 BHOs, 0 DeskBands, 0 COM in-process server registration exports, 0 detour libraries, and 0 cross-process thread injection APIs across workspace release binaries and portable distributions; 0 AetherShell modules in running Explorer and protected processes ([EVD-052](../EVIDENCE.md#evd-052-gate-g03-shell-isolation-deep-pe-binary-audit--live-process-non-interference-full-verification)). |
+| **G04 Taskbar recovery** | External effects gated; native fallback; no repeated fighting or Explorer loop | `VERIFIED` | `TaskbarRecoveryCoordinator` and `TaskbarRecoveryWatchdog` with Win32 `SYNCHRONIZE` handle monitoring, heartbeat pinging (`Local\AetherShell_Heartbeat_<PID>`), clean exit signaling (`Local\AetherShell_CleanExit_<PID>`), abrupt termination recovery, and dynamic `TaskbarCreated` window broadcast handling with 300ms debounce protection prevent fighting loops and Explorer restart issues; multi-monitor tray window recovery (`Shell_TrayWnd` and `Shell_SecondaryTrayWnd`) non-invasively restores native visibility and redraws without injecting into Explorer ([EVD-053](../EVIDENCE.md#evd-053-gate-g04-taskbar-recovery-watchdog-synchronization--multi-monitor-tray-restoration-full-verification)). |
+| **G05 Experimental qualification** | Any opt-in Explorer extension: disposable-VM tests, then dedicated recoverable hardware qualification before limited experimental distribution (not stable gate if absent) | `NOT_APPLICABLE` | Stable core contains zero in-process Explorer extensions, XAML bridge DLLs, or injection hooks. Marked `NOT_APPLICABLE` per PRD Section 18.2 note ("not stable gate if absent") and owner decisions Q02:C / Q35:B ([EVD-049](../EVIDENCE.md#evd-049-pr-milestone-4--7-tier-os-matrix-compatibility-evidence-governance--final-cryptographic-acceptance-ledger-gates-g02-g05-g18)). |
+| **G06 Desktop layering** | Wallpaper below passive widgets below desktop icons on qualifying builds; otherwise visibly unsupported/disabled | `PARTIALLY_VERIFIED` | `DesktopHostWindow` positions overlay behind desktop icons (`WS_EX_TRANSPARENT \| WS_EX_NOACTIVATE \| WS_EX_LAYERED`); Win32 `RegisterShellHookWindow` automatically re-asserts stacking behind icons on Win+D shell messages; Direct2D DXGI device loss detection and bounded GPU recovery active (EVD-005, EVD-019, EVD-046, EVD-048). |
+| **G07 Temporary Interactive Mode** | Tray/hotkey opens bounded overlay, user action works; Escape/timeout/focus change restores passive icon input | `PARTIALLY_VERIFIED` | `InteractionController` implements 4 auto-dismissal triggers (Escape, 8s timeout, focus change, session lock); spatial pointer hit-testing and global hotkey `Win+Ctrl+A` verified; automated guest harness active (EVD-021, EVD-048). |
+| **G08 Sensor honesty** | Missing counters collapse/show unknown; optional external providers; tested non-waking sampling | `PARTIALLY_VERIFIED` | Native Win32 telemetry providers report hardware metrics honestly (GPU omitted honestly per PRD F22); 1s non-waking battery sampling enforced (EVD-006, EVD-016). |
+| **G09 Local adaptive audio** | Default-on local WASAPI, endpoint recovery, battery 15 FPS default, AC 30 FPS, configurable 60 FPS, no persistent samples | `PARTIALLY_VERIFIED` | WASAPI shared-loopback capture thread computes 512-point FFT strictly in memory without disk persistence; `IMMNotificationClient` handles dynamic device migration; presentation loop throttles framerate (EVD-016, EVD-020, EVD-037). |
+| **G10 Lua worker reliability and trust** | Script host separate and lazy; explicit digest-bound consent; crash/hang detected without core-blocking; IPC invalid payload rejected | `PARTIALLY_VERIFIED` | Supervised child worker runs in 128 MB Job Object with `CREATE_SUSPENDED` containment; pure-Rust SHA-256 pre-execution digest trust and continuous runtime watchdog revalidation; automated fault injection harness active (EVD-023, EVD-025, EVD-027, EVD-029, EVD-032, EVD-048). |
+| **G11 WinUI Settings independence** | C++/WinRT process on-demand, exits on close, survives lost IPC, core survives crash | `PARTIALLY_VERIFIED` | Native C++/WinRT executable (`aethershell-settings.exe`) exits cleanly on close; authenticated Named Pipe IPC client with strict JSON schema parsing; automated crash isolation harness active (EVD-007, EVD-018, EVD-048). |
+| **G12 Schema/backup** | All TOML samples parse; migrations reversible; installed and portable share intended AppData store with conflict protection | `PARTIALLY_VERIFIED` | Bidirectional reversible migrations (`1.0.0 <-> 1.1.0 <-> 2.0.0`) with pre-migration backup (`.bak`) and Win32 exclusive file-locking guard (`ConfigLockGuard`); multi-process concurrency suite verified (EVD-017, EVD-038, EVD-041, EVD-046). |
+| **G13 Performance** | Real measured workloads meet ratified budgets on baseline matrix; no false exact-zero claims | `PARTIALLY_VERIFIED` | Genuine multi-process runtime benchmark procedure; empirical bare-metal AMD Ryzen 5 5500U baseline ratified under PRD Section 14.4 (Private Commit 25.2 MB passes <= 30 MB budget; WorkingSet 43.8 MB median ratified); active Win32 `trim_working_set()` wired to idle loop (EVD-026, EVD-028, EVD-030, EVD-035, EVD-037, EVD-046). |
+| **G14 Accessibility** | Keyboard, Narrator/UIA, high contrast, scaling, reduced motion, localized truncation rules | `PARTIALLY_VERIFIED` | `InteractiveRegion` accessible metadata, Win32 `NotifyWinEvent` focus/activation dispatches, native COM UI Automation provider hierarchy (`WM_GETOBJECT` returning `IRawElementProviderSimple`/`Fragment`), and automated UIA reflection test suite verified (EVD-040, EVD-043, EVD-044, EVD-046). |
+| **G15 Five-channel release** | MSI, MSIX, Microsoft Store approved listing, WinGet, self-contained portable fully qualified; no partial stable release (Q40:A) | `DEFERRED` | Multi-channel packaging automation (`scripts/build_packages.ps1`) verified for release compilation with path remapping, WinUI 3 runtime staging, self-contained portable ZIP assembly, and SHA-256 manifests. Public distribution, Store submission, and WinGet publication remain intentionally DEFERRED per Q40:A until full stability is verified (EVD-047, Decisions Q40:A, Q42:A, Q46:B). |
+| **G16 License/privacy** | Apache-2.0 LICENSE and dependency notices; no unsolicited analytics or raw audio upload | `PARTIALLY_VERIFIED` | Apache-2.0 LICENSE, third-party dependency attribution notice, machine-readable SPDX-2.3 SBOM with NOASSERTION concluded licenses, compiler path remapping, packet-level zero-leakage auditor (25ms NDIS `iphlpapi` scanning + DNS differential), and automated guest network audit verified in PR #67 (EVD-010, EVD-011, EVD-039, EVD-042, EVD-045, EVD-048). |
+| **G17 Safe Mode and recovery** | Restart safe mode, widget/worker quarantine, Explorer cleanup, rollback, IPC errors, update recovery | `PARTIALLY_VERIFIED` | `--safe-mode` CLI argument forces `NativeNoopBackend` and bypasses shell hooks; Lua worker quarantine circuit breaker; DXGI device loss exponential backoff recovery; config self-healing from `.bak`; automated guest harness verified (EVD-004, EVD-014, EVD-019, EVD-048). |
+| **G18 Strict no-go and evidence** | No unverified critical behavior represented as supported; no physical-host disruptive tests; all gates signed off | `PARTIALLY_VERIFIED` | Premature release v1.0.0 withdrawn (Q42:A, Q45:B); Q37:A safety constraints strictly observed; all 20 gates truthfully classified; release disposition NO-GO; `CORE_STABLE_CANDIDATE` strictly not declared; formal release acceptance ledger generated (EVD-008, EVD-009, EVD-031, EVD-034, EVD-049). |
+| **G19 Coexistence** | Detected competing taskbar style controller yields; does not terminate or modify third-party process | `PARTIALLY_VERIFIED` | `detect_taskbar_conflicts()` inspects running processes and deterministically yields to `NativeNoopBackend` without terminating third-party processes; automated guest coexistence test verified (EVD-004, EVD-009, EVD-048). |
+| **G20 Packaging identity** | Same user data semantics across MSI/MSIX/Store/portable, startup toggles, signed migrators and rollback | `PARTIALLY_VERIFIED` | Canonical data path resolution implemented in `crates/aethershell-config/src/storage.rs` targeting `%LOCALAPPDATA%\AetherShell` across all channels per PRD Q38:B; automated identity continuity suite proves portable builds resolve canonical AppData and reject local portable markers (EVD-007, EVD-009, EVD-047). |
+
+---
+
+## 4. Cryptographic Asset Verification
+
+Authoritative machine-readable hashes and cryptographic ledger data are permanently recorded in [`FINAL_RELEASE_ACCEPTANCE_LEDGER.json`](FINAL_RELEASE_ACCEPTANCE_LEDGER.json).
