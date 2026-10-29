@@ -14,6 +14,7 @@ use windows::Win32::System::RemoteDesktop::{
     WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
 };
 use windows::Win32::System::SystemInformation::GetTickCount64;
+use windows::Win32::UI::Accessibility::NotifyWinEvent;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_NOREPEAT,
 };
@@ -30,6 +31,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 /// Hotkey ID for toggling Temporary Interactive Mode (PRD Section 5.3 & Q31:A).
 pub const HOTKEY_ID_INTERACTIVE_MODE: i32 = 0xAE01;
+
+/// Standard Win32 client object identifier for accessibility events.
+const OBJID_CLIENT: i32 = -4;
 
 static CLASS_REGISTERED: AtomicBool = AtomicBool::new(false);
 const DESKTOP_HOST_CLASS_NAME: windows::core::PCWSTR = w!("AetherShellDesktopHostWindow");
@@ -990,6 +994,12 @@ unsafe extern "system" fn desktop_host_wnd_proc(
                                             .last_activity_tick
                                             .store(GetTickCount64(), Ordering::Relaxed);
                                         let _ = InvalidateRect(hwnd, None, false);
+                                        NotifyWinEvent(
+                                            0x8005, /* EVENT_OBJECT_FOCUS */
+                                            hwnd,
+                                            OBJID_CLIENT,
+                                            (next_idx + 1) as i32,
+                                        );
                                     }
                                 }
                             }
@@ -1008,6 +1018,12 @@ unsafe extern "system" fn desktop_host_wnd_proc(
                                             .last_activity_tick
                                             .store(GetTickCount64(), Ordering::Relaxed);
                                         let _ = InvalidateRect(hwnd, None, false);
+                                        NotifyWinEvent(
+                                            0x8005, /* EVENT_OBJECT_FOCUS */
+                                            hwnd,
+                                            OBJID_CLIENT,
+                                            (next_idx + 1) as i32,
+                                        );
                                     }
                                 }
                             }
@@ -1032,6 +1048,12 @@ unsafe extern "system" fn desktop_host_wnd_proc(
                                             .last_activity_tick
                                             .store(GetTickCount64(), Ordering::Relaxed);
                                         let _ = InvalidateRect(hwnd, None, false);
+                                        NotifyWinEvent(
+                                            0x8005, /* EVENT_OBJECT_FOCUS */
+                                            hwnd,
+                                            OBJID_CLIENT,
+                                            (prev_idx + 1) as i32,
+                                        );
                                     }
                                 }
                             }
@@ -1051,6 +1073,12 @@ unsafe extern "system" fn desktop_host_wnd_proc(
                                                 cb(region, region.x, region.y);
                                             }
                                         }
+                                        NotifyWinEvent(
+                                            0x8008, /* EVENT_SYSTEM_ALERT */
+                                            hwnd,
+                                            OBJID_CLIENT,
+                                            (idx + 1) as i32,
+                                        );
                                     }
                                 }
                             }
