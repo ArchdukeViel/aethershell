@@ -5,7 +5,7 @@
 **Remote Repository**: `https://github.com/ArchdukeViel/aethershell`  
 **Host Environment**: Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM  
 **Host AppData Status**: `%LOCALAPPDATA%\AetherShell` strictly maintained at 0 items (100% clean)  
-**Acceptance Ledger**: 2 `VERIFIED` (G01, G02), 16 `PARTIALLY_VERIFIED`, 1 `NOT_APPLICABLE` (G05), 1 `DEFERRED` (G15). `CORE_STABLE_CANDIDATE` strictly not declared; `v1.0.0` reserved.
+**Acceptance Ledger**: 3 `VERIFIED` (G01, G02, G03), 15 `PARTIALLY_VERIFIED`, 1 `NOT_APPLICABLE` (G05), 1 `DEFERRED` (G15). `CORE_STABLE_CANDIDATE` strictly not declared; `v1.0.0` reserved.
 
 ---
 
@@ -28,7 +28,8 @@ In accordance with explicit project owner authorization (`/goal implement the re
 | **PR #67** | **PR Milestone 3** (Gates G01, G04, G06, G07, G10, G11, G16, G17, G19) | - Disposable guest qualification harness (`scripts/guest_sandbox_qualification.ps1`)<br>- Automated host orchestrator (`scripts/run_disposable_vm_qualification.ps1`) with Q01:B / Q48:A resource preflight<br>- Windows Sandbox XML profile generation (2048 MB RAM, airgap network containment)<br>- Automated regression suite (`tests/disposable_vm_qualification_tests.ps1`) | All 4 CI checks pass<br>302 Cargo tests pass<br>61 PowerShell tests pass | `8552fbc` |
 | **PR #68** | **PR Milestone 4** (Gates G02, G05, G18) | - 7-tier OS matrix compatibility auditor (`scripts/audit_os_matrix_compatibility.ps1`) & regression suite (`tests/os_matrix_compatibility_tests.ps1`)<br>- Gate G05 formal certification as `NOT_APPLICABLE` (0 in-process Explorer extensions)<br>- Cryptographic release acceptance ledger generator (`scripts/generate_release_acceptance_ledger.ps1`) & regression suite (`tests/release_acceptance_ledger_tests.ps1`)<br>- Reconciled release ledger `FINAL_RELEASE_ACCEPTANCE_LEDGER.json` enforcing NO-GO disposition | All 4 CI checks pass<br>302 Cargo tests pass<br>65 PowerShell tests pass | `4a95ee8` |
 | **PR #69** | **Gate G01 Verification** (Core Startup, Session Singleton & Safe Shutdown) | - Win32 `WM_QUERYENDSESSION` (returns 1) & `WM_ENDSESSION` handling in tray and desktop windows<br>- Win32 `WM_CLOSE` / `WM_DESTROY` tray signal bridge to engine `shutdown_flag`<br>- CLI `--quit` routing to active session over Named Pipe IPC (`aethershell-app`)<br>- Synchronized lifecycle and tray test suites (`LIFECYCLE_TEST_LOCK` & `TRAY_TEST_MUTEX`)<br>- Guest sandbox qualification: non-elevated user startup, singleton, and clean exit in 83.8ms (< 1500ms budget) | All 4 CI checks pass<br>309 Cargo tests pass<br>71 PowerShell tests pass | `b966032` |
-| **PR #70** | **Gate G02 Verification** (Windows Compatibility, 7-Tier OS Matrix & Honest Fallback) | - Formalized all 7 PRD Section 2.1 OS compatibility tiers in `crates/aethershell-win/src/os_version.rs`<br>- Implemented `TaskbarArchitecture` detection (`LegacyWin32` vs `XamlIsland`)<br>- Enforced honest fallback contract in `ExternalAppearanceBackend` (no-op on Win10, unverified Win11, Win11 21H2 below baseline, and runtime states BatterySaver/Suspended)<br>- Enriched `get_capabilities` IPC endpoint with OS tier and architecture metadata querying `tier_capabilities()`<br>- Added dedicated 8-test integration suite (`crates/aethershell-app/tests/os_matrix_compatibility_integration_test.rs`) | All 4 CI checks pass<br>325 Cargo tests pass<br>76 PowerShell tests pass | Current HEAD |
+| **PR #70** | **Gate G02 Verification** (Windows Compatibility, 7-Tier OS Matrix & Honest Fallback) | - Formalized all 7 PRD Section 2.1 OS compatibility tiers in `crates/aethershell-win/src/os_version.rs`<br>- Implemented `TaskbarArchitecture` detection (`LegacyWin32` vs `XamlIsland`)<br>- Enforced honest fallback contract in `ExternalAppearanceBackend` (no-op on Win10, unverified Win11, Win11 21H2 below baseline, and runtime states BatterySaver/Suspended)<br>- Enriched `get_capabilities` IPC endpoint with OS tier and architecture metadata querying `tier_capabilities()`<br>- Added dedicated 8-test integration suite (`crates/aethershell-app/tests/os_matrix_compatibility_integration_test.rs`) | All 4 CI checks pass<br>329 Cargo tests pass<br>79 PowerShell tests pass | `b966032` |
+| **PR #71** | **Gate G03 Verification** (Shell Isolation, PE Binary Audit & Live Module Non-Interference) | - Deep PE binary inspection (`AetherPeInspectorV3` in `audit_package_artifacts.ps1`)<br>- Enforces 0 COM in-process server registration exports, 0 detour libraries, 0 injection APIs<br>- Dedicated Cargo integration suite `shell_isolation_integration_test.rs` (5 tests)<br>- Expanded package isolation tests to 16 tests with live running Explorer and protected process scan<br>- Audited 36 portable binaries cleanly with SHA-256 manifests | All 4 CI checks pass<br>334 Cargo tests pass<br>89 PowerShell tests pass | Current HEAD |
 
 ---
 
@@ -169,7 +170,7 @@ Audit Mode      : Discovered
 --- Crate Test Ledger ---
 Crate                   UnitTests IntegrationTests TotalTests SuitesCount
 -----                   --------- ---------------- ---------- -----------
-aethershell-app                10              105        115          14
+aethershell-app                11              113        124          15
 aethershell-audio               9                0          9           1
 aethershell-config             33                0         33           1
 aethershell-core                9                0          9           1
@@ -185,20 +186,20 @@ aethershell-win                21                0         21           1
 
 ================================================================================
 SUMMARY AUDIT VERDICT:
-  Unique Unit Tests        : 201
-  Unique Integration Tests : 124
-  Total Unique Tests       : 325
+  Unique Unit Tests        : 202
+  Unique Integration Tests : 132
+  Total Unique Tests       : 334
 ================================================================================
 ```
 
-### PowerShell Qualification & Regression Suites (76 Passing Tests Across 13 Suites)
+### PowerShell Qualification & Regression Suites (89 Passing Tests Across 13 Suites)
 1. `tests/disposable_vm_qualification_tests.ps1`: 5/5 passed.
-2. `tests/package_isolation_tests.ps1`: 6/6 passed.
+2. `tests/package_isolation_tests.ps1`: 16/16 passed.
 3. `tests/packaging_identity_continuity_tests.ps1`: 4/4 passed.
 4. `tests/accessibility_uia_tests.ps1`: 6/6 passed.
 5. `tests/config_concurrency_tests.ps1`: 4/4 passed.
 6. `tests/packet_level_network_isolation_tests.ps1`: 7/7 passed.
-7. `tests/os_matrix_compatibility_tests.ps1`: 9/9 passed.
+7. `tests/os_matrix_compatibility_tests.ps1`: 12/12 passed.
 8. `tests/release_acceptance_ledger_tests.ps1`: 6/6 passed.
 9. `tests/test_inventory_tests.ps1`: 6/6 passed.
 10. `tests/run_ryzen5_benchmark_tests.ps1`: 11/11 passed.
@@ -214,7 +215,7 @@ SUMMARY AUDIT VERDICT:
 | :--- | :--- | :--- | :--- |
 | **G01** | Core Startup & Lifecycle | `VERIFIED` | EVD-003, EVD-010, EVD-014, EVD-037, EVD-048 (PR #67), EVD-050 |
 | **G02** | Windows Compatibility & OS Matrix | `VERIFIED` | EVD-002, EVD-022, EVD-049 (PR #68), EVD-051 |
-| **G03** | Shell Isolation | `PARTIALLY_VERIFIED` | EVD-003, EVD-012, EVD-047 (PR #66) |
+| **G03** | Shell Isolation | `VERIFIED` | EVD-003, EVD-012, EVD-047 (PR #66), EVD-052 |
 | **G04** | Taskbar Recovery | `PARTIALLY_VERIFIED` | EVD-004, EVD-014, EVD-015, EVD-048 (PR #67) |
 | **G05** | Experimental Qualification | `NOT_APPLICABLE` | PRD Section 18.2, EVD-049 (PR #68; 0 in-process Explorer extensions) |
 | **G06** | Desktop Layering | `PARTIALLY_VERIFIED` | EVD-005, EVD-019, EVD-046 (PR #65), EVD-048 (PR #67) |

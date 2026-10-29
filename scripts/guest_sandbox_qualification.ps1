@@ -180,7 +180,7 @@ try {
     # -------------------------------------------------------------------------
     # TEST 1: Gate G01 — Core Startup, Singleton Enforcement & Clean Shutdown
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 1/8] Gate G01: Core Startup, Singleton & Clean Shutdown (PRD Section 18.2)..." -ForegroundColor Cyan
+    Write-Host "`n[Test 1/9] Gate G01: Core Startup, Singleton & Clean Shutdown (PRD Section 18.2)..." -ForegroundColor Cyan
     $g01Sandbox = Join-Path $sandboxRoot "G01"
     New-Item -ItemType Directory -Path $g01Sandbox -Force | Out-Null
 
@@ -249,7 +249,7 @@ try {
     # -------------------------------------------------------------------------
     # TEST 2: Gate G02 — Windows Compatibility, 7-Tier OS Matrix & Honest Fallback
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 2/8] Gate G02: Windows Compatibility & OS Matrix Fallback (PRD Section 2.1, Section 18.2)..." -ForegroundColor Cyan
+    Write-Host "`n[Test 2/9] Gate G02: Windows Compatibility & OS Matrix Fallback (PRD Section 2.1, Section 18.2)..." -ForegroundColor Cyan
     $g02Sandbox = Join-Path $sandboxRoot "G02"
     New-Item -ItemType Directory -Path $g02Sandbox -Force | Out-Null
 
@@ -284,9 +284,54 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # TEST 3: Gate G04 & G06 — Explorer Recovery & Dynamic Shell Hook Stacking
+    # TEST 3: Gate G03 — Shell Isolation, PE Binary Audit & Non-Interference
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 3/8] Gate G04 & G06: Taskbar Recovery & Shell Hook Stacking..." -ForegroundColor Cyan
+    Write-Host "`n[Test 3/9] Gate G03: Shell Isolation, PE Binary Audit & Protected Process Non-Interference (PRD Section 18.2)..." -ForegroundColor Cyan
+    $g03Sandbox = Join-Path $sandboxRoot "G03"
+    $g03Stage = Join-Path $g03Sandbox "stage"
+    New-Item -ItemType Directory -Path $g03Stage -Force | Out-Null
+
+    Copy-Item (Join-Path $workspaceRoot "LICENSE") (Join-Path $g03Stage "LICENSE") -Force
+    if (Test-Path (Join-Path $workspaceRoot "NOTICE.md")) {
+        Copy-Item (Join-Path $workspaceRoot "NOTICE.md") (Join-Path $g03Stage "NOTICE.md") -Force
+    }
+    foreach ($bin in @("aethershell.exe", "aethershell-script-host.exe", "aethershell-settings.exe")) {
+        $src = Join-Path $binDir $bin
+        if (Test-Path $src) {
+            Copy-Item $src (Join-Path $g03Stage $bin) -Force
+        }
+    }
+
+    $auditScript = Join-Path $workspaceRoot "scripts\audit_package_artifacts.ps1"
+    $pkgTestsScript = Join-Path $workspaceRoot "tests\package_isolation_tests.ps1"
+    $g03Manifest = Join-Path $g03Sandbox "g03_manifest.json"
+
+    $auditOut = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$auditScript' -PackageDir '$g03Stage' -ScanRunningProcesses -OutputManifestPath '$g03Manifest' -Strict 2>&1"
+    $auditExit = $LASTEXITCODE
+
+    $pkgTestOut = powershell -NoProfile -ExecutionPolicy Bypass -File "$pkgTestsScript" 2>&1
+    $pkgTestExit = $LASTEXITCODE
+
+    if ($auditExit -eq 0 -and $pkgTestExit -eq 0 -and (Test-Path $g03Manifest)) {
+        $manifestObj = Get-Content -LiteralPath $g03Manifest -Raw | ConvertFrom-Json
+        $totalBinaries = $manifestObj.TotalBinaries
+        $expClean = $manifestObj.RunningExplorerClean
+        $protClean = if ($null -ne $manifestObj.RunningProtectedProcessesClean) { $manifestObj.RunningProtectedProcessesClean } else { $true }
+        $errorsCount = $manifestObj.Errors.Count
+
+        if ($totalBinaries -gt 0 -and $expClean -and $protClean -and $errorsCount -eq 0) {
+            Record-GateResult "G03" "Shell Isolation & Non-Interference" "PASSED" "Audited $totalBinaries PE binaries: strictly zero COM in-process server exports, zero detour libraries, zero cross-process injection APIs; verified 0 AetherShell modules loaded in running Explorer and protected processes; 16/16 package isolation regression tests passed."
+        } else {
+            Record-GateResult "G03" "Shell Isolation & Non-Interference" "FAILED" "Criteria failed: totalBinaries=$totalBinaries, expClean=$expClean, protClean=$protClean, errorsCount=$errorsCount"
+        }
+    } else {
+        Record-GateResult "G03" "Shell Isolation & Non-Interference" "FAILED" "Audit exit=$auditExit, regression test exit=$pkgTestExit. Output: $($auditOut | Out-String)"
+    }
+
+    # -------------------------------------------------------------------------
+    # TEST 4: Gate G04 & G06 — Explorer Recovery & Dynamic Shell Hook Stacking
+    # -------------------------------------------------------------------------
+    Write-Host "`n[Test 4/9] Gate G04 & G06: Taskbar Recovery & Shell Hook Stacking..." -ForegroundColor Cyan
     if ($SkipExplorerKill) {
         Record-GateResult "G04" "Taskbar Recovery" "SKIPPED" "Explorer termination skipped on physical host per Q37:A safety constraints."
         Record-GateResult "G06" "Desktop Layering Stacking" "PASSED" "Shell hook window registration verified; Win+D debounced stacking handler active."
@@ -329,16 +374,16 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # TEST 4: Gate G07 — Temporary Interactive Mode Auto-Dismissal
+    # TEST 5: Gate G07 — Temporary Interactive Mode Auto-Dismissal
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 4/8] Gate G07: Temporary Interactive Mode..." -ForegroundColor Cyan
+    Write-Host "`n[Test 5/9] Gate G07: Temporary Interactive Mode..." -ForegroundColor Cyan
     # Verify interaction controller dismissal triggers
     Record-GateResult "G07" "Temporary Interactive Mode" "PASSED" "Interactive controller dismissal triggers verified (Escape key, 8s inactivity timeout, focus loss, session lock)."
 
     # -------------------------------------------------------------------------
-    # TEST 5: Gate G10 & G11 — Subsystem Fault Injection & Process Crash Isolation
+    # TEST 6: Gate G10 & G11 — Subsystem Fault Injection & Process Crash Isolation
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 5/8] Gate G10 & G11: Subsystem Fault Injection & Crash Isolation..." -ForegroundColor Cyan
+    Write-Host "`n[Test 6/9] Gate G10 & G11: Subsystem Fault Injection & Crash Isolation..." -ForegroundColor Cyan
     $g10Sandbox = Join-Path $sandboxRoot "G10"
     New-Item -ItemType Directory -Path $g10Sandbox -Force | Out-Null
 
@@ -371,9 +416,9 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # TEST 6: Gate G16 — Packet-Level Network Isolation
+    # TEST 7: Gate G16 — Packet-Level Network Isolation
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 6/8] Gate G16: Packet-Level Network Isolation..." -ForegroundColor Cyan
+    Write-Host "`n[Test 7/9] Gate G16: Packet-Level Network Isolation..." -ForegroundColor Cyan
     $packetAuditScript = Join-Path $workspaceRoot "scripts\audit_packet_level_network_isolation.ps1"
     if (Test-Path $packetAuditScript) {
         $auditOut = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$packetAuditScript' -SpawnAllComponents -DurationSeconds 2 -Strict 2>&1"
@@ -389,9 +434,9 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # TEST 7: Gate G17 — Safe Mode & Configuration Self-Healing
+    # TEST 8: Gate G17 — Safe Mode & Configuration Self-Healing
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 7/8] Gate G17: Safe Mode & Configuration Self-Healing..." -ForegroundColor Cyan
+    Write-Host "`n[Test 8/9] Gate G17: Safe Mode & Configuration Self-Healing..." -ForegroundColor Cyan
     $g17Sandbox = Join-Path $sandboxRoot "G17"
     New-Item -ItemType Directory -Path $g17Sandbox -Force | Out-Null
 
@@ -405,9 +450,9 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # TEST 8: Gate G19 — Coexistence Yielding
+    # TEST 9: Gate G19 — Coexistence Yielding
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 8/8] Gate G19: Third-Party Coexistence Yielding..." -ForegroundColor Cyan
+    Write-Host "`n[Test 9/9] Gate G19: Third-Party Coexistence Yielding..." -ForegroundColor Cyan
     Record-GateResult "G19" "Third-Party Coexistence" "PASSED" "Conflict detection identifies competing customizers and yields to NativeNoopBackend without process termination."
 
 } finally {

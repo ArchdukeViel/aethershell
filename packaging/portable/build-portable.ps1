@@ -25,12 +25,12 @@ New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 # 2. Build or verify release binaries
-$RequiredBins = @("aethershell.exe", "aethershell-script-host.exe")
+$RequiredBins = @("aethershell.exe", "aethershell-script-host.exe", "aethershell-settings.exe")
 foreach ($bin in $RequiredBins) {
     $src = "$BinDir\$bin"
     if (-not (Test-Path $src)) {
         Write-Warning "Binary '$src' not found. Building release workspace binaries..."
-        cargo build --workspace --bin aethershell --bin aethershell-script-host --release
+        cargo build --workspace --bin aethershell --bin aethershell-script-host --bin aethershell-settings --release
         break
     }
 }

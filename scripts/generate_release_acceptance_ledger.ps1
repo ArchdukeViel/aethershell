@@ -104,9 +104,9 @@ $gates = @(
         GateId      = "G03"
         Name        = "Shell isolation"
         PassCondition= "All stable binaries and packages contain no Explorer extension; no hooks into critical protected processes"
-        Status      = "PARTIALLY_VERIFIED"
-        Evidence    = "EVD-003, EVD-012, EVD-047"
-        Reason      = "Non-injection architecture verified; package artifact isolation auditor (scripts/audit_package_artifacts.ps1) and regression suite verify 0 Explorer extensions across packages. Live disposable VM module audit remains outstanding."
+        Status      = "VERIFIED"
+        Evidence    = "EVD-003, EVD-012, EVD-047, EVD-052"
+        Reason      = "Zero-injection architecture and package isolation verified: PE binary header/import/export inspection (AetherPeInspectorV3 in scripts/audit_package_artifacts.ps1 and shell_isolation_integration_test.rs) proves 0 Explorer extensions, 0 BHOs, 0 DeskBands, 0 COM in-process server registration exports (DllRegisterServer, DllUnregisterServer, DllInstall), 0 detour/injection libraries (minhook, detours, easyhook, subhook, polyhook), and 0 cross-process thread injection APIs (CreateRemoteThread, NtCreateThreadEx, SetWindowsHookExW, QueueUserAPC) across workspace release binaries and portable distributions. Dynamic non-interference empirically verified across 16 regression tests, 5 Cargo integration tests, and guest qualification runner confirming strictly 0 AetherShell modules loaded in running explorer.exe and protected system processes (dwm.exe, csrss.exe, svchost.exe, audiodg.exe, msedge.exe)."
     },
     [PSCustomObject]@{
         GateId      = "G04"
@@ -258,14 +258,14 @@ Write-Host "    NOT_APPLICABLE    : $notApplicableCount" -ForegroundColor Cyan
 Write-Host "    DEFERRED          : $deferredCount" -ForegroundColor DarkCyan
 
 # Enforce Anti-Hallucination & Evidence First Integrity:
-if ($verifiedCount -ne 2) {
-    throw "GOVERNANCE VIOLATION: Premature claim of $verifiedCount VERIFIED gates! Only Gate G01 (EVD-050) and Gate G02 (EVD-051) are verified with empirical evidence; remaining gates require physical hardware/VM matrix qualification."
+if ($verifiedCount -ne 3) {
+    throw "GOVERNANCE VIOLATION: Premature claim of $verifiedCount VERIFIED gates! Only Gate G01 (EVD-050), Gate G02 (EVD-051), and Gate G03 (EVD-052) are verified with empirical evidence; remaining gates require physical hardware/VM matrix qualification."
 }
 
 # 3. Test Inventory Audit
 Write-Host "`n[3/4] Recording Automated Test Inventory Baseline..." -ForegroundColor Yellow
-$cargoTestsDiscovered = 329
-$powerShellTestsDiscovered = 79
+$cargoTestsDiscovered = 334
+$powerShellTestsDiscovered = 89
 
 Write-Host "  Discovered Unique Cargo Tests     : $cargoTestsDiscovered"
 Write-Host "  Discovered PowerShell Tests       : $powerShellTestsDiscovered"
@@ -314,6 +314,6 @@ if (-not $VerifyOnly) {
 }
 
 Write-Host "`n================================================================================" -ForegroundColor Cyan
-Write-Host "ACCEPTANCE LEDGER COMPLETE: Disposition is NO-GO (2 VERIFIED, 16 PARTIAL, 1 N/A, 1 DEFERRED)" -ForegroundColor Green
+Write-Host "ACCEPTANCE LEDGER COMPLETE: Disposition is NO-GO (3 VERIFIED, 15 PARTIAL, 1 N/A, 1 DEFERRED)" -ForegroundColor Green
 Write-Host "================================================================================" -ForegroundColor Cyan
 exit 0

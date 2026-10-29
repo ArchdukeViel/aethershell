@@ -1962,3 +1962,62 @@ This document maintains verifiable test and validation records. Every entry is t
   - All 13 PowerShell test suites: 79/79 passed cleanly (407 total automated tests across Rust and PowerShell).
   - Host AppData `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
 - **Evidentiary Verdict & Status**: `passed`. Gate G02 achieves complete qualification and transitions to `VERIFIED`.
+
+---
+
+### EVD-052: Gate G03 Shell Isolation, Deep PE Binary Audit & Live Process Non-Interference Full Verification
+- **Requirement / Gate**: Gate G03 (Shell Isolation: All Stable Binaries and Packages Contain No Explorer Extension; No Hooks into Critical Protected Processes), PRD Section 0, Section 4.2, Section 18.2, Decisions Q02:C, Q35:B, Q37:A
+- **Candidate Commit**: `main`
+- **Date & Environment**: 2026-10-29 / 2026-10-30, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Executing owner mandate (`/boost`) across 3 iterative cycles to complete Gate G03 qualification from `PARTIALLY_VERIFIED` to `VERIFIED`. The architectural invariant mandates that all stable binaries (`aethershell.exe`, `aethershell-script-host.exe`, `aethershell-settings.exe`) and portable distributions (`AetherShell-v1.0.0-portable-win-x64.zip`) contain strictly zero Explorer shell extensions, zero BHOs, zero namespace extensions, zero deskbands, zero COM in-process server registration exports (`DllRegisterServer`, `DllUnregisterServer`, `DllInstall`), zero detour/injection libraries (`minhook`, `detours`, `easyhook`), and zero cross-process thread injection APIs (`CreateRemoteThread`, `NtCreateThreadEx`, `SetWindowsHookExW`). Furthermore, runtime non-interference requires that running `explorer.exe` and protected operating system processes (`dwm.exe`, `csrss.exe`, `svchost.exe`, `audiodg.exe`) have strictly 0 loaded AetherShell modules, all while upholding Safety Boundary Q37:A and preserving `%LOCALAPPDATA%\AetherShell` at strictly 0 items.
+- **Implementation & Remediation**:
+  1. **Deep PE Binary Inspector (`AetherPeInspectorV3` in `scripts/audit_package_artifacts.ps1`)**:
+     - Developed a native C# PE header, import directory, and export directory parser:
+       - Validates DOS header (`e_magic == 0x5A4D`), PE signature (`0x00004550`), COFF Machine (`0x8664` for IMAGE_FILE_MACHINE_AMD64), and PE32+ Optional Header (`0x020B`).
+       - Accurately parses Section Header Table, converting Virtual Addresses (RVA) to physical file offsets across `.text`, `.rdata`, `.data`, `.pdata`.
+       - Reads Export Directory Table with exact winnt.h struct offsets: `NumberOfFunctions` at +20, `NumberOfNames` at +24, `AddressOfFunctions` at +28, `AddressOfNames` at +32, and `AddressOfNameOrdinals` at +36.
+       - Enforces strictly zero COM in-process server registration exports (`DllRegisterServer`, `DllUnregisterServer`, `DllInstall`), zero Explorer extensions, zero BHOs, and zero DeskBand exports across all binaries.
+       - Enforces strictly zero exports on core executables (`aethershell.exe`, `aethershell-script-host.exe`).
+       - Parses Import Directory Table (`IMAGE_IMPORT_DESCRIPTOR` array terminating in null descriptor): verifies zero detour and injection DLL imports (`minhook`, `detours`, `easyhook`, `mhook`, `subhook`), and zero cross-process thread injection or global hook APIs (`CreateRemoteThread`, `CreateRemoteThreadEx`, `NtCreateThreadEx`, `ZwCreateThreadEx`, `SetWindowsHookExA`, `SetWindowsHookExW`, `QueueUserAPC`).
+     - Added live process auditor flag `-ScanRunningProcesses` querying running `explorer.exe` via `Get-Process` and `Modules` inspection, verifying 0 loaded AetherShell modules.
+  2. **Dedicated Cargo Integration Test Suite (`crates/aethershell-app/tests/shell_isolation_integration_test.rs`)**:
+     - Implemented 5 end-to-end integration tests:
+       - `test_shell_isolation_binary_architecture_and_headers_gate_g03`: verifies x64 PE32+ architecture, headers, and section alignment across `aethershell.exe`, `aethershell-script-host.exe`, and `aethershell-settings.exe`.
+       - `test_shell_isolation_zero_com_inproc_exports_gate_g03`: reads PE export directory table directly in Rust and proves 0 prohibited COM in-process server registration exports.
+       - `test_shell_isolation_zero_detour_and_injection_imports_gate_g03`: reads PE import directory table and proves zero detour libraries and zero cross-process thread injection APIs.
+       - `test_shell_isolation_zero_explorer_extension_markers_gate_g03`: scans binary bytes for prohibited shell extension GUIDs, registry keys (`InprocServer32`, `ShellIconOverlayIdentifiers`), and BHO markers.
+       - `test_protected_process_non_interference_gate_g03`: uses Win32 `EnumProcesses` / `K32EnumProcessModulesEx` to verify 0 AetherShell modules loaded into running `explorer.exe`, `dwm.exe`, `csrss.exe`, `svchost.exe`, and `audiodg.exe`.
+  3. **Expanded Package Isolation Regression Suite (`tests/package_isolation_tests.ps1`)**:
+     - Expanded from 6 tests to 16 tests (100% pass rate):
+       - Clean package layout passes in `-Strict` mode.
+       - Injected Explorer extension marker fails closed (Gate G03).
+       - Prohibited portable marker fails closed (Gate G20).
+       - Missing LICENSE file fails closed in `-Strict` mode (Gate G16).
+       - Direct ZIP archive auditing via `-ZipArchive` succeeds.
+       - Output manifest parameter produces valid BOM-free JSON.
+       - Prohibited COM in-process server registration export fails closed (Gate G03).
+       - Prohibited detour library import fails closed (Gate G03).
+       - Prohibited cross-process thread injection API fails closed (Gate G03).
+       - Prohibited Browser Helper Object (BHO) marker fails closed (Gate G03).
+       - Prohibited DeskBand extension marker fails closed (Gate G03).
+       - Real compiled workspace release binaries audit passes cleanly (Gate G03, G16, G20).
+       - Live running Explorer process module scan confirms 0 AetherShell modules (Gate G03).
+       - Prohibited subhook detour library import fails closed (Gate G03).
+       - Prohibited QueueUserAPC thread injection API fails closed (Gate G03).
+       - Multi-process critical protected process scan confirms 0 AetherShell modules (Gate G03).
+  4. **Packaging Pipeline Integration & Guest Sandbox Harness**:
+     - Integrated deep binary audit into `scripts/build_packages.ps1`: audited all 36 binaries in `AetherShell-v1.0.0-portable-win-x64.zip` (3 executables + 33 WinUI 3 runtime DLLs), confirming 0 registration exports, 0 detour libraries, 0 injection APIs, and valid licenses.
+     - Upgraded `scripts/guest_sandbox_qualification.ps1` with Test 3: Gate G03 Shell Isolation (stages release binaries, validates licenses, runs PE auditor, and executes live running Explorer and protected process module scan).
+- **Verification & Test Results**:
+  - `cargo test -p aethershell-app --test shell_isolation_integration_test`: 5/5 passed cleanly.
+  - `powershell -File tests/package_isolation_tests.ps1`: 16/16 passed cleanly.
+  - `powershell -File scripts/build_packages.ps1 -Configuration release -SkipMsi -Audit`: 36 binaries audited cleanly (0 errors, 0 warnings; `portable_manifest.json` written).
+  - `powershell -File tests/disposable_vm_qualification_tests.ps1`: 5/5 passed cleanly.
+  - `powershell -File tests/os_matrix_compatibility_tests.ps1`: 12/12 passed cleanly.
+  - `powershell -File tests/release_acceptance_ledger_tests.ps1`: 6/6 passed cleanly.
+  - `cargo test --workspace`: 334 unique Cargo tests passed cleanly with 0 failures, 0 warnings.
+  - All 13 PowerShell test suites: 89/89 passed cleanly (423 total automated verification tests across Rust and PowerShell).
+  - Host AppData `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gate G03 achieves complete qualification and transitions to `VERIFIED`.
+
