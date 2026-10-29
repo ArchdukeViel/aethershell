@@ -1522,5 +1522,39 @@ This document maintains verifiable test and validation records. Every entry is t
   - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
 - **Evidentiary Verdict & Status**: `passed`. Gate G12 truthfully maintained as `PARTIALLY_VERIFIED` pending cross-process execution in disposable VM. `CORE_STABLE_CANDIDATE` strictly not declared; `v1.0.0` reserved.
 
+---
+
+### EVD-039: Third-Party Software Attribution, SPDX SBOM, License Compliance & Runtime Network Isolation (Gate G16)
+- **Requirement / Gate**: Gate G16 (License, Privacy & Third-Party Attribution), PRD Section 17, Section 18.2
+- **Candidate Commit**: HEAD
+- **Date & Environment**: 2026-10-29, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Gate G16 mandates that all direct and transitive third-party dependencies are documented with license attribution notices, verified for Apache-2.0 compatibility (strictly zero copyleft GPL/AGPL dependencies), published in machine-readable SBOM format, and validated for zero unsolicited network telemetry or sockets during runtime.
+- **Implementation & Remediation**:
+  1. **Automated Third-Party Attribution & SBOM Generator (`scripts/generate_sbom.ps1`)**:
+     - Extracts complete dependency graph using `cargo metadata --format-version 1`.
+     - Filters out 13 workspace member crates, discovering exactly 116 unique transitive third-party dependencies.
+     - Validates every package against an approved permissive license allowlist: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, CC0-1.0, 0BSD, Unicode-DFS-2016, Unicode-3.0, Zlib, BSL-1.0.
+     - Enforces strict prohibition of GPL, AGPL, SSPL, and copyleft licenses.
+     - Generates human-readable attribution ledger: `docs/licensing/THIRD_PARTY_LICENSES.md` (summary, license distribution table, and package repository links).
+     - Generates machine-readable SPDX-2.3 JSON SBOM: `docs/licensing/sbom.json` (creator metadata, CC0-1.0 data license, package names, versions, license declarations, and descriptions).
+     - Uses BOM-free UTF-8 encoding via .NET `System.Text.UTF8Encoding($false)`.
+  2. **Automated License Compliance Regression Test Suite (`tests/sbom_and_license_compliance_tests.ps1`)**:
+     - 5 automated tests validating: execution in `-Strict` mode, attribution ledger presence and headers, SPDX-2.3 JSON schema conformity (50+ packages), custom output directory isolation, and UTF-8 BOM absence.
+  3. **Runtime Network Socket Isolation Audit (`scripts/audit_runtime_network_isolation.ps1`)**:
+     - Queries Win32 network connection tables (`Get-NetTCPConnection` and `Get-NetUDPEndpoint`) for AetherShell process IDs.
+     - Verifies that zero inbound listening ports and zero outbound network connections are opened by AetherShell processes.
+     - Fails closed in `-Strict` mode if any network socket violation is detected.
+  4. **Network Isolation Regression Test Suite (`tests/network_isolation_tests.ps1`)**:
+     - Automated test suite validating zero socket detection and graceful error handling on invalid PIDs.
+- **Verification & Test Results**:
+  - `scripts/generate_sbom.ps1 -Strict`: passed cleanly with exit code 0; audited 116 dependencies (80 MIT OR Apache-2.0, 23 MIT, 6 Apache-2.0 OR MIT, 3 Apache-2.0 WITH LLVM-exception, 2 Unlicense OR MIT, 1 MIT OR Apache-2.0 OR LGPL-2.1-or-later, 1 (MIT OR Apache-2.0) AND Unicode-3.0); 0 compliance violations.
+  - `tests/sbom_and_license_compliance_tests.ps1`: 5/5 passed cleanly.
+  - `scripts/audit_runtime_network_isolation.ps1 -Strict`: passed cleanly with 0 socket violations.
+  - `tests/network_isolation_tests.ps1`: 2/2 passed cleanly.
+  - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gate G16 truthfully maintained as `PARTIALLY_VERIFIED` pending dynamic packet capture in disposable VM. `CORE_STABLE_CANDIDATE` strictly not declared; `v1.0.0` reserved.
+
+
 
 

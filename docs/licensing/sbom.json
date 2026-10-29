@@ -1,0 +1,1060 @@
+{
+    "spdxVersion":  "SPDX-2.3",
+    "dataLicense":  "CC0-1.0",
+    "SPDXID":  "SPDXRef-DOCUMENT",
+    "name":  "AetherShell-SBOM",
+    "documentNamespace":  "https://github.com/ArchdukeViel/aethershell/sbom/20261029-112215",
+    "creationInfo":  {
+                         "creators":  [
+                                          "Tool: AetherShell SBOM Generator v1.0",
+                                          "Organization: AetherShell Contributors"
+                                      ],
+                         "created":  "2026-10-29T04:22:15Z"
+                     },
+    "packages":  [
+                     {
+                         "originator":  "Andrew Gallant \u003cjamslam@gmail.com\u003e",
+                         "name":  "aho-corasick",
+                         "downloadLocation":  "https://github.com/BurntSushi/aho-corasick",
+                         "versionInfo":  "1.1.5",
+                         "licenseDeclared":  "Unlicense OR MIT",
+                         "licenseConcluded":  "Unlicense OR MIT",
+                         "description":  "Fast multiple substring searching."
+                     },
+                     {
+                         "originator":  "Nicolas Silva \u003cnical@fastmail.com\u003e",
+                         "name":  "android_system_properties",
+                         "downloadLocation":  "https://github.com/nical/android_system_properties",
+                         "versionInfo":  "0.1.6",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Minimal Android system properties wrapper"
+                     },
+                     {
+                         "originator":  "Josh Stone \u003ccuviper@gmail.com\u003e",
+                         "name":  "autocfg",
+                         "downloadLocation":  "https://github.com/cuviper/autocfg",
+                         "versionInfo":  "1.5.1",
+                         "licenseDeclared":  "Apache-2.0 OR MIT",
+                         "licenseConcluded":  "Apache-2.0 OR MIT",
+                         "description":  "Automatic cfg for Rust compiler features"
+                     },
+                     {
+                         "originator":  "The Rust Project Developers",
+                         "name":  "bitflags",
+                         "downloadLocation":  "https://github.com/bitflags/bitflags",
+                         "versionInfo":  "2.13.2",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A macro to generate structures which behave like bitflags."
+                     },
+                     {
+                         "originator":  "Andrew Gallant \u003cjamslam@gmail.com\u003e",
+                         "name":  "bstr",
+                         "downloadLocation":  "https://github.com/BurntSushi/bstr",
+                         "versionInfo":  "1.13.1",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A string type that is not required to be valid UTF-8."
+                     },
+                     {
+                         "originator":  "Nick Fitzgerald \u003cfitzgen@gmail.com\u003e",
+                         "name":  "bumpalo",
+                         "downloadLocation":  "https://github.com/fitzgen/bumpalo",
+                         "versionInfo":  "3.20.3",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A fast bump allocation arena for Rust."
+                     },
+                     {
+                         "originator":  "Carl Lerche \u003cme@carllerche.com\u003e, Sean McArthur \u003csean@seanmonstar.com\u003e",
+                         "name":  "bytes",
+                         "downloadLocation":  "https://github.com/tokio-rs/bytes",
+                         "versionInfo":  "1.12.1",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Types and traits for working with bytes"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "cc",
+                         "downloadLocation":  "https://github.com/rust-lang/cc-rs",
+                         "versionInfo":  "1.10.0",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A build-time dependency for Cargo build scripts to assist in invoking the native\nC compiler to compile native C code into a static archive to be linked into Rust\ncode."
+                     },
+                     {
+                         "originator":  "Alex Crichton \u003calex@alexcrichton.com\u003e",
+                         "name":  "cfg-if",
+                         "downloadLocation":  "https://github.com/rust-lang/cfg-if",
+                         "versionInfo":  "1.0.5",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A macro to ergonomically define an item depending on a large number of #[cfg]\nparameters. Structured like an if-else chain, the first matching branch is the\nitem that gets emitted."
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "chrono",
+                         "downloadLocation":  "https://github.com/chronotope/chrono",
+                         "versionInfo":  "0.4.45",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Date and time library for Rust"
+                     },
+                     {
+                         "originator":  "The Servo Project Developers",
+                         "name":  "core-foundation-sys",
+                         "downloadLocation":  "https://github.com/servo/core-foundation-rs",
+                         "versionInfo":  "0.8.7",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Bindings to Core Foundation for macOS"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "either",
+                         "downloadLocation":  "https://github.com/rayon-rs/either",
+                         "versionInfo":  "1.19.0",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "The enum `Either` with variants `Left` and `Right` is a general purpose sum type with two cases."
+                     },
+                     {
+                         "originator":  "Peter Tripp \u003cpeter.tripp@gmail.com\u003e",
+                         "name":  "env_home",
+                         "downloadLocation":  "https://github.com/notpeter/env-home",
+                         "versionInfo":  "0.1.0",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Get the user home directory in a cross-platform way."
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "equivalent",
+                         "downloadLocation":  "https://github.com/indexmap-rs/equivalent",
+                         "versionInfo":  "1.0.3",
+                         "licenseDeclared":  "Apache-2.0 OR MIT",
+                         "licenseConcluded":  "Apache-2.0 OR MIT",
+                         "description":  "Traits for key comparison in maps."
+                     },
+                     {
+                         "originator":  "Chris Wong \u003clambda.fairy@gmail.com\u003e, Dan Gohman \u003cdev@sunfishcode.online\u003e",
+                         "name":  "errno",
+                         "downloadLocation":  "https://github.com/lambda-fairy/rust-errno",
+                         "versionInfo":  "0.3.14",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Cross-platform interface to the `errno` variable."
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "find-msvc-tools",
+                         "downloadLocation":  "https://github.com/rust-lang/cc-rs",
+                         "versionInfo":  "0.1.15",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Find windows-specific tools, read MSVC versions from the registry and from COM interfaces"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "futures-core",
+                         "downloadLocation":  "https://github.com/rust-lang/futures-rs",
+                         "versionInfo":  "0.3.34",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "The core traits and types in for the `futures` library."
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "futures-task",
+                         "downloadLocation":  "https://github.com/rust-lang/futures-rs",
+                         "versionInfo":  "0.3.34",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Tools for working with tasks."
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "futures-util",
+                         "downloadLocation":  "https://github.com/rust-lang/futures-rs",
+                         "versionInfo":  "0.3.34",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Common utilities and extension traits for the futures-rs library."
+                     },
+                     {
+                         "originator":  "The Rand Project Developers",
+                         "name":  "getrandom",
+                         "downloadLocation":  "https://github.com/rust-random/getrandom",
+                         "versionInfo":  "0.4.3",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A small cross-platform library for retrieving random data from system source"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "hashbrown",
+                         "downloadLocation":  "https://github.com/rust-lang/hashbrown",
+                         "versionInfo":  "0.17.1",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A Rust port of Google\u0027s SwissTable hash map"
+                     },
+                     {
+                         "originator":  "Andrew Straw \u003cstrawman@astraw.com\u003e, Ren├⌐ Kijewski \u003crene.kijewski@fu-berlin.de\u003e, Ryan Lopopolo \u003crjl@hyperbo.la\u003e",
+                         "name":  "iana-time-zone",
+                         "downloadLocation":  "https://github.com/strawlab/iana-time-zone",
+                         "versionInfo":  "0.1.65",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "get the IANA time zone for the current system"
+                     },
+                     {
+                         "originator":  "Ren├⌐ Kijewski \u003ccrates.io@k6i.de\u003e",
+                         "name":  "iana-time-zone-haiku",
+                         "downloadLocation":  "https://github.com/strawlab/iana-time-zone",
+                         "versionInfo":  "0.1.2",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "iana-time-zone support crate for Haiku OS"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "indexmap",
+                         "downloadLocation":  "https://github.com/indexmap-rs/indexmap",
+                         "versionInfo":  "2.14.2",
+                         "licenseDeclared":  "Apache-2.0 OR MIT",
+                         "licenseConcluded":  "Apache-2.0 OR MIT",
+                         "description":  "A hash table with consistent order and fast iteration."
+                     },
+                     {
+                         "originator":  "David Tolnay \u003cdtolnay@gmail.com\u003e",
+                         "name":  "itoa",
+                         "downloadLocation":  "https://github.com/dtolnay/itoa",
+                         "versionInfo":  "1.0.18",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Fast integer primitive to string conversion"
+                     },
+                     {
+                         "originator":  "The wasm-bindgen Developers",
+                         "name":  "js-sys",
+                         "downloadLocation":  "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys",
+                         "versionInfo":  "0.3.106",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Bindings for all JS global objects and functions in all JS environments like\nNode.js and browsers, built on `#[wasm_bindgen]` using the `wasm-bindgen` crate."
+                     },
+                     {
+                         "originator":  "Marvin L├╢bel \u003cloebel.marvin@gmail.com\u003e",
+                         "name":  "lazy_static",
+                         "downloadLocation":  "https://github.com/rust-lang-nursery/lazy-static.rs",
+                         "versionInfo":  "1.5.1",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A macro for declaring lazily evaluated statics in Rust."
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "libc",
+                         "downloadLocation":  "https://github.com/rust-lang/libc",
+                         "versionInfo":  "0.2.191",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Raw FFI bindings to platform libraries like libc."
+                     },
+                     {
+                         "originator":  "Dan Gohman \u003cdev@sunfishcode.online\u003e",
+                         "name":  "linux-raw-sys",
+                         "downloadLocation":  "https://github.com/sunfishcode/linux-raw-sys",
+                         "versionInfo":  "0.12.1",
+                         "licenseDeclared":  "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+                         "licenseConcluded":  "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+                         "description":  "Generated bindings for Linux\u0027s userspace API"
+                     },
+                     {
+                         "originator":  "Amanieu d\u0027Antras \u003camanieu@gmail.com\u003e",
+                         "name":  "lock_api",
+                         "downloadLocation":  "https://github.com/Amanieu/parking_lot",
+                         "versionInfo":  "0.4.14",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Wrappers to create fully-featured Mutex and RwLock types. Compatible with no_std."
+                     },
+                     {
+                         "originator":  "The Rust Project Developers",
+                         "name":  "log",
+                         "downloadLocation":  "https://github.com/rust-lang/log",
+                         "versionInfo":  "0.4.34",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A lightweight logging facade for Rust"
+                     },
+                     {
+                         "originator":  "Aleksandr Orlenko \u003czxteam@protonmail.com\u003e",
+                         "name":  "luajit-src",
+                         "downloadLocation":  "https://github.com/khvzak/luajit-src-rs",
+                         "versionInfo":  "210.5.12+a4f56a4",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Sources of LuaJIT 2.1 and logic to build it."
+                     },
+                     {
+                         "originator":  "Aleksandr Orlenko \u003czxteam@protonmail.com\u003e",
+                         "name":  "lua-src",
+                         "downloadLocation":  "https://github.com/khvzak/lua-src-rs",
+                         "versionInfo":  "547.0.0",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Sources of Lua 5.1/5.2/5.3/5.4 and logic to build them."
+                     },
+                     {
+                         "originator":  "Eliza Weisman \u003celiza@buoyant.io\u003e",
+                         "name":  "matchers",
+                         "downloadLocation":  "https://github.com/hawkw/matchers",
+                         "versionInfo":  "0.2.0",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Regex matching on character and byte streams."
+                     },
+                     {
+                         "originator":  "Andrew Gallant \u003cjamslam@gmail.com\u003e, bluss",
+                         "name":  "memchr",
+                         "downloadLocation":  "https://github.com/BurntSushi/memchr",
+                         "versionInfo":  "2.8.3",
+                         "licenseDeclared":  "Unlicense OR MIT",
+                         "licenseConcluded":  "Unlicense OR MIT",
+                         "description":  "Provides extremely fast (uses SIMD on x86_64, aarch64 and wasm32) routines for\n1, 2 or 3 byte search and single substring search."
+                     },
+                     {
+                         "originator":  "Carl Lerche \u003cme@carllerche.com\u003e, Thomas de Zeeuw \u003cthomasdezeeuw@gmail.com\u003e, Tokio Contributors \u003cteam@tokio.rs\u003e",
+                         "name":  "mio",
+                         "downloadLocation":  "https://github.com/tokio-rs/mio",
+                         "versionInfo":  "1.2.4",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Lightweight non-blocking I/O."
+                     },
+                     {
+                         "originator":  "Aleksandr Orlenko \u003czxteam@pm.me\u003e, kyren \u003ccatherine@kyju.org\u003e",
+                         "name":  "mlua",
+                         "downloadLocation":  "https://github.com/khvzak/mlua",
+                         "versionInfo":  "0.9.9",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "High level bindings to Lua 5.4/5.3/5.2/5.1 (including LuaJIT) and Roblox Luau\nwith async/await features and support of writing native Lua modules in Rust."
+                     },
+                     {
+                         "originator":  "Aleksandr Orlenko \u003czxteam@pm.me\u003e",
+                         "name":  "mlua-sys",
+                         "downloadLocation":  "https://github.com/mlua-rs/mlua",
+                         "versionInfo":  "0.6.8",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Low level (FFI) bindings to Lua 5.4/5.3/5.2/5.1 (including LuaJIT) and Luau"
+                     },
+                     {
+                         "originator":  "ogham@bsago.me, Ryan Scheel (Havvy) \u003cryan.havvy@gmail.com\u003e, Josh Triplett \u003cjosh@joshtriplett.org\u003e, The Nushell Project Developers",
+                         "name":  "nu-ansi-term",
+                         "downloadLocation":  "https://github.com/nushell/nu-ansi-term",
+                         "versionInfo":  "0.50.3",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Library for ANSI terminal colors and styles (bold, underline)"
+                     },
+                     {
+                         "originator":  "The Rust Project Developers",
+                         "name":  "num-traits",
+                         "downloadLocation":  "https://github.com/rust-num/num-traits",
+                         "versionInfo":  "0.2.19",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Numeric traits for generic mathematics"
+                     },
+                     {
+                         "originator":  "Aleksey Kladov \u003caleksey.kladov@gmail.com\u003e",
+                         "name":  "once_cell",
+                         "downloadLocation":  "https://github.com/matklad/once_cell",
+                         "versionInfo":  "1.21.4",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Single assignment cells and lazy values."
+                     },
+                     {
+                         "originator":  "Amanieu d\u0027Antras \u003camanieu@gmail.com\u003e",
+                         "name":  "parking_lot",
+                         "downloadLocation":  "https://github.com/Amanieu/parking_lot",
+                         "versionInfo":  "0.12.5",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "More compact and efficient implementations of the standard synchronization primitives."
+                     },
+                     {
+                         "originator":  "Amanieu d\u0027Antras \u003camanieu@gmail.com\u003e",
+                         "name":  "parking_lot_core",
+                         "downloadLocation":  "https://github.com/Amanieu/parking_lot",
+                         "versionInfo":  "0.9.12",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "An advanced API for creating custom synchronization primitives."
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "pin-project-lite",
+                         "downloadLocation":  "https://github.com/taiki-e/pin-project-lite",
+                         "versionInfo":  "0.2.17",
+                         "licenseDeclared":  "Apache-2.0 OR MIT",
+                         "licenseConcluded":  "Apache-2.0 OR MIT",
+                         "description":  "A lightweight version of pin-project written with declarative macros."
+                     },
+                     {
+                         "originator":  "Alex Crichton \u003calex@alexcrichton.com\u003e",
+                         "name":  "pkg-config",
+                         "downloadLocation":  "https://github.com/rust-lang/pkg-config-rs",
+                         "versionInfo":  "0.3.34",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A library to run the pkg-config system tool at build time in order to be used in\nCargo build scripts."
+                     },
+                     {
+                         "originator":  "David Tolnay \u003cdtolnay@gmail.com\u003e, Alex Crichton \u003calex@alexcrichton.com\u003e",
+                         "name":  "proc-macro2",
+                         "downloadLocation":  "https://github.com/dtolnay/proc-macro2",
+                         "versionInfo":  "1.0.107",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A substitute implementation of the compiler\u0027s `proc_macro` API to decouple token-based libraries from the procedural macro use case."
+                     },
+                     {
+                         "originator":  "David Tolnay \u003cdtolnay@gmail.com\u003e",
+                         "name":  "quote",
+                         "downloadLocation":  "https://github.com/dtolnay/quote",
+                         "versionInfo":  "1.0.47",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Quasi-quoting macro quote!(...)"
+                     },
+                     {
+                         "originator":  "Jeremy Soller \u003cjackpot51@gmail.com\u003e",
+                         "name":  "redox_syscall",
+                         "downloadLocation":  "https://gitlab.redox-os.org/redox-os/syscall",
+                         "versionInfo":  "0.5.18",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "A Rust library to access raw Redox system calls"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "r-efi",
+                         "downloadLocation":  "https://github.com/r-efi/r-efi",
+                         "versionInfo":  "6.0.0",
+                         "licenseDeclared":  "MIT OR Apache-2.0 OR LGPL-2.1-or-later",
+                         "licenseConcluded":  "MIT OR Apache-2.0 OR LGPL-2.1-or-later",
+                         "description":  "UEFI Reference Specification Protocol Constants and Definitions"
+                     },
+                     {
+                         "originator":  "The Rust Project Developers, Andrew Gallant \u003cjamslam@gmail.com\u003e",
+                         "name":  "regex-automata",
+                         "downloadLocation":  "https://github.com/rust-lang/regex",
+                         "versionInfo":  "0.4.18",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Automata construction and matching using regular expressions."
+                     },
+                     {
+                         "originator":  "The Rust Project Developers, Andrew Gallant \u003cjamslam@gmail.com\u003e",
+                         "name":  "regex-syntax",
+                         "downloadLocation":  "https://github.com/rust-lang/regex",
+                         "versionInfo":  "0.8.11",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A regular expression parser."
+                     },
+                     {
+                         "originator":  "The Rust Project Developers",
+                         "name":  "rustc-hash",
+                         "downloadLocation":  "https://github.com/rust-lang/rustc-hash",
+                         "versionInfo":  "2.1.3",
+                         "licenseDeclared":  "Apache-2.0 OR MIT",
+                         "licenseConcluded":  "Apache-2.0 OR MIT",
+                         "description":  "A speedy, non-cryptographic hashing algorithm used by rustc"
+                     },
+                     {
+                         "originator":  "Dan Gohman \u003cdev@sunfishcode.online\u003e, Jakub Konka \u003ckubkon@jakubkonka.com\u003e",
+                         "name":  "rustix",
+                         "downloadLocation":  "https://github.com/bytecodealliance/rustix",
+                         "versionInfo":  "1.1.5",
+                         "licenseDeclared":  "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+                         "licenseConcluded":  "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+                         "description":  "Safe Rust bindings to POSIX/Unix/Linux/Winsock-like syscalls"
+                     },
+                     {
+                         "originator":  "David Tolnay \u003cdtolnay@gmail.com\u003e",
+                         "name":  "rustversion",
+                         "downloadLocation":  "https://github.com/dtolnay/rustversion",
+                         "versionInfo":  "1.0.23",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Conditional compilation according to rustc compiler version"
+                     },
+                     {
+                         "originator":  "bluss",
+                         "name":  "scopeguard",
+                         "downloadLocation":  "https://github.com/bluss/scopeguard",
+                         "versionInfo":  "1.2.0",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A RAII scope guard that will run a given closure when it goes out of scope,\neven if the code between panics (assuming unwinding panic).\n\nDefines the macros `defer!`, `defer_on_unwind!`, `defer_on_success!` as\nshorthands for guards with one of the implemented strategies."
+                     },
+                     {
+                         "originator":  "Erick Tryzelaar \u003cerick.tryzelaar@gmail.com\u003e, David Tolnay \u003cdtolnay@gmail.com\u003e",
+                         "name":  "serde",
+                         "downloadLocation":  "https://github.com/serde-rs/serde",
+                         "versionInfo":  "1.0.229",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A generic serialization/deserialization framework"
+                     },
+                     {
+                         "originator":  "Erick Tryzelaar \u003cerick.tryzelaar@gmail.com\u003e, David Tolnay \u003cdtolnay@gmail.com\u003e",
+                         "name":  "serde_core",
+                         "downloadLocation":  "https://github.com/serde-rs/serde",
+                         "versionInfo":  "1.0.229",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Serde traits only, with no support for derive -- use the `serde` crate instead"
+                     },
+                     {
+                         "originator":  "Erick Tryzelaar \u003cerick.tryzelaar@gmail.com\u003e, David Tolnay \u003cdtolnay@gmail.com\u003e",
+                         "name":  "serde_derive",
+                         "downloadLocation":  "https://github.com/serde-rs/serde",
+                         "versionInfo":  "1.0.229",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Macros 1.1 implementation of #[derive(Serialize, Deserialize)]"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "serde_json",
+                         "downloadLocation":  "https://github.com/serde-rs/json",
+                         "versionInfo":  "1.0.154",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A JSON serialization file format"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "serde_spanned",
+                         "downloadLocation":  "https://github.com/toml-rs/toml",
+                         "versionInfo":  "0.6.9",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Serde-compatible spanned Value"
+                     },
+                     {
+                         "originator":  "Eliza Weisman \u003celiza@buoyant.io\u003e",
+                         "name":  "sharded-slab",
+                         "downloadLocation":  "https://github.com/hawkw/sharded-slab",
+                         "versionInfo":  "0.1.7",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "A lock-free concurrent slab."
+                     },
+                     {
+                         "originator":  "comex \u003ccomexk@gmail.com\u003e, Fenhl \u003cfenhl@fenhl.net\u003e, Adrian Taylor \u003cadetaylor@chromium.org\u003e, Alex Touchet \u003calextouchet@outlook.com\u003e, Daniel Parks \u003cdp+git@oxidized.org\u003e, Garrett Berg \u003cgoogberg@gmail.com\u003e",
+                         "name":  "shlex",
+                         "downloadLocation":  "https://github.com/comex/rust-shlex",
+                         "versionInfo":  "2.0.1",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Split a string into shell words, like Python\u0027s shlex."
+                     },
+                     {
+                         "originator":  "Michal \u0027vorner\u0027 Vaner \u003cvorner@vorner.cz\u003e, Masaki Hara \u003cackie.h.gmai@gmail.com\u003e",
+                         "name":  "signal-hook-registry",
+                         "downloadLocation":  "https://github.com/vorner/signal-hook",
+                         "versionInfo":  "1.4.8",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Backend crate for signal-hook"
+                     },
+                     {
+                         "originator":  "Carl Lerche \u003cme@carllerche.com\u003e",
+                         "name":  "slab",
+                         "downloadLocation":  "https://github.com/tokio-rs/slab",
+                         "versionInfo":  "0.4.12",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Pre-allocated storage for a uniform data type"
+                     },
+                     {
+                         "originator":  "The Servo Project Developers",
+                         "name":  "smallvec",
+                         "downloadLocation":  "https://github.com/servo/rust-smallvec",
+                         "versionInfo":  "1.16.4",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "\u0027Small vector\u0027 optimization: store up to a small number of items on the stack"
+                     },
+                     {
+                         "originator":  "Alex Crichton \u003calex@alexcrichton.com\u003e, Thomas de Zeeuw \u003cthomasdezeeuw@gmail.com\u003e",
+                         "name":  "socket2",
+                         "downloadLocation":  "https://github.com/rust-lang/socket2",
+                         "versionInfo":  "0.6.5",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Utilities for handling networking sockets with a maximal amount of configuration\npossible intended."
+                     },
+                     {
+                         "originator":  "David Tolnay \u003cdtolnay@gmail.com\u003e",
+                         "name":  "syn",
+                         "downloadLocation":  "https://github.com/dtolnay/syn",
+                         "versionInfo":  "3.0.9",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Parser for Rust source code"
+                     },
+                     {
+                         "originator":  "David Tolnay \u003cdtolnay@gmail.com\u003e",
+                         "name":  "syn",
+                         "downloadLocation":  "https://github.com/dtolnay/syn",
+                         "versionInfo":  "2.0.119",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Parser for Rust source code"
+                     },
+                     {
+                         "originator":  "David Tolnay \u003cdtolnay@gmail.com\u003e",
+                         "name":  "thiserror",
+                         "downloadLocation":  "https://github.com/dtolnay/thiserror",
+                         "versionInfo":  "1.0.69",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "derive(Error)"
+                     },
+                     {
+                         "originator":  "David Tolnay \u003cdtolnay@gmail.com\u003e",
+                         "name":  "thiserror-impl",
+                         "downloadLocation":  "https://github.com/dtolnay/thiserror",
+                         "versionInfo":  "1.0.69",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Implementation detail of the `thiserror` crate"
+                     },
+                     {
+                         "originator":  "Amanieu d\u0027Antras \u003camanieu@gmail.com\u003e",
+                         "name":  "thread_local",
+                         "downloadLocation":  "https://github.com/Amanieu/thread_local-rs",
+                         "versionInfo":  "1.1.10",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Per-object thread-local storage"
+                     },
+                     {
+                         "originator":  "Tokio Contributors \u003cteam@tokio.rs\u003e",
+                         "name":  "tokio",
+                         "downloadLocation":  "https://github.com/tokio-rs/tokio",
+                         "versionInfo":  "1.54.1",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "An event-driven, non-blocking I/O platform for writing asynchronous I/O\nbacked applications."
+                     },
+                     {
+                         "originator":  "Tokio Contributors \u003cteam@tokio.rs\u003e",
+                         "name":  "tokio-macros",
+                         "downloadLocation":  "https://github.com/tokio-rs/tokio",
+                         "versionInfo":  "2.7.2",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Tokio\u0027s proc macros."
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "toml",
+                         "downloadLocation":  "https://github.com/toml-rs/toml",
+                         "versionInfo":  "0.8.23",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A native Rust encoder and decoder of TOML-formatted files and streams. Provides\nimplementations of the standard Serialize/Deserialize traits for TOML data to\nfacilitate deserializing and serializing Rust structures."
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "toml_datetime",
+                         "downloadLocation":  "https://github.com/toml-rs/toml",
+                         "versionInfo":  "0.6.11",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A TOML-compatible datetime type"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "toml_edit",
+                         "downloadLocation":  "https://github.com/toml-rs/toml",
+                         "versionInfo":  "0.22.27",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Yet another format-preserving TOML parser."
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "toml_write",
+                         "downloadLocation":  "https://github.com/toml-rs/toml",
+                         "versionInfo":  "0.1.2",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "A low-level interface for writing out TOML"
+                     },
+                     {
+                         "originator":  "Eliza Weisman \u003celiza@buoyant.io\u003e, Tokio Contributors \u003cteam@tokio.rs\u003e",
+                         "name":  "tracing",
+                         "downloadLocation":  "https://github.com/tokio-rs/tracing",
+                         "versionInfo":  "0.1.44",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Application-level tracing for Rust."
+                     },
+                     {
+                         "originator":  "Tokio Contributors \u003cteam@tokio.rs\u003e, Eliza Weisman \u003celiza@buoyant.io\u003e, David Barsky \u003cdbarsky@amazon.com\u003e",
+                         "name":  "tracing-attributes",
+                         "downloadLocation":  "https://github.com/tokio-rs/tracing",
+                         "versionInfo":  "0.1.31",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Procedural macro attributes for automatically instrumenting functions."
+                     },
+                     {
+                         "originator":  "Tokio Contributors \u003cteam@tokio.rs\u003e",
+                         "name":  "tracing-core",
+                         "downloadLocation":  "https://github.com/tokio-rs/tracing",
+                         "versionInfo":  "0.1.36",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Core primitives for application-level tracing."
+                     },
+                     {
+                         "originator":  "Tokio Contributors \u003cteam@tokio.rs\u003e",
+                         "name":  "tracing-log",
+                         "downloadLocation":  "https://github.com/tokio-rs/tracing",
+                         "versionInfo":  "0.2.0",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Provides compatibility between `tracing` and the `log` crate."
+                     },
+                     {
+                         "originator":  "Eliza Weisman \u003celiza@buoyant.io\u003e, David Barsky \u003cme@davidbarsky.com\u003e, Tokio Contributors \u003cteam@tokio.rs\u003e",
+                         "name":  "tracing-subscriber",
+                         "downloadLocation":  "https://github.com/tokio-rs/tracing",
+                         "versionInfo":  "0.3.23",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Utilities for implementing and composing `tracing` subscribers."
+                     },
+                     {
+                         "originator":  "David Tolnay \u003cdtolnay@gmail.com\u003e",
+                         "name":  "unicode-ident",
+                         "downloadLocation":  "https://github.com/dtolnay/unicode-ident",
+                         "versionInfo":  "1.0.27",
+                         "licenseDeclared":  "(MIT OR Apache-2.0) AND Unicode-3.0",
+                         "licenseConcluded":  "(MIT OR Apache-2.0) AND Unicode-3.0",
+                         "description":  "Determine whether characters have the XID_Start or XID_Continue properties according to Unicode Standard Annex #31"
+                     },
+                     {
+                         "originator":  "Ashley Mannix\u003cashleymannix@live.com.au\u003e, Dylan DPC\u003cdylan.dpc@gmail.com\u003e, Hunar Roop Kahlon\u003chunar.roop@gmail.com\u003e",
+                         "name":  "uuid",
+                         "downloadLocation":  "https://github.com/uuid-rs/uuid",
+                         "versionInfo":  "1.29.0",
+                         "licenseDeclared":  "Apache-2.0 OR MIT",
+                         "licenseConcluded":  "Apache-2.0 OR MIT",
+                         "description":  "A library to generate and parse UUIDs."
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "valuable",
+                         "downloadLocation":  "https://github.com/tokio-rs/valuable",
+                         "versionInfo":  "0.1.1",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Object-safe value inspection, used to pass un-typed structured data across trait-object boundaries."
+                     },
+                     {
+                         "originator":  "The Cranelift Project Developers",
+                         "name":  "wasi",
+                         "downloadLocation":  "https://github.com/bytecodealliance/wasi",
+                         "versionInfo":  "0.11.1+wasi-snapshot-preview1",
+                         "licenseDeclared":  "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+                         "licenseConcluded":  "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+                         "description":  "Experimental WASI API bindings for Rust"
+                     },
+                     {
+                         "originator":  "The wasm-bindgen Developers",
+                         "name":  "wasm-bindgen",
+                         "downloadLocation":  "https://github.com/wasm-bindgen/wasm-bindgen",
+                         "versionInfo":  "0.2.129",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Easy support for interacting between JS and Rust."
+                     },
+                     {
+                         "originator":  "The wasm-bindgen Developers",
+                         "name":  "wasm-bindgen-macro",
+                         "downloadLocation":  "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro",
+                         "versionInfo":  "0.2.129",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Definition of the `#[wasm_bindgen]` attribute, an internal dependency"
+                     },
+                     {
+                         "originator":  "The wasm-bindgen Developers",
+                         "name":  "wasm-bindgen-macro-support",
+                         "downloadLocation":  "https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support",
+                         "versionInfo":  "0.2.129",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Implementation APIs for the `#[wasm_bindgen]` attribute"
+                     },
+                     {
+                         "originator":  "The wasm-bindgen Developers",
+                         "name":  "wasm-bindgen-shared",
+                         "downloadLocation":  "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared",
+                         "versionInfo":  "0.2.129",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Shared support between wasm-bindgen and wasm-bindgen cli, an internal\ndependency."
+                     },
+                     {
+                         "originator":  "Harry Fei \u003ctiziyuanfang@gmail.com\u003e, Jacob Kiesel \u003cjake@bitcrafters.co\u003e",
+                         "name":  "which",
+                         "downloadLocation":  "https://github.com/harryfei/which-rs.git",
+                         "versionInfo":  "7.0.3",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "A Rust equivalent of Unix command \"which\". Locate installed executable in cross platforms."
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.58.0",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Rust for Windows"
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows_aarch64_gnullvm",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.52.6",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Import lib for Windows"
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows_aarch64_msvc",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.52.6",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Import lib for Windows"
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows_i686_gnu",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.52.6",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Import lib for Windows"
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows_i686_gnullvm",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.52.6",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Import lib for Windows"
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows_i686_msvc",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.52.6",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Import lib for Windows"
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows_x86_64_gnu",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.52.6",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Import lib for Windows"
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows_x86_64_gnullvm",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.52.6",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Import lib for Windows"
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows_x86_64_msvc",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.52.6",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Import lib for Windows"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "windows-core",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.62.2",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Core type support for COM and Windows"
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows-core",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.58.0",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Rust for Windows"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "windows-implement",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.60.2",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "The implement macro for the Windows crates"
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows-implement",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.58.0",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "The implement macro for the windows crate"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "windows-interface",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.59.3",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "The interface macro for the Windows crates"
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows-interface",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.58.0",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "The interface macro for the windows crate"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "windows-link",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.2.1",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Linking for Windows"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "windows-result",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.4.1",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Windows error handling"
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows-result",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.2.0",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Windows error handling"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "windows-strings",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.5.1",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Windows string types"
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows-strings",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.1.0",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Rust for Windows"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "windows-sys",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.61.2",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Rust for Windows"
+                     },
+                     {
+                         "originator":  "Microsoft",
+                         "name":  "windows-targets",
+                         "downloadLocation":  "https://github.com/microsoft/windows-rs",
+                         "versionInfo":  "0.52.6",
+                         "licenseDeclared":  "MIT OR Apache-2.0",
+                         "licenseConcluded":  "MIT OR Apache-2.0",
+                         "description":  "Import libs for Windows"
+                     },
+                     {
+                         "originator":  "N/A",
+                         "name":  "winnow",
+                         "downloadLocation":  "https://github.com/winnow-rs/winnow",
+                         "versionInfo":  "0.7.15",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "A byte-oriented, zero-copy, parser combinators library"
+                     },
+                     {
+                         "originator":  "Rodrigo Cesar de Freitas Dias \u003crcesar@gmail.com\u003e",
+                         "name":  "winsafe",
+                         "downloadLocation":  "https://github.com/rodrigocfd/winsafe",
+                         "versionInfo":  "0.0.19",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "Windows API and GUI in safe, idiomatic Rust."
+                     },
+                     {
+                         "originator":  "David Tolnay \u003cdtolnay@gmail.com\u003e",
+                         "name":  "zmij",
+                         "downloadLocation":  "https://github.com/dtolnay/zmij",
+                         "versionInfo":  "1.0.23",
+                         "licenseDeclared":  "MIT",
+                         "licenseConcluded":  "MIT",
+                         "description":  "A double-to-string conversion algorithm based on Schubfach and xjb"
+                     }
+                 ]
+}
