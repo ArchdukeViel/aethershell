@@ -446,10 +446,10 @@ impl TaskbarRecoveryWatchdog {
     pub fn get_target_exit_code(&self) -> Option<u32> {
         unsafe {
             let mut exit_code = 0u32;
-            if GetExitCodeProcess(self.process_handle.raw(), &mut exit_code).is_ok() {
-                if exit_code != STILL_ACTIVE.0 as u32 {
-                    return Some(exit_code);
-                }
+            if GetExitCodeProcess(self.process_handle.raw(), &mut exit_code).is_ok()
+                && exit_code != STILL_ACTIVE.0 as u32
+            {
+                return Some(exit_code);
             }
             None
         }
