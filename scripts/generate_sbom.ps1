@@ -234,7 +234,7 @@ foreach ($pkg in $sortedPackages) {
     $sbomPackages += @{
         name             = $pkg.Name
         versionInfo      = $pkg.Version
-        licenseConcluded = $pkg.License
+        licenseConcluded = "NOASSERTION"
         licenseDeclared  = $pkg.License
         downloadLocation = $pkg.Repository
         description      = $pkg.Description

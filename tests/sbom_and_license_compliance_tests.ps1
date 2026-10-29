@@ -65,8 +65,8 @@ Run-TestCase "THIRD_PARTY_LICENSES.md contains valid attribution ledger" {
     }
 }
 
-# Test 3: sbom.json is valid SPDX-2.3 JSON structure
-Run-TestCase "sbom.json is valid SPDX-2.3 compliant structure" {
+# Test 3: sbom.json is valid SPDX-2.3 JSON structure with NOASSERTION concluded licenses
+Run-TestCase "sbom.json is valid SPDX-2.3 compliant structure with NOASSERTION concluded licenses" {
     $jsonPath = Join-Path $workspaceRoot "docs\licensing\sbom.json"
     if (-not (Test-Path $jsonPath)) {
         throw "Expected sbom.json to exist at $jsonPath"
@@ -81,6 +81,15 @@ Run-TestCase "sbom.json is valid SPDX-2.3 compliant structure" {
     }
     if ($jsonContent.packages.Count -lt 50) {
         throw "Expected at least 50 third-party packages, got $($jsonContent.packages.Count)"
+    }
+
+    # Finding P3 verification: licenseConcluded must be NOASSERTION per SPDX 2.3 Section 7.13
+    $samplePkg = $jsonContent.packages[0]
+    if ($samplePkg.licenseConcluded -ne "NOASSERTION") {
+        throw "Expected licenseConcluded to be 'NOASSERTION', got '$($samplePkg.licenseConcluded)'"
+    }
+    if ([string]::IsNullOrWhiteSpace($samplePkg.licenseDeclared)) {
+        throw "Expected licenseDeclared to be populated with upstream package license"
     }
 }
 
