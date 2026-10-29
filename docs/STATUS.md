@@ -1,8 +1,8 @@
 # AetherShell Implementation & Verification Ledger
 
 **Document Revision:** 0.1.0-dev (Reconciled Application Stability Baseline)  
-**Last Updated:** 2026-10-28  
-**Current Status:** Post-Merge CI Recovery and Benchmark Safety Reconciliation Active (PR #42 through PR #53); 20-Gate Acceptance Matrix Truthfully Reconciled (0 VERIFIED, 18 PARTIALLY_VERIFIED, 1 NOT_APPLICABLE, 1 DEFERRED; CORE_STABLE_CANDIDATE Not Declared); Total Tests: 250 Base Unique Tests (153 Unit + 97 Integration) + 29 Hardening & Regression Tests = 279 Passing Unique Tests Across 13 Workspace Crates (168 Unit + 111 Integration across 27 test executables).
+**Last Updated:** October 29, 2026  
+**Current Status:** Release Gate Remediation & Adversarial Audit Reconciliation Active (PRs #54 through #61); 20-Gate Acceptance Matrix Truthfully Reconciled (0 VERIFIED, 18 PARTIALLY_VERIFIED, 1 NOT_APPLICABLE, 1 DEFERRED; CORE_STABLE_CANDIDATE Strictly Not Declared); Total Tests: 294 Passing Unique Cargo Tests Across 13 Workspace Crates (182 Unit + 112 Integration across 27 test executables) + 29 Passing PowerShell Regression Tests = 323 Total Passing Automated Tests.
 
 ---
 
@@ -301,4 +301,28 @@ The proposed sequence of focused, independently reviewable pull requests is:
     - Reconciled `docs/qualification/ryzen5_5500u_benchmark_ledger.json` and `runtime_benchmark.rs` to dedicated `BudgetClassification::PreliminaryDesignTarget` enum variant per PRD Section 14.2 (GOALS, not yet ratified across multi-environment matrix per PRD Section 14.4), eliminating contradictory Serde alias to `RatifiedTarget`.
     - Added regression tests `test_budget_classification_three_state_semantics`, `test_deserialize_ryzen5_5500u_benchmark_ledger_json`, and 11 automated regression tests in `tests/run_ryzen5_benchmark_tests.ps1`.
     - Strictly verified workspace test inventory: **276 unique passing tests** (166 unit + 110 integration across 27 test executables). 0 gates VERIFIED; `CORE_STABLE_CANDIDATE` strictly not declared.
+30. **PR #54: Runtime Resource Optimizations & Windows VM Qualification Infrastructure** *(Merged into `main` at `0966a33` per Decision Q47:A / Q48:A — see [EVD-037](EVIDENCE.md#evd-037-runtime-resource-optimizations-and-windows-vm-qualification-infrastructure-q47a--q48a))*
+    - Converted system tray thread to blocking event-driven message loop (`GetMessageW`), eliminating idle timer polling.
+    - Implemented dirty presentation gating skipping redundant scene updates when bindings and audio spectrum are unchanged.
+    - Optimized WASAPI audio loop with 250ms backoff on silence.
+    - Implemented disposable VM provisioning engine `scripts/provision_disposable_vm.ps1` with host resource safety envelopes.
+    - Expanded test suite to 279 unique passing tests.
+31. **PR #56 & PR #59: Configuration Migrations, Win32 Exclusive Locking & Loader Negotiation Contract (Gate G12)** *(Merged into `main` at `f54285b` and `34829f1` — see [EVD-038](EVIDENCE.md#evd-038-reversible-schema-migrations--exclusive-cross-process-file-locking-concurrency-guard-gate-g12))*
+    - Implemented multi-version schema validation (`1.0.0`, `1.1.0`, `2.0.0`) in `schema.rs` and `storage.rs`.
+    - Non-destructive reversible migration: stashes user-customized `runtime` table in `_preserved_runtime` on downgrade and restores on upgrade.
+    - Win32 exclusive file lock (`config.lock`) preventing concurrent multi-instance corruption.
+    - Fail-closed pre-migration backup (`fs::copy(&self.config_path, &pre_backup)?`).
+    - Added integration test `test_migration_followed_by_normal_application_load` (33 crate tests pass).
+32. **PR #57 & PR #60: Third-Party Software Attribution, SPDX NOASSERTION SBOM & Fail-Closed Network Isolation (Gate G16)** *(Merged into `main` at `4c5f5d6` and `c3d6ec5` — see [EVD-039](EVIDENCE.md#evd-039-third-party-software-attribution-spdx-sbom-license-compliance--runtime-network-isolation-gate-g16))*
+    - Audited 116 dependencies (100% permissive licenses) in `docs/licensing/THIRD_PARTY_LICENSES.md` and `docs/licensing/sbom.json`.
+    - Set `licenseConcluded = "NOASSERTION"` per SPDX 2.3 Section 7.13 pending separate human/legal review, while preserving upstream metadata in `licenseDeclared`.
+    - Hardened `scripts/audit_runtime_network_isolation.ps1`: fails closed when no processes are found in `-Strict` mode (Finding P2) and added `-SpawnTestProcess` for live sandboxed process audit.
+    - All 8 PowerShell regression tests in `network_isolation_tests.ps1` and `sbom_and_license_compliance_tests.ps1` pass.
+33. **PR #58 & PR #61: Desktop Widget Accessibility, Keyboard Navigation & Win32 WinEvent Bridge (Gate G14)** *(Merged into `main` at `45b9610` and Candidate PR #61 — see [EVD-040](EVIDENCE.md#evd-040-desktop-widget-accessibility-descriptions-and-keyboard-focus-navigation-gate-g14))*
+    - Accessible name, role, value, and formatted screen-reader descriptions for interactive widgets.
+    - Tab / Shift+Tab and arrow key focus navigation with visual focus ring updates.
+    - Dispatched Win32 `NotifyWinEvent(EVENT_OBJECT_FOCUS, hwnd, OBJID_CLIENT, child_id)` on focus changes.
+    - Dispatched Win32 `NotifyWinEvent(EVENT_SYSTEM_ALERT, hwnd, OBJID_CLIENT, child_id)` on widget activation.
+    - Truthfully documented keyboard-only vs future custom Direct2D UIA provider gap; Gate G14 maintained as `PARTIALLY_VERIFIED`.
+    - Total workspace tests formally verified at **294 unique Cargo tests** (182 unit + 112 integration across 27 executables) + 29 PowerShell regression tests = 323 passing automated tests.
 
