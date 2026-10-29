@@ -386,7 +386,13 @@ unsafe fn run_active_stream(
 
         // 2. Compute dynamic power-aware polling interval based on silence and power profile
         let mode = FpsMode::from_u8(fps_mode_atomic.load(Ordering::Relaxed));
-        let poll_interval = if consecutive_silent_ticks > 60 {
+        let poll_interval = if consecutive_silent_ticks > 120 {
+            // Decision Q47: Prolonged silence (> 5-10 seconds of continuous silence).
+            // Back off to 250ms to minimize background wakeups to 4 Hz
+            // while preserving fast reactive wakeup as soon as audio plays.
+            mode.deep_silence_poll_interval()
+                .max(Duration::from_millis(250))
+        } else if consecutive_silent_ticks > 60 {
             mode.deep_silence_poll_interval()
         } else if consecutive_silent_ticks > 10 {
             mode.idle_poll_interval()
@@ -423,7 +429,9 @@ unsafe fn run_active_stream(
                 }
             }
             if let Ok(mut proc) = processor.lock() {
-                proc.process_samples(&[]);
+                if !proc.is_silent() {
+                    proc.process_samples(&[]);
+                }
             }
             continue;
         }
@@ -485,7 +493,11 @@ unsafe fn run_active_stream(
         } else {
             consecutive_silent_ticks = consecutive_silent_ticks.saturating_add(1);
             if let Ok(mut proc) = processor.lock() {
-                proc.process_samples(&[]);
+                // Decision Q47: Once processor has completed band decay and marked silence,
+                // skip redundant empty sample processing to minimize CPU cycles.
+                if !proc.is_silent() || consecutive_silent_ticks < 60 {
+                    proc.process_samples(&[]);
+                }
             }
         }
     }
@@ -584,9 +596,11 @@ fn run_wasapi_capture_loop(
                                 info!("Audio endpoint migration signaled during fallback mode; attempting immediate re-enumeration.");
                                 break;
                             }
-                            std::thread::sleep(Duration::from_millis(100));
+                            std::thread::sleep(Duration::from_millis(250));
                             if let Ok(mut proc) = processor.lock() {
-                                proc.process_samples(&[]);
+                                if !proc.is_silent() {
+                                    proc.process_samples(&[]);
+                                }
                             }
                         }
                     }

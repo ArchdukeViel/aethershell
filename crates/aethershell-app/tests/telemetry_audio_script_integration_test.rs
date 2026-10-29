@@ -662,3 +662,154 @@ fn test_adaptive_presentation_loop_power_and_gaming_shield() {
         "Audio loopback capture must cleanly restore configured AC profile upon returning to AC power"
     );
 }
+
+#[test]
+fn test_dirty_state_presentation_gating_and_silence_suppression() {
+    use aethershell_app::{normalize_audio_spectrum, should_render_frame};
+    use std::collections::HashMap;
+
+    let geo = ([0, 0, 1920, 1080], 1.0);
+    let mut bindings = HashMap::new();
+    bindings.insert("time.clock".into(), BindingValue::String("14:30".into()));
+    bindings.insert(
+        "time.date".into(),
+        BindingValue::String("Wednesday, October 28".into()),
+    );
+    bindings.insert("cpu.usage_percent".into(), BindingValue::Percent(1.5));
+
+    // Case 1: Initial frame must always be dirty
+    assert!(should_render_frame(true, None, geo, true, None, &bindings));
+
+    // Case 2: Idle with silence and unchanged bindings -> must NOT be dirty (0 CPU/GPU presentation)
+    let (bands_empty, is_silent_empty) = normalize_audio_spectrum(&[]);
+    let mut idle_bindings = bindings.clone();
+    idle_bindings.insert(
+        "audio.spectrum".into(),
+        BindingValue::FloatArray(bands_empty),
+    );
+    let dirty_idle = should_render_frame(
+        false,
+        Some(geo),
+        geo,
+        is_silent_empty,
+        Some(&idle_bindings),
+        &idle_bindings,
+    );
+    assert!(
+        !dirty_idle,
+        "Silent audio with identical bindings must skip presentation"
+    );
+
+    // Case 3: Silent audio with oscillating near-zero noise floor (<= 0.001) -> must NOT be dirty
+    let near_zero_bands_1 = vec![0.0005, 0.0001, 0.0];
+    let (clean_bands_1, is_silent_1) = normalize_audio_spectrum(&near_zero_bands_1);
+    let mut noise_bindings_1 = bindings.clone();
+    noise_bindings_1.insert(
+        "audio.spectrum".into(),
+        BindingValue::FloatArray(clean_bands_1),
+    );
+
+    let near_zero_bands_2 = vec![0.0002, 0.0004, 0.0];
+    let (clean_bands_2, is_silent_2) = normalize_audio_spectrum(&near_zero_bands_2);
+    let mut noise_bindings_2 = bindings.clone();
+    noise_bindings_2.insert(
+        "audio.spectrum".into(),
+        BindingValue::FloatArray(clean_bands_2),
+    );
+
+    assert!(is_silent_1 && is_silent_2);
+    let dirty_noise = should_render_frame(
+        false,
+        Some(geo),
+        geo,
+        is_silent_2,
+        Some(&noise_bindings_1),
+        &noise_bindings_2,
+    );
+    assert!(
+        !dirty_noise,
+        "Oscillating near-zero audio noise floor below threshold must be normalized and remain silent without triggering redraw"
+    );
+
+    // Case 4: Active audio signal -> must be dirty
+    let active_bands = vec![0.05, 0.20, 0.15];
+    let (clean_active, is_silent_active) = normalize_audio_spectrum(&active_bands);
+    let mut active_bindings = bindings.clone();
+    active_bindings.insert(
+        "audio.spectrum".into(),
+        BindingValue::FloatArray(clean_active),
+    );
+    let dirty_active_audio = should_render_frame(
+        false,
+        Some(geo),
+        geo,
+        is_silent_active,
+        Some(&idle_bindings),
+        &active_bindings,
+    );
+    assert!(
+        dirty_active_audio,
+        "Active audio signal must trigger frame presentation"
+    );
+
+    // Case 5: Active audio transitions into silence -> must be dirty once so visualizer decays to 0
+    let dirty_transition = should_render_frame(
+        false,
+        Some(geo),
+        geo,
+        is_silent_1,
+        Some(&active_bindings),
+        &noise_bindings_1,
+    );
+    assert!(
+        dirty_transition,
+        "Transition from active audio to silence must trigger one final frame to clear visualizer"
+    );
+
+    // Case 6: Clock string changes (minute rolls over) -> must be dirty
+    let mut updated_clock_bindings = idle_bindings.clone();
+    updated_clock_bindings.insert("time.clock".into(), BindingValue::String("14:31".into()));
+    let dirty_clock_update = should_render_frame(
+        false,
+        Some(geo),
+        geo,
+        true,
+        Some(&idle_bindings),
+        &updated_clock_bindings,
+    );
+    assert!(
+        dirty_clock_update,
+        "Clock string update must trigger frame presentation"
+    );
+
+    // Case 7: Telemetry changes -> must be dirty
+    let mut telem_updated_bindings = idle_bindings.clone();
+    telem_updated_bindings.insert("cpu.usage_percent".into(), BindingValue::Percent(3.2));
+    let dirty_telem_update = should_render_frame(
+        false,
+        Some(geo),
+        geo,
+        true,
+        Some(&idle_bindings),
+        &telem_updated_bindings,
+    );
+    assert!(
+        dirty_telem_update,
+        "Telemetry update must trigger frame presentation"
+    );
+
+    // Case 8: Window geometry or DPI change -> must be dirty
+    let new_geo = ([0, 0, 1920, 1080], 1.25);
+    let dirty_dpi = should_render_frame(
+        false,
+        Some(geo),
+        new_geo,
+        true,
+        Some(&idle_bindings),
+        &idle_bindings,
+    );
+    assert!(
+        dirty_dpi,
+        "DPI scale change must trigger frame presentation"
+    );
+}

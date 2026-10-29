@@ -8,11 +8,12 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, GetCursorPos, GetWindowLongPtrW, LoadIconW, PeekMessageW, PostMessageW,
-    PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow,
-    SetWindowLongPtrW, TrackPopupMenuEx, GWLP_USERDATA, IDI_APPLICATION, MF_SEPARATOR, MF_STRING,
-    MSG, PM_REMOVE, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_COMMAND,
-    WM_DESTROY, WM_NCDESTROY, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
+    DispatchMessageW, GetCursorPos, GetMessageW, GetWindowLongPtrW, LoadIconW, PostMessageW,
+    PostQuitMessage, PostThreadMessageW, RegisterClassW, RegisterWindowMessageW,
+    SetForegroundWindow, SetWindowLongPtrW, TrackPopupMenuEx, TranslateMessage, GWLP_USERDATA,
+    IDI_APPLICATION, MF_SEPARATOR, MF_STRING, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON,
+    WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_NCDESTROY, WM_QUIT, WM_RBUTTONUP, WNDCLASSW,
+    WS_OVERLAPPED,
 };
 
 pub const WM_TRAYICON: u32 = WM_APP + 1;
@@ -234,53 +235,61 @@ impl SystemTray {
         }
     }
 
-    /// Spawns the system tray on a dedicated OS thread with an active Win32 message pump.
+    /// Spawns the system tray on a dedicated OS thread with an event-driven Win32 message pump.
     ///
-    /// Resolves Finding IVA-P1-001: Ensures Win32 messages are pumped and context menu actions are dispatched.
+    /// Resolves Finding IVA-P1-001 and Decision Q47: Uses blocking `GetMessageW` to consume
+    /// strictly 0 CPU and 0 wakeups when idle, waking immediately upon shell messages or shutdown.
     pub fn spawn_tray_thread(
         shutdown_flag: Arc<AtomicBool>,
         pipe_name: Option<String>,
-    ) -> (std::thread::JoinHandle<()>, Arc<AtomicBool>) {
+    ) -> (std::thread::JoinHandle<()>, TrayShutdownHandle) {
         if let Some(pipe) = pipe_name {
             if let Ok(mut lock) = TRAY_PIPE_NAME.write() {
                 *lock = Some(pipe);
             }
         }
 
-        let tray_shutdown = Arc::new(AtomicBool::new(false));
-        let tray_shutdown_clone = Arc::clone(&tray_shutdown);
+        let tray_shutdown_flag = Arc::new(AtomicBool::new(false));
+        let tray_shutdown_clone = Arc::clone(&tray_shutdown_flag);
+
+        let (tx, rx) = std::sync::mpsc::sync_channel::<(u32, isize)>(1);
 
         let handle = std::thread::spawn(move || {
+            let thread_id = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+
             let tray = match SystemTray::new() {
-                Ok(t) => t,
+                Ok(t) => {
+                    let _ = tx.send((thread_id, t.hwnd().0 as isize));
+                    t
+                }
                 Err(e) => {
+                    let _ = tx.send((thread_id, 0));
                     tracing::warn!("Could not create system tray: {}", e);
                     return;
                 }
             };
 
             tracing::info!(
-                "System tray thread active with message pump (HWND: {:?})",
-                tray.hwnd().0
+                "System tray thread active with event-driven blocking message pump (HWND: {:?}, ThreadId: {})",
+                tray.hwnd().0,
+                thread_id
             );
 
             unsafe {
                 let mut msg = MSG::default();
-                while !shutdown_flag.load(Ordering::Relaxed)
-                    && !tray_shutdown_clone.load(Ordering::Relaxed)
-                {
-                    let has_msg = PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE);
-                    if has_msg.as_bool() {
-                        if msg.message == windows::Win32::UI::WindowsAndMessaging::WM_QUIT {
-                            break;
-                        }
-                        DispatchMessageW(&msg);
-                    } else {
-                        std::thread::sleep(std::time::Duration::from_millis(20));
-                    }
+                // Event-driven blocking GetMessageW: consumes 0 CPU and 0 wakeups when idle.
+                // Returns 0 on WM_QUIT, <= 0 on error, > 0 on valid window/thread messages.
+                while GetMessageW(&mut msg, HWND::default(), 0, 0).0 > 0 {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
 
-                    if Self::is_exit_requested() {
-                        shutdown_flag.store(true, Ordering::SeqCst);
+                    if shutdown_flag.load(Ordering::Relaxed)
+                        || tray_shutdown_clone.load(Ordering::Relaxed)
+                        || Self::is_exit_requested()
+                    {
+                        if Self::is_exit_requested() {
+                            shutdown_flag.store(true, Ordering::SeqCst);
+                        }
                         break;
                     }
                 }
@@ -290,7 +299,80 @@ impl SystemTray {
             tracing::info!("System tray thread cleanly terminated.");
         });
 
+        let (thread_id, hwnd_raw) = match rx.recv() {
+            Ok((tid, h)) => (tid, h),
+            Err(_) => (0, 0),
+        };
+
+        let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
+        let tray_shutdown = TrayShutdownHandle::new(tray_shutdown_flag, thread_id, hwnd);
+
         (handle, tray_shutdown)
+    }
+}
+
+/// Thread-safe shutdown trigger handle for the dedicated system tray message thread.
+///
+/// Dispatches `WM_CLOSE` to the tray window and `WM_QUIT` to the thread message queue,
+/// unblocking `GetMessageW` immediately while consuming 0 CPU and 0 wakeups when idle.
+#[derive(Clone, Debug)]
+pub struct TrayShutdownHandle {
+    flag: Arc<AtomicBool>,
+    thread_id: u32,
+    hwnd: HWND,
+}
+
+unsafe impl Send for TrayShutdownHandle {}
+unsafe impl Sync for TrayShutdownHandle {}
+
+impl TrayShutdownHandle {
+    pub fn new(flag: Arc<AtomicBool>, thread_id: u32, hwnd: HWND) -> Self {
+        Self {
+            flag,
+            thread_id,
+            hwnd,
+        }
+    }
+
+    pub fn store(&self, val: bool, order: Ordering) {
+        let prev = self.flag.swap(val, order);
+        if val && !prev {
+            unsafe {
+                if !self.hwnd.0.is_null() {
+                    let _ = PostMessageW(self.hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                }
+                if self.thread_id != 0 {
+                    let _ = PostThreadMessageW(self.thread_id, WM_QUIT, WPARAM(0), LPARAM(0));
+                }
+            }
+        }
+    }
+
+    pub fn load(&self, order: Ordering) -> bool {
+        self.flag.load(order)
+    }
+
+    pub fn signal(&self) {
+        self.store(true, Ordering::SeqCst);
+    }
+
+    pub fn flag(&self) -> &Arc<AtomicBool> {
+        &self.flag
+    }
+
+    pub fn hwnd(&self) -> HWND {
+        self.hwnd
+    }
+
+    pub fn thread_id(&self) -> u32 {
+        self.thread_id
+    }
+}
+
+impl std::ops::Deref for TrayShutdownHandle {
+    type Target = AtomicBool;
+    fn deref(&self) -> &Self::Target {
+        &self.flag
     }
 }
 
@@ -684,5 +766,58 @@ mod tests {
         let added = tray.handle_taskbar_created();
         println!("Explicit handle_taskbar_created added: {}", added);
         assert_eq!(tray.reconnect_count(), 2);
+    }
+
+    #[test]
+    fn test_tray_event_driven_blocking_and_shutdown_handle() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let (join_handle, tray_shutdown) = SystemTray::spawn_tray_thread(Arc::clone(&flag), None);
+
+        assert_ne!(tray_shutdown.thread_id(), 0, "Thread ID must be captured");
+        assert!(!tray_shutdown.load(Ordering::Relaxed));
+
+        // Sleep briefly to allow thread message pump loop to enter GetMessageW
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let start = std::time::Instant::now();
+        // Signal stop via TrayShutdownHandle
+        tray_shutdown.signal();
+        let join_res = join_handle.join();
+        let elapsed = start.elapsed();
+
+        assert!(join_res.is_ok(), "Tray thread must terminate cleanly");
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "GetMessageW must unblock immediately upon TrayShutdownHandle signal; elapsed: {:?}",
+            elapsed
+        );
+        assert!(tray_shutdown.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_tray_concurrent_shutdown_signals() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let (join_handle, tray_shutdown) = SystemTray::spawn_tray_thread(Arc::clone(&flag), None);
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let mut workers = Vec::new();
+        for _ in 0..8 {
+            let shutdown_clone = tray_shutdown.clone();
+            workers.push(std::thread::spawn(move || {
+                shutdown_clone.signal();
+            }));
+        }
+
+        for worker in workers {
+            assert!(worker.join().is_ok());
+        }
+
+        let join_res = join_handle.join();
+        assert!(
+            join_res.is_ok(),
+            "Tray thread must terminate cleanly under concurrent signals"
+        );
+        assert!(tray_shutdown.load(Ordering::Relaxed));
     }
 }

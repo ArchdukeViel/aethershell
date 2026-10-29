@@ -286,15 +286,17 @@ Every gate from G01 through G20 is mapped directly to its canonical PRD requirem
 | **Q02:A** | Approved | Full disruptive qualification authorized **inside verified disposable VMs only**, including controlled Explorer restarts, process termination, fault injection, installer tests, and checkpoint recovery. |
 | **Q03:A** | Approved | Non-invasive physical AMD laptop performance measurements authorized during **owner-attended session only**; no disruptive host experimentation. |
 | **Q04:A** | Approved | Sequential owner-controlled PR review and merge governance: PR #51 first, then PR #52, with separate explicit approval required before each merge. |
+| **Q47:A** | Approved | Non-invasive G13 runtime resource optimizations authorized: event-driven `GetMessageW` tray thread (0 wakeups/CPU when idle), Direct2D dirty-state presentation gating (skips redundant scene compilation and DXGI swapchain draw calls during silence), and WASAPI shared-mode idle backoff (250ms). |
+| **Q48:A** | Approved | Owner explicitly authorizes hosting a single lightweight disposable VM on the local Windows PC (allocating 2 GB RAM / 2 vCPUs for a single disposable Hyper-V or Windows Sandbox guest), adhering strictly to safety preflight constraints (Q01:B, Q02:A, Q37:A). |
 
 ### 4.2 Host Resource Safeguards (16 GB Physical RAM Envelope)
 
 Because the development PC possesses 16 GB physical RAM (~15.3 GB visible) with active background development workloads (WSL2, VS Code, Antigravity, Memory Compression), host resource safety is paramount:
 
 1. **Single-VM Concurrency:** Strictly **one guest VM** active at any given time. Concurrent multi-VM execution is prohibited.
-2. **Per-VM Resource Budget:**
+2. **Per-VM Resource Budget (Q48:A):**
    - **vCPU Allocation:** Maximum 2 vCPUs (out of 12 logical processors).
-   - **RAM Allocation:** Maximum 4096 MB (4 GB) dynamic memory (startup: 2048 MB).
+   - **RAM Allocation:** Allocated 2048 MB (2 GB) RAM for the single disposable Hyper-V or Windows Sandbox guest.
    - **Disk Allocation:** Maximum 25 GB dynamic VHDX on Volume C: (ensuring host free space remains > 35 GB at all times).
 3. **Host Safety Preconditions:**
    - Host free physical memory must be >= 2048 MB before launching any VM.
