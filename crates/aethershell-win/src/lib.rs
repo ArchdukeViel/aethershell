@@ -3,6 +3,7 @@
 pub mod conflict_detector;
 pub mod desktop_probe;
 pub mod dpi;
+pub mod memory;
 pub mod monitor;
 pub mod os_version;
 pub mod shell_events;
@@ -19,6 +20,7 @@ pub use dpi::{
     is_window_per_monitor_v2_aware, scale_dip_to_pixels, scale_pixels_to_dip,
     set_per_monitor_v2_dpi_awareness, DEFAULT_DPI,
 };
+pub use memory::trim_working_set;
 pub use monitor::{enumerate_monitors, MonitorInfo};
 pub use os_version::{WindowsBuildFamily, WindowsVersionInfo};
 pub use shell_events::{ShellEvent, ShellEventMonitor};

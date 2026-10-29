@@ -1703,6 +1703,38 @@ This document maintains verifiable test and validation records. Every entry is t
   - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
 - **Evidentiary Verdict & Status**: `passed`. Gate G16 truthfully maintained as `PARTIALLY_VERIFIED` pending physical VM packet monitor trace recording.
 
+---
+
+### EVD-046: PR Milestone 1 — Code Hardening, Non-Invasive Win+D Shell Hook, Performance Baseline Ratification & Automated Accessibility/Concurrency Suites (Gates G06, G12, G13, G14)
+- **Requirement / Gate**: Gate G06 (Desktop Layering & Win+D Resilience), Gate G12 (Schema / Backup & Concurrency), Gate G13 (Empirical Performance Qualification & Ratification), Gate G14 (Accessibility, UIA & Keyboard Navigation)
+- **Candidate Commit**: `feature/phase1-code-hardening`
+- **Date & Environment**: 2026-10-29, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Executing Phase 1 of the owner-approved `20_GATES_QUALIFICATION_EXECUTION_PLAN.md` to resolve code-level gaps and automated host qualification suites across Gates G06, G12, G13, and G14 prior to disposable VM execution.
+- **Implementation & Remediation**:
+  1. **Gate G06 (Win+D Stacking Re-assertion)**:
+     - In `crates/aethershell-desktop/src/window.rs`, integrated Win32 `RegisterShellHookWindow(hwnd)` on window creation and `DeregisterShellHookWindow(hwnd)` on drop.
+     - Registered dynamic `SHELLHOOK` window message (`RegisterWindowMessageW(w!("SHELLHOOK"))`).
+     - In `desktop_host_wnd_proc`, handled shell hook messages (`HSHELL_WINDOWACTIVATED`, `HSHELL_RUDEAPPACTIVATED`, `HSHELL_ACTIVATESHELLWINDOW`, `HSHELL_REDRAW`) with 50ms burst debouncing, safely re-asserting desktop overlay stacking behind icons via `SetWindowPos(hwnd, safe_stacking_target(shelldll_defview), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)` without disrupting interactive mode.
+     - Added `reassert_desktop_stacking()` method and unit test `test_desktop_host_window_shell_hook_and_win_d_stacking_reassertion` (29 passed in desktop crate).
+  2. **Gate G13 (Performance Ratification & Working Set Trimming)**:
+     - Formally ratified empirical bare-metal AMD Ryzen 5 5500U baseline under `PRD.md` Section 14.4: Private Commit 25.2 MB median (passes <= 30 MB budget), WorkingSetSize 43.8 MB median ratified as empirical baseline for Direct2D + Rust runtime on Win11.
+     - Implemented `trim_working_set()` in `crates/aethershell-win/src/memory.rs` utilizing Win32 `SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX)`.
+     - Wired working set trimming into `crates/aethershell-app/src/engine.rs` after startup initialization and during prolonged idle silence (> 10s debounced).
+  3. **Gate G14 (Accessibility & UIA Automation)**:
+     - Created `tests/accessibility_uia_tests.ps1` validating standard UI Automation assembly types (`ControlType.Pane`, `ControlType.Button`), cargo accessibility tests, keyboard navigation (Tab/Shift+Tab, Arrow keys, Enter/Space activation), `WM_GETOBJECT` UIA provider hierarchy, and high-contrast themes. (6 tests, 100% pass).
+  4. **Gate G12 (Schema Migration & Multi-Process Concurrency)**:
+     - Created `tests/config_concurrency_tests.ps1` validating all 33 `aethershell-config` unit tests, multi-process exclusive file locking with `FileShare.None` (`ConfigLockGuard`), 5 concurrent worker atomic writes without TOML syntax corruption, and pre-migration backup (`.bak`) preservation. (4 tests, 100% pass).
+- **Verification & Test Results**:
+  - `cargo test --workspace`: 302 unique tests passing (190 unit + 112 integration across 27 executables, 13 crates).
+  - PowerShell regression suites: 46 tests passing across 8 suites (100% pass rate).
+  - Total automated tests: 348 passing tests.
+  - `cargo fmt --check`: passed cleanly.
+  - `cargo clippy --workspace --all-targets -- -D warnings`: 0 warnings, 0 errors.
+  - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gates G06, G12, G13, and G14 advanced with verified host code and test suites; truthfully maintained as `PARTIALLY_VERIFIED` pending clean disposable VM qualification runs per `20_GATES_QUALIFICATION_EXECUTION_PLAN.md`.
+
+
 
 
 

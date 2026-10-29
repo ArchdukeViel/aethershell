@@ -25,13 +25,14 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_NOREPEAT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetWindowLongPtrW, IsWindow,
-    LoadCursorW, PeekMessageW, RegisterClassExW, RegisterWindowMessageW, SetCursor,
-    SetWindowLongPtrW, SetWindowPos, TranslateMessage, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
-    GWLP_USERDATA, GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST, IDC_ARROW, IDC_HAND, MSG, PM_REMOVE,
-    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
-    WINDOW_EX_STYLE, WM_ACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ERASEBKGND, WM_GETOBJECT,
-    WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
+    CreateWindowExW, DefWindowProcW, DeregisterShellHookWindow, DestroyWindow, DispatchMessageW,
+    GetWindowLongPtrW, IsWindow, LoadCursorW, PeekMessageW, RegisterClassExW,
+    RegisterShellHookWindow, RegisterWindowMessageW, SetCursor, SetWindowLongPtrW, SetWindowPos,
+    TranslateMessage, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, GWL_EXSTYLE,
+    HWND_BOTTOM, HWND_NOTOPMOST, IDC_ARROW, IDC_HAND, MSG, PM_REMOVE, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WINDOW_EX_STYLE,
+    WM_ACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ERASEBKGND, WM_GETOBJECT, WM_HOTKEY,
+    WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
     WM_NCDESTROY, WM_PAINT, WM_QUIT, WNDCLASSEXW, WS_POPUP, WS_VISIBLE,
 };
 
@@ -54,6 +55,38 @@ pub fn taskbar_created_msg() -> u32 {
         msg
     }
 }
+
+/// Registers or retrieves the dynamic `SHELLHOOK` message broadcast on non-invasive shell events (Gate G06).
+pub fn shellhook_msg() -> u32 {
+    static CACHED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let id = CACHED.load(Ordering::Relaxed);
+    if id != 0 {
+        return id;
+    }
+    unsafe {
+        let msg = RegisterWindowMessageW(w!("SHELLHOOK"));
+        CACHED.store(msg, Ordering::Relaxed);
+        msg
+    }
+}
+
+// Shell hook event codes (Win32 HSHELL_*)
+pub const HSHELL_WINDOWCREATED: usize = 1;
+pub const HSHELL_WINDOWDESTROYED: usize = 2;
+pub const HSHELL_ACTIVATESHELLWINDOW: usize = 3;
+pub const HSHELL_WINDOWACTIVATED: usize = 4;
+pub const HSHELL_GETMINRECT: usize = 5;
+pub const HSHELL_REDRAW: usize = 6;
+pub const HSHELL_TASKMAN: usize = 7;
+pub const HSHELL_LANGUAGE: usize = 8;
+pub const HSHELL_SYSMENU: usize = 9;
+pub const HSHELL_ENDTASK: usize = 10;
+pub const HSHELL_ACCESSIBILITYSTATE: usize = 11;
+pub const HSHELL_APPCOMMAND: usize = 12;
+pub const HSHELL_WINDOWREPLACED: usize = 13;
+pub const HSHELL_WINDOWREPLACING: usize = 14;
+pub const HSHELL_RUDEAPPACTIVATED: usize = 0x8004;
+pub const HSHELL_FLASH: usize = 0x8006;
 
 fn register_desktop_host_class() -> Result<(), DesktopHostError> {
     if CLASS_REGISTERED.load(Ordering::SeqCst) {
@@ -99,6 +132,7 @@ pub type ActionCallback = Arc<dyn Fn(&InteractiveRegion, f32, f32) + Send + Sync
 pub type HotkeyCallback = Arc<dyn Fn(bool) + Send + Sync>;
 pub type DpiChangedCallback = Arc<dyn Fn(HWND, u32, &RECT) + Send + Sync>;
 pub type DisplayChangedCallback = Arc<dyn Fn() + Send + Sync>;
+pub type ShellEventCallback = Arc<dyn Fn(usize, isize) + Send + Sync>;
 
 /// Returns a verified safe Z-order target HWND.
 /// If `target` is Some and is still a valid OS window, returns it;
@@ -122,12 +156,15 @@ pub struct DesktopWindowState {
     pub on_hotkey: std::sync::Mutex<Option<HotkeyCallback>>,
     pub on_dpi_changed: std::sync::Mutex<Option<DpiChangedCallback>>,
     pub on_display_change: std::sync::Mutex<Option<DisplayChangedCallback>>,
+    pub on_shell_event: std::sync::Mutex<Option<ShellEventCallback>>,
     pub interactive_regions: Arc<std::sync::Mutex<Vec<InteractiveRegion>>>,
     pub focused_region_index: Arc<std::sync::Mutex<Option<usize>>>,
     pub current_dpi: Arc<AtomicU32>,
     pub current_bounds: Arc<std::sync::Mutex<[i32; 4]>>,
     pub explorer_restart_count: Arc<AtomicUsize>,
+    pub win_d_restack_count: Arc<AtomicUsize>,
     pub last_restart_tick: Arc<AtomicU64>,
+    pub last_shell_tick: Arc<AtomicU64>,
     pub last_activity_tick: Arc<AtomicU64>,
     pub is_hotkey_registered: Arc<AtomicBool>,
 }
@@ -157,6 +194,7 @@ pub struct DesktopHostWindow {
     pub shelldll_defview_hwnd: Option<HWND>,
     pub worker_w_hwnd: Option<HWND>,
     pub explorer_restart_count: Arc<AtomicUsize>,
+    pub win_d_restack_count: Arc<AtomicUsize>,
     state_ptr: *mut DesktopWindowState,
 }
 
@@ -180,7 +218,9 @@ impl DesktopHostWindow {
         let parent = worker_w.unwrap_or_default();
         let is_interactive = Arc::new(AtomicBool::new(false));
         let explorer_restart_count = Arc::new(AtomicUsize::new(0));
+        let win_d_restack_count = Arc::new(AtomicUsize::new(0));
         let last_restart_tick = Arc::new(AtomicU64::new(0));
+        let last_shell_tick = Arc::new(AtomicU64::new(0));
         let last_activity_tick = Arc::new(AtomicU64::new(0));
         let is_hotkey_registered = Arc::new(AtomicBool::new(false));
 
@@ -202,12 +242,15 @@ impl DesktopHostWindow {
             on_hotkey: std::sync::Mutex::new(None),
             on_dpi_changed: std::sync::Mutex::new(None),
             on_display_change: std::sync::Mutex::new(None),
+            on_shell_event: std::sync::Mutex::new(None),
             interactive_regions,
             focused_region_index,
             current_dpi: Arc::clone(&current_dpi),
             current_bounds,
             explorer_restart_count: Arc::clone(&explorer_restart_count),
+            win_d_restack_count: Arc::clone(&win_d_restack_count),
             last_restart_tick,
+            last_shell_tick,
             last_activity_tick,
             is_hotkey_registered,
         });
@@ -253,6 +296,9 @@ impl DesktopHostWindow {
             // Register session notifications (WM_WTSSESSION_CHANGE)
             let _ = WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION);
 
+            // Register as shell hook window to receive non-invasive shell events (Win+D, window activation)
+            let _ = RegisterShellHookWindow(hwnd);
+
             // Stacking order: Place behind SHELLDLL_DefView (or HWND_BOTTOM)
             let insert_after = safe_stacking_target(shelldll_defview);
             let _ = SetWindowPos(
@@ -274,6 +320,7 @@ impl DesktopHostWindow {
                 shelldll_defview_hwnd: shelldll_defview,
                 worker_w_hwnd: worker_w,
                 explorer_restart_count,
+                win_d_restack_count,
                 state_ptr,
             })
         }
@@ -290,6 +337,7 @@ impl DesktopHostWindow {
             shelldll_defview_hwnd: None,
             worker_w_hwnd: None,
             explorer_restart_count: Arc::new(AtomicUsize::new(0)),
+            win_d_restack_count: Arc::new(AtomicUsize::new(0)),
             state_ptr: std::ptr::null_mut(),
         }
     }
@@ -698,6 +746,44 @@ impl DesktopHostWindow {
         }
         unsafe { IsWindow(self.hwnd).as_bool() }
     }
+
+    /// Returns the number of times desktop stacking was re-asserted (e.g. after Win+D / shell events).
+    pub fn win_d_restack_count(&self) -> usize {
+        self.win_d_restack_count.load(Ordering::SeqCst)
+    }
+
+    /// Explicitly re-asserts desktop overlay stacking behind desktop icons if in passive mode (Gate G06).
+    pub fn reassert_desktop_stacking(&self) {
+        if !self.is_interactive() {
+            let behind = safe_stacking_target(self.shelldll_defview_hwnd);
+            unsafe {
+                let _ = SetWindowPos(
+                    self.hwnd,
+                    behind,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+            self.win_d_restack_count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Sets a callback invoked when a non-invasive shell hook event is received (Gate G06).
+    pub fn set_on_shell_event<F>(&mut self, cb: F)
+    where
+        F: Fn(usize, isize) + Send + Sync + 'static,
+    {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(mut guard) = (*self.state_ptr).on_shell_event.lock() {
+                    *guard = Some(Arc::new(cb));
+                }
+            }
+        }
+    }
 }
 
 impl Drop for DesktopHostWindow {
@@ -717,6 +803,7 @@ impl Drop for DesktopHostWindow {
         }
         if !self.hwnd.0.is_null() {
             unsafe {
+                let _ = DeregisterShellHookWindow(self.hwnd);
                 let _ = WTSUnRegisterSessionNotification(self.hwnd);
                 let _ = DestroyWindow(self.hwnd);
             }
@@ -784,6 +871,54 @@ unsafe extern "system" fn desktop_host_wnd_proc(
                 if let Some(ref cb) = *guard {
                     cb();
                 }
+            }
+        }
+        return LRESULT(0);
+    }
+
+    let shell_hook = shellhook_msg();
+    if shell_hook != 0 && msg == shell_hook {
+        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
+        if !ptr.is_null() {
+            let state = &mut *ptr;
+            let event_code = wparam.0;
+            let target_hwnd = lparam.0;
+
+            if let Ok(guard) = state.on_shell_event.lock() {
+                if let Some(ref cb) = *guard {
+                    cb(event_code, target_hwnd);
+                }
+            }
+
+            match event_code {
+                HSHELL_WINDOWACTIVATED
+                | HSHELL_RUDEAPPACTIVATED
+                | HSHELL_ACTIVATESHELLWINDOW
+                | HSHELL_REDRAW => {
+                    let now_tick = GetTickCount64();
+                    let prev_tick = state.last_shell_tick.load(Ordering::Relaxed);
+                    // Debounce rapid shell hook bursts within 50ms
+                    if now_tick >= prev_tick && now_tick - prev_tick < 50 {
+                        return LRESULT(0);
+                    }
+                    state.last_shell_tick.store(now_tick, Ordering::Relaxed);
+
+                    // Re-assert passive desktop stacking behind icons on Win+D / shell activation
+                    if !state.is_interactive.load(Ordering::SeqCst) {
+                        let behind = safe_stacking_target(state.shelldll_defview);
+                        let _ = SetWindowPos(
+                            hwnd,
+                            behind,
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                        );
+                        state.win_d_restack_count.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+                _ => {}
             }
         }
         return LRESULT(0);
@@ -2247,5 +2382,105 @@ mod tests {
         ];
         win.set_interactive_regions(smaller);
         assert_eq!(win.focused_region_index(), None);
+    }
+
+    #[test]
+    fn test_desktop_host_window_shell_hook_and_win_d_stacking_reassertion() {
+        let shell_hook = shellhook_msg();
+        assert!(
+            shell_hook >= 0xC000,
+            "SHELLHOOK message must be a registered dynamic message (>= 0xC000)"
+        );
+
+        let mut win = DesktopHostWindow::create("test-mon-shellhook", 0, 0, 400, 300, None, None)
+            .expect("create test window");
+
+        assert_eq!(win.win_d_restack_count(), 0);
+        assert!(win.is_window_valid());
+
+        let shell_event_received = Arc::new(std::sync::Mutex::new(None));
+        let ser_clone = Arc::clone(&shell_event_received);
+        win.set_on_shell_event(move |code, hwnd_val| {
+            if let Ok(mut guard) = ser_clone.lock() {
+                *guard = Some((code, hwnd_val));
+            }
+        });
+
+        // 1. Simulate HSHELL_WINDOWACTIVATED (Win+D or window focus switch)
+        unsafe {
+            let res = desktop_host_wnd_proc(
+                win.hwnd,
+                shell_hook,
+                WPARAM(HSHELL_WINDOWACTIVATED),
+                LPARAM(0),
+            );
+            assert_eq!(res, LRESULT(0));
+        }
+
+        assert_eq!(
+            win.win_d_restack_count(),
+            1,
+            "Window must re-assert stacking behind desktop icons on shell activation"
+        );
+        assert_eq!(
+            *shell_event_received.lock().unwrap(),
+            Some((HSHELL_WINDOWACTIVATED, 0))
+        );
+
+        // 2. Debounce test: immediate rapid shell event within 50ms must be debounced
+        unsafe {
+            let res = desktop_host_wnd_proc(
+                win.hwnd,
+                shell_hook,
+                WPARAM(HSHELL_WINDOWACTIVATED),
+                LPARAM(0),
+            );
+            assert_eq!(res, LRESULT(0));
+        }
+        assert_eq!(
+            win.win_d_restack_count(),
+            1,
+            "Burst shell events within 50ms must be debounced"
+        );
+
+        // 3. After debounce expiry, HSHELL_RUDEAPPACTIVATED must re-assert stacking
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        unsafe {
+            let res = desktop_host_wnd_proc(
+                win.hwnd,
+                shell_hook,
+                WPARAM(HSHELL_RUDEAPPACTIVATED),
+                LPARAM(0),
+            );
+            assert_eq!(res, LRESULT(0));
+        }
+        assert_eq!(win.win_d_restack_count(), 2);
+
+        // 4. In interactive mode, shell events must NOT alter interactive state or disrupt overlay
+        win.set_interactive(true);
+        assert!(win.is_interactive());
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        unsafe {
+            let res = desktop_host_wnd_proc(
+                win.hwnd,
+                shell_hook,
+                WPARAM(HSHELL_WINDOWACTIVATED),
+                LPARAM(0),
+            );
+            assert_eq!(res, LRESULT(0));
+        }
+        assert_eq!(
+            win.win_d_restack_count(),
+            2,
+            "Shell hook must not force passive restacking while in interactive mode"
+        );
+        assert!(win.is_interactive(), "Interactive mode must remain active");
+
+        // Restore passive mode
+        win.set_interactive(false);
+
+        // 5. Explicit reassert_desktop_stacking() works in passive mode
+        win.reassert_desktop_stacking();
+        assert_eq!(win.win_d_restack_count(), 3);
     }
 }

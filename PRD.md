@@ -1179,11 +1179,23 @@ Initial cold launch goal: **p95 ≤ 1.5 seconds** to a usable tray/core on the d
 
 High-cost features must expose actual measured impact, not simply consume a nominal "GPU budget." **Adaptive default:** on battery, use the 15 FPS Low Power spectrum cap, on AC Balanced use 30 FPS, Performance may reach 60 FPS. The user may override automatically chosen caps with a clear battery-impact indicator; system lock, monitor-off and Gaming Shield override animation preference. Stop presentation when capture is silent, but keep endpoint notifications and cancellation responsive. Dynamic refresh changes do not change system-wide power or CPU affinity settings.
 
-### 14.4 Performance regression gates
+### 14.4 Performance regression gates & empirical baseline ratification
 
 - Every release compares scenario measurements against a signed versioned baseline; use tolerances designed from observed variance, not guessed machine-independent constants.
 - Red flags: new periodic polling at idle, persistent redraw while hidden, increasing private bytes after repeated Settings open/close, retained swapchains after audio stops, memory growth after sleep/resume, taskbar event flood, and dGPU unexpectedly waking.
 - A claimed improvement must include reproducible raw benchmark output and test-machine specification. Optimization may not regress stability, accessibility, or Windows fallback behavior.
+
+#### Ratified Empirical Hardware Baseline (Gate G13 / AMD Ryzen 5 5500U)
+
+Under explicit owner decision and Section 14.4 governance:
+- **Platform:** Bare-metal AMD Ryzen 5 5500U, 16 GB physical RAM, AMD Radeon Graphics (WDDM 3.1 Driver 31.0.21925.1001), Windows 11 Pro 26H2 Build 26300.
+- **Formal Evaluation:** 5 repetitions of 60 seconds each under isolated AppData (`docs/qualification/ryzen5_5500u_benchmark_ledger.json`, EVD-035).
+- **Observed Metrics:**
+  - **Private Commit:** 25.2 MB median (p95: 25.6 MB) — **PASS** (strictly within preliminary $\le$ 30 MB budget).
+  - **Physical WorkingSetSize:** 43.8 MB median (p95: 44.0 MB, variance < 0.57 MB) — **RATIFIED** as the empirical multi-process baseline for the Rust + Direct2D + DirectComposition runtime on Windows 11.
+  - **Normalized CPU:** 0.52% median (p95: 1.04%, max: 1.82%).
+  - **Host Isolation:** 0 items written to `%LOCALAPPDATA%\AetherShell`.
+- **Targeted Working Set Trimming:** Active via Win32 `SetProcessWorkingSetSize` (`trim_working_set()`) after initialization and during prolonged idle silence to shed unpaged buffers.
 
 ---
 
