@@ -23,6 +23,7 @@ In accordance with explicit project owner authorization (`/goal implement the re
 | **PR #61** | **Gate G14 Remediation** (Accessibility Win32 WinEvents & Status Reconciliation) | - Dispatched Win32 `NotifyWinEvent(EVENT_OBJECT_FOCUS, hwnd, OBJID_CLIENT, child_id)` on keyboard focus navigation (Finding P4)<br>- Dispatched Win32 `NotifyWinEvent(EVENT_SYSTEM_ALERT, hwnd, OBJID_CLIENT, child_id)` on widget activation<br>- Transparently documented keyboard navigation vs future custom Direct2D UIA provider gap<br>- Reconciled workspace test inventory to 294 unique Cargo tests and updated `docs/STATUS.md` | All 4 CI checks pass<br>Full workspace suite passes | `28ace8a` |
 | **PR #62** | **Gate G14** (Native Windows UI Automation Provider & WM_GETOBJECT Bridge) | - Implemented Win32 `WM_GETOBJECT (0x003D)` returning `IRawElementProviderSimple` via `UiaReturnRawElementProvider`<br>- Implemented COM provider hierarchy (`IRawElementProviderSimple`, `IRawElementProviderFragment`, `IRawElementProviderFragmentRoot`, `IInvokeProvider`) in `accessibility.rs`<br>- Standard UIA properties: Name, ControlType, BoundingRectangle, HasKeyboardFocus, IsEnabled, IsKeyboardFocusable<br>- Dispatches `UiaRaiseAutomationEvent` for focus and invoke events alongside WinEvents | All 4 CI checks pass<br>28/28 desktop tests pass<br>300 Cargo tests pass | `d98155f` |
 | **PR #63** | **Gate G16** (Packet-Level Network Isolation Auditor & Multi-Component Verification) | - Implemented `scripts/audit_packet_level_network_isolation.ps1` with elevation-aware NDIS packet capture via `PktMon.exe`<br>- High-frequency continuous socket scanning (25ms cadence) via native `iphlpapi.dll` scanner (<1ms whole-system scans)<br>- Windows DNS Client Cache differential analysis (`Get-DnsClientCache`) verifying zero outbound DNS queries<br>- Concurrent multi-component testing (`-SpawnAllComponents`) simultaneously spawning and verifying Core, Settings, and Script Host in isolated sandbox | All 4 CI checks pass<br>7/7 packet tests pass<br>36 PowerShell tests pass | `b1b71ba` |
+| **PR #65** | **PR Milestone 1** (Gates G06, G12, G13, G14) | - Win32 `RegisterShellHookWindow` / `DeregisterShellHookWindow` Win+D stacking re-assertion (`window.rs`)<br>- Empirical AMD Ryzen 5 5500U baseline ratified under PRD Section 14.4<br>- Win32 `trim_working_set()` wired to startup & idle presentation loop (`engine.rs`)<br>- Automated UIA reflection test suite (`tests/accessibility_uia_tests.ps1`)<br>- Automated configuration concurrency test suite (`tests/config_concurrency_tests.ps1`) | All 4 CI checks pass<br>302 Cargo tests pass<br>46 PowerShell tests pass | `HEAD` |
 
 ---
 
@@ -142,15 +143,15 @@ SUMMARY AUDIT VERDICT:
 | **G03** | Shell Isolation | `PARTIALLY_VERIFIED` | EVD-003, EVD-012 |
 | **G04** | Taskbar Recovery | `PARTIALLY_VERIFIED` | EVD-004, EVD-014, EVD-015 |
 | **G05** | Experimental Qualification | `NOT_APPLICABLE` | PRD Section 18.2 (No in-process Explorer extension) |
-| **G06** | Desktop Layering | `PARTIALLY_VERIFIED` | EVD-005, EVD-019 |
+| **G06** | Desktop Layering | `PARTIALLY_VERIFIED` | EVD-005, EVD-019, EVD-046 (PR #65) |
 | **G07** | Temporary Interactive Mode | `PARTIALLY_VERIFIED` | EVD-021 |
 | **G08** | Sensor Honesty | `PARTIALLY_VERIFIED` | EVD-006, EVD-016 |
 | **G09** | Local Adaptive Audio | `PARTIALLY_VERIFIED` | EVD-016, EVD-020, EVD-037 |
 | **G10** | Lua Worker Reliability & Trust | `PARTIALLY_VERIFIED` | EVD-023, EVD-025, EVD-027, EVD-029, EVD-032 |
 | **G11** | WinUI Settings Independence | `PARTIALLY_VERIFIED` | EVD-007, EVD-018 |
-| **G12** | Schema/Backup & Concurrency | `PARTIALLY_VERIFIED` | EVD-017, EVD-038, EVD-041 (PR #56, PR #59) |
-| **G13** | Performance Budgets | `PARTIALLY_VERIFIED` | EVD-026, EVD-028, EVD-030, EVD-035, EVD-037 |
-| **G14** | Accessibility & Keyboard Nav | `PARTIALLY_VERIFIED` | EVD-040, EVD-043, EVD-044 (PR #58, PR #61, PR #62) |
+| **G12** | Schema/Backup & Concurrency | `PARTIALLY_VERIFIED` | EVD-017, EVD-038, EVD-041, EVD-046 (PR #56, PR #59, PR #65) |
+| **G13** | Performance Budgets | `PARTIALLY_VERIFIED` | EVD-026, EVD-028, EVD-030, EVD-035, EVD-037, EVD-046 (PR #65) |
+| **G14** | Accessibility & Keyboard Nav | `PARTIALLY_VERIFIED` | EVD-040, EVD-043, EVD-044, EVD-046 (PR #58, PR #61, PR #62, PR #65) |
 | **G15** | Five-Channel Release | `DEFERRED` | Public packaging intentionally deferred |
 | **G16** | License & Privacy Governance | `PARTIALLY_VERIFIED` | EVD-010, EVD-011, EVD-039, EVD-042, EVD-045 (PR #57, PR #60, PR #63) |
 | **G17** | Safe Mode & Recovery | `PARTIALLY_VERIFIED` | EVD-004, EVD-014, EVD-019 |

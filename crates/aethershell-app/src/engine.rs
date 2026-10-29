@@ -742,10 +742,14 @@ impl AppEngine {
             }
         }
 
+        // Shed one-time startup allocations (PRD Section 14 & Decision Q47)
+        aethershell_win::trim_working_set();
+
         // Dirty-state presentation gating state (PRD Section 7.3 & Decision Q47)
         let mut last_rendered_bindings: Option<HashMap<String, BindingValue>> = None;
         let mut last_rendered_geometry: Option<([i32; 4], f32)> = None;
         let mut is_initial_frame = true;
+        let mut last_trim_time = std::time::Instant::now();
 
         while !self.shutdown_flag.load(Ordering::Relaxed) {
             // Pump Win32 messages (WM_PAINT, WM_KEYDOWN, WM_ACTIVATE, WM_WTSSESSION_CHANGE, etc.)
@@ -887,6 +891,12 @@ impl AppEngine {
 
                             if !is_dirty {
                                 last_render_tick = now;
+                                if now.duration_since(last_trim_time)
+                                    >= std::time::Duration::from_secs(10)
+                                {
+                                    aethershell_win::trim_working_set();
+                                    last_trim_time = now;
+                                }
                                 continue;
                             }
 
@@ -915,6 +925,7 @@ impl AppEngine {
                                         last_rendered_bindings = Some(bindings_snapshot);
                                         last_rendered_geometry = Some(current_geometry);
                                         is_initial_frame = false;
+                                        last_trim_time = now;
                                     }
                                 }
                             }
