@@ -226,7 +226,7 @@ try {
         # Spawn Core Process
         $psiCore = [System.Diagnostics.ProcessStartInfo]::new()
         $psiCore.FileName = $coreBin
-        $psiCore.Arguments = "--benchmark $DurationSeconds"
+        $psiCore.Arguments = "--test-sleep-secs $DurationSeconds"
         $psiCore.WorkingDirectory = $tempSandboxDir
         $psiCore.EnvironmentVariables["AETHERSHELL_PORTABLE_MODE"] = "1"
         $psiCore.EnvironmentVariables["LOCALAPPDATA"] = $tempSandboxDir

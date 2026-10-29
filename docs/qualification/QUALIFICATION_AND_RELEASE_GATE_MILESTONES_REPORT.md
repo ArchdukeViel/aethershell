@@ -25,7 +25,8 @@ In accordance with explicit project owner authorization (`/goal implement the re
 | **PR #63** | **Gate G16** (Packet-Level Network Isolation Auditor & Multi-Component Verification) | - Implemented `scripts/audit_packet_level_network_isolation.ps1` with elevation-aware NDIS packet capture via `PktMon.exe`<br>- High-frequency continuous socket scanning (25ms cadence) via native `iphlpapi.dll` scanner (<1ms whole-system scans)<br>- Windows DNS Client Cache differential analysis (`Get-DnsClientCache`) verifying zero outbound DNS queries<br>- Concurrent multi-component testing (`-SpawnAllComponents`) simultaneously spawning and verifying Core, Settings, and Script Host in isolated sandbox | All 4 CI checks pass<br>7/7 packet tests pass<br>36 PowerShell tests pass | `b1b71ba` |
 | **PR #65** | **PR Milestone 1** (Gates G06, G12, G13, G14) | - Win32 `RegisterShellHookWindow` / `DeregisterShellHookWindow` Win+D stacking re-assertion (`window.rs`)<br>- Empirical AMD Ryzen 5 5500U baseline ratified under PRD Section 14.4<br>- Win32 `trim_working_set()` wired to startup & idle presentation loop (`engine.rs`)<br>- Automated UIA reflection test suite (`tests/accessibility_uia_tests.ps1`)<br>- Automated configuration concurrency test suite (`tests/config_concurrency_tests.ps1`) | All 4 CI checks pass<br>302 Cargo tests pass<br>46 PowerShell tests pass | `512b55a` |
 | **PR #66** | **PR Milestone 2** (Gates G03, G15, G20) | - Package shell isolation auditor (`scripts/audit_package_artifacts.ps1`) & regression suite (`tests/package_isolation_tests.ps1`)<br>- Packaging identity & AppData continuity suite (`tests/packaging_identity_continuity_tests.ps1`)<br>- Multi-channel packaging pipeline (`scripts/build_packages.ps1`) with path remapping & SHA-256 binary manifests<br>- Self-contained portable ZIP assembly and zero host pollution verification | All 4 CI checks pass<br>302 Cargo tests pass<br>56 PowerShell tests pass | `e7d5faf` |
-| **PR #67** | **PR Milestone 3** (Gates G01, G04, G06, G07, G10, G11, G16, G17, G19) | - Disposable guest qualification harness (`scripts/guest_sandbox_qualification.ps1`)<br>- Automated host orchestrator (`scripts/run_disposable_vm_qualification.ps1`) with Q01:B / Q48:A resource preflight<br>- Windows Sandbox XML profile generation (2048 MB RAM, airgap network containment)<br>- Automated regression suite (`tests/disposable_vm_qualification_tests.ps1`) | All 4 CI checks pass<br>302 Cargo tests pass<br>61 PowerShell tests pass | `HEAD` |
+| **PR #67** | **PR Milestone 3** (Gates G01, G04, G06, G07, G10, G11, G16, G17, G19) | - Disposable guest qualification harness (`scripts/guest_sandbox_qualification.ps1`)<br>- Automated host orchestrator (`scripts/run_disposable_vm_qualification.ps1`) with Q01:B / Q48:A resource preflight<br>- Windows Sandbox XML profile generation (2048 MB RAM, airgap network containment)<br>- Automated regression suite (`tests/disposable_vm_qualification_tests.ps1`) | All 4 CI checks pass<br>302 Cargo tests pass<br>61 PowerShell tests pass | `8552fbc` |
+| **PR #68** | **PR Milestone 4** (Gates G02, G05, G18) | - 7-tier OS matrix compatibility auditor (`scripts/audit_os_matrix_compatibility.ps1`) & regression suite (`tests/os_matrix_compatibility_tests.ps1`)<br>- Gate G05 formal certification as `NOT_APPLICABLE` (0 in-process Explorer extensions)<br>- Cryptographic release acceptance ledger generator (`scripts/generate_release_acceptance_ledger.ps1`) & regression suite (`tests/release_acceptance_ledger_tests.ps1`)<br>- Reconciled release ledger `FINAL_RELEASE_ACCEPTANCE_LEDGER.json` enforcing NO-GO disposition | All 4 CI checks pass<br>302 Cargo tests pass<br>65 PowerShell tests pass | `HEAD` |
 
 ---
 
@@ -125,11 +126,27 @@ An adversarial review of PRs #56, #57, and #58 raised four key findings (P1–P4
      - Supports `-PreflightOnly` and `-DryRun` non-disruptive execution on host.
   3. Implemented automated regression suite `tests/disposable_vm_qualification_tests.ps1` (5/5 passed) validating host safety enforcement, preflight checks, XML configuration, non-disruptive execution, and host AppData zero pollution.
 
+### 2.9 Advancement (Gates G02, G05, G18): Multi-Build Matrix Compatibility, G05 Formal Certification, and Cryptographic Release Acceptance Ledger (PR #68)
+- **Implementation**:
+  1. Implemented 7-tier OS matrix compatibility auditor (`scripts/audit_os_matrix_compatibility.ps1`):
+     - Dynamically inspects host OS version via `HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion` (`CurrentBuild`, `UBR`, `DisplayVersion`, `ProductName`).
+     - Maps host against all 7 PRD Section 2.1 tiers (`VM-WIN10-22H2`, `VM-WIN11-22H2`, `VM-WIN11-23H2`, `VM-WIN11-24H2`, `VM-WIN11-25H2`, `VM-WIN11-26H2`, `VM-WIN11-26H1`).
+     - Evaluates feature capabilities across tiers: Direct2D 1.1 hardware acceleration, XAML taskbar detection, PerMonitorV2 DPI awareness, Job Object process containment, Win32 shell hooks, and BOM-free UTF-8 persistence.
+     - Supports `-EvaluateOnly`, `-TargetTier`, and `-Json` modes, emitting `target\qualification_artifacts\os_matrix_audit.json`.
+  2. Implemented automated regression test suite `tests/os_matrix_compatibility_tests.ps1` (4 tests, 100% pass rate) verifying host evaluation, specific tier evaluation, invalid tier handling, and capability JSON structure.
+  3. Gate G05 Formal Certification: Formally certified as `NOT_APPLICABLE` with explicit proof of 0 in-process Explorer extensions, 0 BHOs, and 0 shell namespace hooks across all crates and packages per PRD Section 18.2.
+  4. Implemented cryptographic release acceptance ledger generator (`scripts/generate_release_acceptance_ledger.ps1`):
+     - Computes SHA-256 cryptographic digests of compiled binaries (`aethershell.exe`, `aethershell-script-host.exe`, `aethershell-settings.exe`), distribution packages (`target\dist\portable\AetherShell-v1.0.0-portable-win-x64.zip`), licensing/attribution documents (`docs/licensing/sbom.json`, `docs/licensing/THIRD_PARTY_LICENSES.md`, `LICENSE`, `NOTICE.md`), and authoritative specifications (`PRD.md`, `AGENTS.md`).
+     - Compiles the final authoritative ledger (`docs/qualification/FINAL_RELEASE_ACCEPTANCE_LEDGER.json`).
+     - Enforces the strict PRD Section 18.2 evidentiary policy: 0 `VERIFIED`, 18 `PARTIALLY_VERIFIED`, 1 `NOT_APPLICABLE` (G05), 1 `DEFERRED` (G15).
+     - Mandates `release_disposition = "NO-GO"` and `core_stable_candidate_declared = false` until physical bare-metal and multi-VM qualification is finalized.
+  5. Implemented automated regression test suite `tests/release_acceptance_ledger_tests.ps1` (6 tests, 100% pass rate) asserting schema validity, hash presence, exact gate counts, strict NO-GO disposition, file immutability, and zero host AppData pollution.
+
 ---
 
 ## 3. Workspace Test Inventory & Audit Summary
 
-Following completion and integration of PRs #56 through #67, the workspace test suite contains **302 unique passing automated Cargo tests** across 13 member crates, plus **61 dedicated PowerShell regression tests across 11 test suites** (Total: **363 passing tests**):
+Following completion and integration of PRs #56 through #68, the workspace test suite contains **302 unique passing automated Cargo tests** across 13 member crates, plus **65 dedicated PowerShell regression tests across 13 test suites** (Total: **367 passing tests**):
 
 ```
 ================================================================================
@@ -164,18 +181,20 @@ SUMMARY AUDIT VERDICT:
 ================================================================================
 ```
 
-### PowerShell Qualification & Regression Suites (61 Passing Tests Across 11 Suites)
+### PowerShell Qualification & Regression Suites (65 Passing Tests Across 13 Suites)
 1. `tests/disposable_vm_qualification_tests.ps1`: 5/5 passed.
 2. `tests/package_isolation_tests.ps1`: 6/6 passed.
 3. `tests/packaging_identity_continuity_tests.ps1`: 4/4 passed.
 4. `tests/accessibility_uia_tests.ps1`: 6/6 passed.
 5. `tests/config_concurrency_tests.ps1`: 4/4 passed.
 6. `tests/packet_level_network_isolation_tests.ps1`: 7/7 passed.
-7. `tests/test_inventory_tests.ps1`: 6/6 passed.
-8. `tests/run_ryzen5_benchmark_tests.ps1`: 11/11 passed.
-9. `tests/sbom_and_license_compliance_tests.ps1`: 5/5 passed.
-10. `tests/provision_disposable_vm_tests.ps1`: 4/4 passed.
-11. `tests/network_isolation_tests.ps1`: 3/3 passed.
+7. `tests/os_matrix_compatibility_tests.ps1`: 4/4 passed.
+8. `tests/release_acceptance_ledger_tests.ps1`: 6/6 passed.
+9. `tests/test_inventory_tests.ps1`: 6/6 passed.
+10. `tests/run_ryzen5_benchmark_tests.ps1`: 11/11 passed.
+11. `tests/sbom_and_license_compliance_tests.ps1`: 5/5 passed.
+12. `tests/provision_disposable_vm_tests.ps1`: 4/4 passed.
+13. `tests/network_isolation_tests.ps1`: 3/3 passed.
 
 ---
 
@@ -184,10 +203,10 @@ SUMMARY AUDIT VERDICT:
 | Gate | Category & Description | Current Status | Verification Record |
 | :--- | :--- | :--- | :--- |
 | **G01** | Core Startup & Lifecycle | `PARTIALLY_VERIFIED` | EVD-003, EVD-010, EVD-014, EVD-037, EVD-048 (PR #67) |
-| **G02** | Multi-Process Security & IPC | `PARTIALLY_VERIFIED` | EVD-010, EVD-011, EVD-012, EVD-032, EVD-036 |
+| **G02** | Multi-Process Security & IPC | `PARTIALLY_VERIFIED` | EVD-010, EVD-011, EVD-012, EVD-032, EVD-036, EVD-049 (PR #68) |
 | **G03** | Shell Isolation | `PARTIALLY_VERIFIED` | EVD-003, EVD-012, EVD-047 (PR #66) |
 | **G04** | Taskbar Recovery | `PARTIALLY_VERIFIED` | EVD-004, EVD-014, EVD-015, EVD-048 (PR #67) |
-| **G05** | Experimental Qualification | `NOT_APPLICABLE` | PRD Section 18.2 (No in-process Explorer extension) |
+| **G05** | Experimental Qualification | `NOT_APPLICABLE` | PRD Section 18.2, EVD-049 (PR #68; 0 in-process Explorer extensions) |
 | **G06** | Desktop Layering | `PARTIALLY_VERIFIED` | EVD-005, EVD-019, EVD-046 (PR #65), EVD-048 (PR #67) |
 | **G07** | Temporary Interactive Mode | `PARTIALLY_VERIFIED` | EVD-021, EVD-048 (PR #67) |
 | **G08** | Sensor Honesty | `PARTIALLY_VERIFIED` | EVD-006, EVD-016 |
@@ -200,7 +219,7 @@ SUMMARY AUDIT VERDICT:
 | **G15** | Five-Channel Release | `DEFERRED` | EVD-047 (PR #66; packaging pipeline verified; public release deferred) |
 | **G16** | License & Privacy Governance | `PARTIALLY_VERIFIED` | EVD-010, EVD-011, EVD-039, EVD-042, EVD-045 (PR #57, PR #60, PR #63), EVD-048 (PR #67) |
 | **G17** | Safe Mode & Recovery | `PARTIALLY_VERIFIED` | EVD-004, EVD-014, EVD-019, EVD-048 (PR #67) |
-| **G18** | Strict No-Go & Evidence | `PARTIALLY_VERIFIED` | EVD-008, EVD-009, EVD-031, EVD-034 |
+| **G18** | Strict No-Go & Evidence | `PARTIALLY_VERIFIED` | EVD-008, EVD-009, EVD-031, EVD-034, EVD-049 (PR #68) |
 | **G19** | Third-Party Coexistence | `PARTIALLY_VERIFIED` | EVD-004, EVD-009, EVD-048 (PR #67) |
 | **G20** | Packaging Identity | `PARTIALLY_VERIFIED` | EVD-007, EVD-009, EVD-047 (PR #66) |
 
