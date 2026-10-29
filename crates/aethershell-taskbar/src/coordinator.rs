@@ -1,4 +1,4 @@
-use crate::backend::{NativeNoopBackend, TaskbarBackend};
+use crate::backend::{NativeNoopBackend, TaskbarBackend, TaskbarBackendError};
 use aethershell_core::{
     resolve_taskbar_rule, MonitorTaskbarState, TaskbarEffect, TaskbarResolution, TaskbarRule,
 };
@@ -185,6 +185,18 @@ impl TaskbarCoordinator {
 
     pub fn get_resolution(&self, monitor_id: &str) -> Option<&TaskbarResolution> {
         self.active_resolutions.get(monitor_id)
+    }
+
+    /// Restores native taskbars across all active monitors.
+    pub fn restore_all_native(&mut self) -> Result<(), TaskbarBackendError> {
+        let keys: Vec<String> = self.per_monitor_states.keys().cloned().collect();
+        for key in &keys {
+            self.backend.restore_native(key)?;
+        }
+        if keys.is_empty() {
+            self.backend.restore_native("primary")?;
+        }
+        Ok(())
     }
 }
 

@@ -16,7 +16,9 @@ use aethershell_renderer::{
     CanvasRenderer, D2D1CanvasRenderer, LayoutEngine, ResolvedNode, SceneGraph,
 };
 use aethershell_script_host::ScriptSupervisor;
-use aethershell_taskbar::{ExternalAppearanceBackend, TaskbarCoordinator};
+use aethershell_taskbar::{
+    ExternalAppearanceBackend, TaskbarCoordinator, TaskbarRecoveryCoordinator,
+};
 use aethershell_telemetry::TelemetryRegistry;
 use aethershell_win::{
     enumerate_monitors, probe_desktop_hierarchy, probe_taskbars, SessionSingletonGuard, ShellEvent,
@@ -344,6 +346,18 @@ impl AppEngine {
             "Session capability token registered at {:?}",
             _session_guard.path()
         );
+
+        // Initialize taskbar recovery coordinator and start heartbeat pulse thread (PRD Section 4.3 & Gate G04)
+        let mut recovery_coordinator = TaskbarRecoveryCoordinator::new().ok();
+        let _recovery_heartbeat = recovery_coordinator
+            .as_ref()
+            .map(|c| c.start_heartbeat_thread(std::time::Duration::from_millis(500)));
+        if recovery_coordinator.is_some() {
+            info!(
+                "Taskbar recovery coordinator and heartbeat pulsing initialized (PID: {})",
+                std::process::id()
+            );
+        }
 
         // Load or initialize persistent configuration store (PRD Section 10 & 16, Q38:B)
         {
@@ -956,6 +970,13 @@ impl AppEngine {
 
         info!("Shutting down AetherShell Engine...");
         let _ = shutdown_tx.send(true);
+        if let Some(ref mut coord) = recovery_coordinator {
+            let _ = coord.mark_clean_exit();
+            info!("Marked clean exit for taskbar recovery watchdog");
+        }
+        if let Ok(mut tb) = self.taskbar.try_lock() {
+            let _ = tb.restore_all_native();
+        }
         {
             let mut sup = self.script_supervisor.lock().await;
             if sup.is_running() {

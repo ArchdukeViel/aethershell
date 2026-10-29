@@ -1,22 +1,22 @@
 {
     "LedgerType":  "AetherShellFinalReleaseAcceptanceLedger",
     "Version":  "0.1.0-dev",
-    "GeneratedAt":  "2026-10-30T00:50:20.9916570+07:00",
+    "GeneratedAt":  "2026-10-30T01:59:38.4130686+07:00",
     "ReleaseDisposition":  "NO-GO",
     "CoreStableCandidate":  false,
     "ProductionVersionTag":  "RESERVED (v1.0.0)",
     "GovernancePolicy":  "PRD Section 18.2, AGENTS.md, Decisions Q01-Q48",
     "GateAccountingSummary":  {
                                   "TotalGates":  20,
-                                  "Verified":  3,
-                                  "PartiallyVerified":  15,
+                                  "Verified":  4,
+                                  "PartiallyVerified":  14,
                                   "NotApplicable":  1,
                                   "Deferred":  1
                               },
     "AutomatedTestSummary":  {
-                                 "UniqueCargoTests":  334,
-                                 "PowerShellTests":  89,
-                                 "TotalAutomatedTests":  423,
+                                 "UniqueCargoTests":  349,
+                                 "PowerShellTests":  96,
+                                 "TotalAutomatedTests":  445,
                                  "HostAppDataItems":  0
                              },
     "CryptographicArtifacts":  {
@@ -24,9 +24,9 @@
                                    "aethershell-script-host.exe":  "2567eb821ffcbed5a27c51ce8b10d8c6b0d16169fe14b8f9d7809000206f74de",
                                    "aethershell-settings.exe":  "d30ba6e350f811ece250a64deda62591416bd4730e78c73931ffa2c2b9025216",
                                    "portable_zip":  "be3350d7e891c6879fcc5fcee23b192fbce933552b0009b39e8328e2ad376b4a",
-                                   "sbom.json":  "3244f178369dcdb08eca7e0031e5c52c818bbfafa30246b2ace6f7e50cc79961",
-                                   "THIRD_PARTY_LICENSES.md":  "47e4f2278b7a24619852d0ba22cff0bb4d0e2f2f09284ad7e30fbfe539f659f4",
-                                   "PRD.md":  "7930dd74cc0d19e79f2c1738b1cd2b134f062af6c743b043c0406aa5a19dbee4",
+                                   "sbom.json":  "b2120e5846e2264c1647e054baac79f3848bc607f7b5dc45293038186e6f668f",
+                                   "THIRD_PARTY_LICENSES.md":  "321cc018b7e3253084444b19001be259c801b951d4e54fb4ad8450967e80eecf",
+                                   "PRD.md":  "884875c3f67aea2a96d6d6f38c6889adcc910af3d1ceffe0de983ce29985b31d",
                                    "AGENTS.md":  "ba5b863e1dac704550dad3321d1e833c853e0a18f18e9f8d6641478341caf9b7",
                                    "LICENSE":  "f4d9b0aad8ff9e650f5890fa3eeb7c1311479cab901f8a9b416a2d9acaf54266",
                                    "NOTICE.md":  "b2edbdc8f1d3fe6be4e03b29b40fefe4ecfa16f220b02f0d707d1c701f85669d"
@@ -60,9 +60,9 @@
                                 "GateId":  "G04",
                                 "Name":  "Taskbar recovery",
                                 "PassCondition":  "External effects gated; native fallback; no repeated fighting or Explorer loop",
-                                "Status":  "PARTIALLY_VERIFIED",
-                                "Evidence":  "EVD-004, EVD-014, EVD-015, EVD-048",
-                                "Reason":  "Non-invasive conflict detection yields to third-party customizers; TaskbarCreated recovery handles Explorer restart with debounce protection; automated guest harness verified in PR #67. Live VM pixel capture remains outstanding."
+                                "Status":  "VERIFIED",
+                                "Evidence":  "EVD-004, EVD-014, EVD-015, EVD-048, EVD-053",
+                                "Reason":  "TaskbarRecoveryCoordinator and TaskbarRecoveryWatchdog with Win32 SYNCHRONIZE handle monitoring, heartbeat pinging (Local\\AetherShell_Heartbeat_\u003cPID\u003e), clean exit signaling (Local\\AetherShell_CleanExit_\u003cPID\u003e), abrupt termination recovery, and dynamic TaskbarCreated window broadcast handling with 300ms debounce protection empirically verified; multi-monitor tray window recovery (Shell_TrayWnd and Shell_SecondaryTrayWnd) verified across 7 PowerShell regression tests, 5 Cargo integration tests, and 20 taskbar unit tests with 0 host AppData pollution."
                             },
                             {
                                 "GateId":  "G05",

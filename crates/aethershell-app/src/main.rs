@@ -96,10 +96,85 @@ async fn main() -> ExitCode {
     // Dedicated sleep test mode for multi-process qualification and isolation audits
     if let Some(pos) = args.iter().position(|a| a == "--test-sleep-secs") {
         if let Some(s) = args.get(pos + 1).and_then(|s| s.parse::<u64>().ok()) {
-            println!("CORE_STARTED:{}", std::process::id());
+            let pid = std::process::id();
+            println!("CORE_STARTED:{}", pid);
+            let mut coordinator =
+                aethershell_taskbar::TaskbarRecoveryCoordinator::for_pid(pid).ok();
+            let _hb_guard = coordinator
+                .as_ref()
+                .map(|c| c.start_heartbeat_thread(std::time::Duration::from_millis(100)));
             std::thread::sleep(std::time::Duration::from_secs(s));
-            println!("CORE_TERMINATED:{}", std::process::id());
+            if let Some(ref mut c) = coordinator {
+                let _ = c.mark_clean_exit();
+            }
+            println!("CORE_TERMINATED:{}", pid);
             return ExitCode::SUCCESS;
+        }
+    }
+
+    if let Some(pos) = args
+        .iter()
+        .position(|a| a == "--taskbar-recovery-watchdog" || a == "/taskbar-recovery-watchdog")
+    {
+        let target_pid = args.get(pos + 1).and_then(|s| s.parse::<u32>().ok());
+        match target_pid {
+            Some(pid) => {
+                println!(
+                    "Starting AetherShell Taskbar Recovery Watchdog for target PID {}...",
+                    pid
+                );
+                match aethershell_taskbar::TaskbarRecoveryWatchdog::new(pid) {
+                    Ok(watchdog) => {
+                        println!("WATCHDOG_ATTACHED:{}", pid);
+                        let verdict = watchdog.run();
+                        println!("WATCHDOG_COMPLETED:{:?}", verdict);
+                        match verdict {
+                            aethershell_taskbar::WatchdogExitVerdict::CleanExit { exit_code } => {
+                                println!(
+                                    "Target PID {} exited cleanly with code {}.",
+                                    pid, exit_code
+                                );
+                                return ExitCode::SUCCESS;
+                            }
+                            aethershell_taskbar::WatchdogExitVerdict::RecoveredAbruptTermination {
+                                exit_code,
+                                report,
+                            } => {
+                                println!(
+                                    "Target PID {} terminated abruptly with code {}. Restored {} taskbar windows (primary={}).",
+                                    pid, exit_code, report.total_discovered, report.primary_restored
+                                );
+                                return ExitCode::SUCCESS;
+                            }
+                            aethershell_taskbar::WatchdogExitVerdict::RecoveredHeartbeatHang {
+                                report,
+                            } => {
+                                println!(
+                                    "Target PID {} heartbeat hung. Restored {} taskbar windows (primary={}).",
+                                    pid, report.total_discovered, report.primary_restored
+                                );
+                                return ExitCode::SUCCESS;
+                            }
+                            aethershell_taskbar::WatchdogExitVerdict::TargetNotFound {
+                                target_pid,
+                            } => {
+                                eprintln!("Error: Target PID {} not found.", target_pid);
+                                return ExitCode::FAILURE;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error: Failed to attach watchdog to PID {}: {}", pid, e);
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            None => {
+                eprintln!(
+                    "Error: --taskbar-recovery-watchdog requires a valid numeric target PID."
+                );
+                return ExitCode::FAILURE;
+            }
         }
     }
 
@@ -521,6 +596,8 @@ fn print_usage() {
     println!("    -v, --version            Print version information");
     println!("    --safe-mode              Launch in Safe Mode (forces NativeNoopBackend, bypasses hooks)");
     println!("    --quit                   Request active instance to shut down cleanly");
+    println!("    --taskbar-recovery-watchdog <PID>");
+    println!("                             Run watchdog monitor supervising target PID with SYNCHRONIZE handle");
     println!("    --test-sleep-secs <N>    Test mode: sleep N seconds and exit cleanly");
     println!("    --capabilities           Print live OS version, 7-tier matrix capabilities, and fallback verdicts in JSON");
     println!("    --diagnostics            Generate and print sanitized JSON diagnostics report");
