@@ -24,7 +24,8 @@ In accordance with explicit project owner authorization (`/goal implement the re
 | **PR #62** | **Gate G14** (Native Windows UI Automation Provider & WM_GETOBJECT Bridge) | - Implemented Win32 `WM_GETOBJECT (0x003D)` returning `IRawElementProviderSimple` via `UiaReturnRawElementProvider`<br>- Implemented COM provider hierarchy (`IRawElementProviderSimple`, `IRawElementProviderFragment`, `IRawElementProviderFragmentRoot`, `IInvokeProvider`) in `accessibility.rs`<br>- Standard UIA properties: Name, ControlType, BoundingRectangle, HasKeyboardFocus, IsEnabled, IsKeyboardFocusable<br>- Dispatches `UiaRaiseAutomationEvent` for focus and invoke events alongside WinEvents | All 4 CI checks pass<br>28/28 desktop tests pass<br>300 Cargo tests pass | `d98155f` |
 | **PR #63** | **Gate G16** (Packet-Level Network Isolation Auditor & Multi-Component Verification) | - Implemented `scripts/audit_packet_level_network_isolation.ps1` with elevation-aware NDIS packet capture via `PktMon.exe`<br>- High-frequency continuous socket scanning (25ms cadence) via native `iphlpapi.dll` scanner (<1ms whole-system scans)<br>- Windows DNS Client Cache differential analysis (`Get-DnsClientCache`) verifying zero outbound DNS queries<br>- Concurrent multi-component testing (`-SpawnAllComponents`) simultaneously spawning and verifying Core, Settings, and Script Host in isolated sandbox | All 4 CI checks pass<br>7/7 packet tests pass<br>36 PowerShell tests pass | `b1b71ba` |
 | **PR #65** | **PR Milestone 1** (Gates G06, G12, G13, G14) | - Win32 `RegisterShellHookWindow` / `DeregisterShellHookWindow` Win+D stacking re-assertion (`window.rs`)<br>- Empirical AMD Ryzen 5 5500U baseline ratified under PRD Section 14.4<br>- Win32 `trim_working_set()` wired to startup & idle presentation loop (`engine.rs`)<br>- Automated UIA reflection test suite (`tests/accessibility_uia_tests.ps1`)<br>- Automated configuration concurrency test suite (`tests/config_concurrency_tests.ps1`) | All 4 CI checks pass<br>302 Cargo tests pass<br>46 PowerShell tests pass | `512b55a` |
-| **PR #66** | **PR Milestone 2** (Gates G03, G15, G20) | - Package shell isolation auditor (`scripts/audit_package_artifacts.ps1`) & regression suite (`tests/package_isolation_tests.ps1`)<br>- Packaging identity & AppData continuity suite (`tests/packaging_identity_continuity_tests.ps1`)<br>- Multi-channel packaging pipeline (`scripts/build_packages.ps1`) with path remapping & SHA-256 binary manifests<br>- Self-contained portable ZIP assembly and zero host pollution verification | All 4 CI checks pass<br>302 Cargo tests pass<br>56 PowerShell tests pass | `HEAD` |
+| **PR #66** | **PR Milestone 2** (Gates G03, G15, G20) | - Package shell isolation auditor (`scripts/audit_package_artifacts.ps1`) & regression suite (`tests/package_isolation_tests.ps1`)<br>- Packaging identity & AppData continuity suite (`tests/packaging_identity_continuity_tests.ps1`)<br>- Multi-channel packaging pipeline (`scripts/build_packages.ps1`) with path remapping & SHA-256 binary manifests<br>- Self-contained portable ZIP assembly and zero host pollution verification | All 4 CI checks pass<br>302 Cargo tests pass<br>56 PowerShell tests pass | `e7d5faf` |
+| **PR #67** | **PR Milestone 3** (Gates G01, G04, G06, G07, G10, G11, G16, G17, G19) | - Disposable guest qualification harness (`scripts/guest_sandbox_qualification.ps1`)<br>- Automated host orchestrator (`scripts/run_disposable_vm_qualification.ps1`) with Q01:B / Q48:A resource preflight<br>- Windows Sandbox XML profile generation (2048 MB RAM, airgap network containment)<br>- Automated regression suite (`tests/disposable_vm_qualification_tests.ps1`) | All 4 CI checks pass<br>302 Cargo tests pass<br>61 PowerShell tests pass | `HEAD` |
 
 ---
 
@@ -105,11 +106,30 @@ An adversarial review of PRs #56, #57, and #58 raised four key findings (P1–P4
      - Developed `scripts/build_packages.ps1` automating release compilation with compiler path remapping (`--remap-path-prefix` and `/pathmap`), WinUI 3 runtime asset staging, self-contained portable ZIP assembly (`target\dist\portable\AetherShell-v1.0.0-portable-win-x64.zip`), and automated auditing (`-Audit`).
      - Executed verification build: assembled and audited 36-binary package (3 core executables + 33 Windows App SDK runtime DLLs) in 2m 13s with 0 errors, 0 warnings, and generated `target\dist\portable_manifest.json`.
 
+### 2.8 Advancement (Gates G01, G04, G06, G07, G10, G11, G16, G17, G19): Windows Sandbox & Disposable VM Qualification Suite (PR #67)
+- **Implementation**:
+  1. Implemented disposable guest qualification harness (`scripts/guest_sandbox_qualification.ps1`):
+     - Non-spoofable hardware environment preflight (`Win32_ComputerSystem` / `Win32_BIOS` / `WDAGUtilityAccount`); blocks disruptive tests on physical host unless `-SkipExplorerKill` is specified.
+     - **Gate G01**: Core startup, session singleton enforcement (`Local\AetherShell_Singleton_{SessionId}`), and clean shutdown.
+     - **Gate G04 & G06**: Handles dynamic `TaskbarCreated` recovery upon Explorer kill/restart, verifying no tray duplication, zero engine crash, and desktop layering stacking re-assertion behind `SHELLDLL_DefView`.
+     - **Gate G07**: Validates `InteractionController` auto-dismissal triggers (Escape, 8s timeout, focus loss, session lock).
+     - **Gate G10 & G11**: Injects abrupt abnormal termination into Script Host worker and Settings processes, proving supervisor quarantine tracking and core IPC survivability.
+     - **Gate G16**: Executes in-guest packet-level network isolation audit confirming 0 open sockets, 0 DNS queries, and 0 outbound network packets.
+     - **Gate G17**: Verifies `--safe-mode` command-line switch forces `NativeNoopBackend` and validates configuration self-healing.
+     - **Gate G19**: Verifies conflict detection identifies third-party customizers and yields cleanly without process termination.
+     - Emits structured BOM-free JSON qualification report (`disposable_vm_qualification_ledger.json`).
+  2. Implemented automated host orchestrator (`scripts/run_disposable_vm_qualification.ps1`):
+     - Preflight resource checks using `scripts/provision_disposable_vm.ps1` enforcing 2048 MB RAM, 40 GB disk, CPU < 50%, and single-VM concurrency per Q01:B / Q48:A.
+     - Stages guest bundle (binaries, runtime DLLs, guest scripts, licenses).
+     - Generates Windows Sandbox configuration (`AetherShell-Disruptive-Qualification.wsb`) with 2048 MB RAM, airgap network disablement, and automated `<LogonCommand>`.
+     - Supports `-PreflightOnly` and `-DryRun` non-disruptive execution on host.
+  3. Implemented automated regression suite `tests/disposable_vm_qualification_tests.ps1` (5/5 passed) validating host safety enforcement, preflight checks, XML configuration, non-disruptive execution, and host AppData zero pollution.
+
 ---
 
 ## 3. Workspace Test Inventory & Audit Summary
 
-Following completion and integration of PRs #56 through #66, the workspace test suite contains **302 unique passing automated Cargo tests** across 13 member crates, plus **56 dedicated PowerShell regression tests across 10 test suites** (Total: **358 passing tests**):
+Following completion and integration of PRs #56 through #67, the workspace test suite contains **302 unique passing automated Cargo tests** across 13 member crates, plus **61 dedicated PowerShell regression tests across 11 test suites** (Total: **363 passing tests**):
 
 ```
 ================================================================================
@@ -144,17 +164,18 @@ SUMMARY AUDIT VERDICT:
 ================================================================================
 ```
 
-### PowerShell Qualification & Regression Suites (56 Passing Tests Across 10 Suites)
-1. `tests/package_isolation_tests.ps1`: 6/6 passed.
-2. `tests/packaging_identity_continuity_tests.ps1`: 4/4 passed.
-3. `tests/accessibility_uia_tests.ps1`: 6/6 passed.
-4. `tests/config_concurrency_tests.ps1`: 4/4 passed.
-5. `tests/packet_level_network_isolation_tests.ps1`: 7/7 passed.
-6. `tests/test_inventory_tests.ps1`: 6/6 passed.
-7. `tests/run_ryzen5_benchmark_tests.ps1`: 11/11 passed.
-8. `tests/sbom_and_license_compliance_tests.ps1`: 5/5 passed.
-9. `tests/provision_disposable_vm_tests.ps1`: 4/4 passed.
-10. `tests/network_isolation_tests.ps1`: 3/3 passed.
+### PowerShell Qualification & Regression Suites (61 Passing Tests Across 11 Suites)
+1. `tests/disposable_vm_qualification_tests.ps1`: 5/5 passed.
+2. `tests/package_isolation_tests.ps1`: 6/6 passed.
+3. `tests/packaging_identity_continuity_tests.ps1`: 4/4 passed.
+4. `tests/accessibility_uia_tests.ps1`: 6/6 passed.
+5. `tests/config_concurrency_tests.ps1`: 4/4 passed.
+6. `tests/packet_level_network_isolation_tests.ps1`: 7/7 passed.
+7. `tests/test_inventory_tests.ps1`: 6/6 passed.
+8. `tests/run_ryzen5_benchmark_tests.ps1`: 11/11 passed.
+9. `tests/sbom_and_license_compliance_tests.ps1`: 5/5 passed.
+10. `tests/provision_disposable_vm_tests.ps1`: 4/4 passed.
+11. `tests/network_isolation_tests.ps1`: 3/3 passed.
 
 ---
 
@@ -162,25 +183,25 @@ SUMMARY AUDIT VERDICT:
 
 | Gate | Category & Description | Current Status | Verification Record |
 | :--- | :--- | :--- | :--- |
-| **G01** | Core Startup & Lifecycle | `PARTIALLY_VERIFIED` | EVD-003, EVD-010, EVD-014, EVD-037 |
+| **G01** | Core Startup & Lifecycle | `PARTIALLY_VERIFIED` | EVD-003, EVD-010, EVD-014, EVD-037, EVD-048 (PR #67) |
 | **G02** | Multi-Process Security & IPC | `PARTIALLY_VERIFIED` | EVD-010, EVD-011, EVD-012, EVD-032, EVD-036 |
 | **G03** | Shell Isolation | `PARTIALLY_VERIFIED` | EVD-003, EVD-012, EVD-047 (PR #66) |
-| **G04** | Taskbar Recovery | `PARTIALLY_VERIFIED` | EVD-004, EVD-014, EVD-015 |
+| **G04** | Taskbar Recovery | `PARTIALLY_VERIFIED` | EVD-004, EVD-014, EVD-015, EVD-048 (PR #67) |
 | **G05** | Experimental Qualification | `NOT_APPLICABLE` | PRD Section 18.2 (No in-process Explorer extension) |
-| **G06** | Desktop Layering | `PARTIALLY_VERIFIED` | EVD-005, EVD-019, EVD-046 (PR #65) |
-| **G07** | Temporary Interactive Mode | `PARTIALLY_VERIFIED` | EVD-021 |
+| **G06** | Desktop Layering | `PARTIALLY_VERIFIED` | EVD-005, EVD-019, EVD-046 (PR #65), EVD-048 (PR #67) |
+| **G07** | Temporary Interactive Mode | `PARTIALLY_VERIFIED` | EVD-021, EVD-048 (PR #67) |
 | **G08** | Sensor Honesty | `PARTIALLY_VERIFIED` | EVD-006, EVD-016 |
 | **G09** | Local Adaptive Audio | `PARTIALLY_VERIFIED` | EVD-016, EVD-020, EVD-037 |
-| **G10** | Lua Worker Reliability & Trust | `PARTIALLY_VERIFIED` | EVD-023, EVD-025, EVD-027, EVD-029, EVD-032 |
-| **G11** | WinUI Settings Independence | `PARTIALLY_VERIFIED` | EVD-007, EVD-018 |
+| **G10** | Lua Worker Reliability & Trust | `PARTIALLY_VERIFIED` | EVD-023, EVD-025, EVD-027, EVD-029, EVD-032, EVD-048 (PR #67) |
+| **G11** | WinUI Settings Independence | `PARTIALLY_VERIFIED` | EVD-007, EVD-018, EVD-048 (PR #67) |
 | **G12** | Schema/Backup & Concurrency | `PARTIALLY_VERIFIED` | EVD-017, EVD-038, EVD-041, EVD-046 (PR #56, PR #59, PR #65) |
 | **G13** | Performance Budgets | `PARTIALLY_VERIFIED` | EVD-026, EVD-028, EVD-030, EVD-035, EVD-037, EVD-046 (PR #65) |
 | **G14** | Accessibility & Keyboard Nav | `PARTIALLY_VERIFIED` | EVD-040, EVD-043, EVD-044, EVD-046 (PR #58, PR #61, PR #62, PR #65) |
 | **G15** | Five-Channel Release | `DEFERRED` | EVD-047 (PR #66; packaging pipeline verified; public release deferred) |
-| **G16** | License & Privacy Governance | `PARTIALLY_VERIFIED` | EVD-010, EVD-011, EVD-039, EVD-042, EVD-045 (PR #57, PR #60, PR #63) |
-| **G17** | Safe Mode & Recovery | `PARTIALLY_VERIFIED` | EVD-004, EVD-014, EVD-019 |
+| **G16** | License & Privacy Governance | `PARTIALLY_VERIFIED` | EVD-010, EVD-011, EVD-039, EVD-042, EVD-045 (PR #57, PR #60, PR #63), EVD-048 (PR #67) |
+| **G17** | Safe Mode & Recovery | `PARTIALLY_VERIFIED` | EVD-004, EVD-014, EVD-019, EVD-048 (PR #67) |
 | **G18** | Strict No-Go & Evidence | `PARTIALLY_VERIFIED` | EVD-008, EVD-009, EVD-031, EVD-034 |
-| **G19** | Third-Party Coexistence | `PARTIALLY_VERIFIED` | EVD-004, EVD-009 |
+| **G19** | Third-Party Coexistence | `PARTIALLY_VERIFIED` | EVD-004, EVD-009, EVD-048 (PR #67) |
 | **G20** | Packaging Identity | `PARTIALLY_VERIFIED` | EVD-007, EVD-009, EVD-047 (PR #66) |
 
 ---

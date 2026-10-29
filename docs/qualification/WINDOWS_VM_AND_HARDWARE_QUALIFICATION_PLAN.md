@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary & Objective
 
-AetherShell has achieved clean component-level unit and integration test verification across its 13 workspace crates (302 unique passing tests across 27 test executables + 56 passing PowerShell regression tests across 10 test suites = 358 total passing automated tests). However, under the strict evidentiary governance defined in **PRD Section 18.2** and **AGENTS.md**, **no gate can be certified as `VERIFIED` based solely on in-process tests or headless CI runners**.
+AetherShell has achieved clean component-level unit and integration test verification across its 13 workspace crates (302 unique passing tests across 27 test executables + 61 passing PowerShell regression tests across 11 test suites = 363 total passing automated tests). However, under the strict evidentiary governance defined in **PRD Section 18.2** and **AGENTS.md**, **no gate can be certified as `VERIFIED` based solely on in-process tests or headless CI runners**.
 
 The objective of this Qualification Plan is to establish a rigorous, repeatable, and non-destructive empirical test campaign to evaluate AetherShell across:
 1. Isolated, disposable Windows Virtual Machines (VMs) for disruptive shell and fault-injection testing.
