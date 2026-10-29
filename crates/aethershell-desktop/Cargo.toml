@@ -9,6 +9,7 @@ license.workspace = true
 aethershell-core.workspace = true
 aethershell-win.workspace = true
 windows.workspace = true
+windows-core = "0.58"
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

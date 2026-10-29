@@ -2,7 +2,7 @@
 
 **Document Revision:** 0.1.0-dev (Reconciled Application Stability Baseline)  
 **Last Updated:** October 29, 2026  
-**Current Status:** Release Gate Remediation & Adversarial Audit Reconciliation Active (PRs #54 through #61); 20-Gate Acceptance Matrix Truthfully Reconciled (0 VERIFIED, 18 PARTIALLY_VERIFIED, 1 NOT_APPLICABLE, 1 DEFERRED; CORE_STABLE_CANDIDATE Strictly Not Declared); Total Tests: 294 Passing Unique Cargo Tests Across 13 Workspace Crates (182 Unit + 112 Integration across 27 test executables) + 29 Passing PowerShell Regression Tests = 323 Total Passing Automated Tests.
+**Current Status:** Windows UI Automation Provider & Gate G14 Accessibility Advancement Active (PR #62 Candidate); 20-Gate Acceptance Matrix Truthfully Reconciled (0 VERIFIED, 18 PARTIALLY_VERIFIED, 1 NOT_APPLICABLE, 1 DEFERRED; CORE_STABLE_CANDIDATE Strictly Not Declared); Total Tests: 300 Passing Unique Cargo Tests Across 13 Workspace Crates (188 Unit + 112 Integration across 27 test executables) + 29 Passing PowerShell Regression Tests = 329 Total Passing Automated Tests.
 
 ---
 
@@ -318,11 +318,19 @@ The proposed sequence of focused, independently reviewable pull requests is:
     - Set `licenseConcluded = "NOASSERTION"` per SPDX 2.3 Section 7.13 pending separate human/legal review, while preserving upstream metadata in `licenseDeclared`.
     - Hardened `scripts/audit_runtime_network_isolation.ps1`: fails closed when no processes are found in `-Strict` mode (Finding P2) and added `-SpawnTestProcess` for live sandboxed process audit.
     - All 8 PowerShell regression tests in `network_isolation_tests.ps1` and `sbom_and_license_compliance_tests.ps1` pass.
-33. **PR #58 & PR #61: Desktop Widget Accessibility, Keyboard Navigation & Win32 WinEvent Bridge (Gate G14)** *(Merged into `main` at `45b9610` and Candidate PR #61 — see [EVD-040](EVIDENCE.md#evd-040-desktop-widget-accessibility-descriptions-and-keyboard-focus-navigation-gate-g14))*
+33. **PR #58 & PR #61: Desktop Widget Accessibility, Keyboard Navigation & Win32 WinEvent Bridge (Gate G14)** *(Merged into `main` at `45b9610` and `28ace8a` — see [EVD-040](EVIDENCE.md#evd-040-desktop-widget-accessibility-descriptions-and-keyboard-focus-navigation-gate-g14))*
     - Accessible name, role, value, and formatted screen-reader descriptions for interactive widgets.
     - Tab / Shift+Tab and arrow key focus navigation with visual focus ring updates.
     - Dispatched Win32 `NotifyWinEvent(EVENT_OBJECT_FOCUS, hwnd, OBJID_CLIENT, child_id)` on focus changes.
     - Dispatched Win32 `NotifyWinEvent(EVENT_SYSTEM_ALERT, hwnd, OBJID_CLIENT, child_id)` on widget activation.
-    - Truthfully documented keyboard-only vs future custom Direct2D UIA provider gap; Gate G14 maintained as `PARTIALLY_VERIFIED`.
-    - Total workspace tests formally verified at **294 unique Cargo tests** (182 unit + 112 integration across 27 executables) + 29 PowerShell regression tests = 323 passing automated tests.
+    - Documented keyboard navigation vs native UIA provider milestone gap; Gate G14 maintained as `PARTIALLY_VERIFIED`.
+34. **PR #62: Native Windows UI Automation (UIA) Provider Hierarchy, WM_GETOBJECT Bridge & Narrator Event Integration (Gate G14)** *(Active Milestone / PR #62)*
+    - Implemented Win32 `WM_GETOBJECT` (msg `0x003D`) handling in `desktop_host_wnd_proc` returning `IRawElementProviderSimple` via `UiaReturnRawElementProvider`.
+    - Implemented full COM UI Automation provider hierarchy (`IRawElementProviderSimple`, `IRawElementProviderFragment`, `IRawElementProviderFragmentRoot`, `IInvokeProvider`) for desktop overlay window and its interactive widgets (`InteractiveRegion`).
+    - Handled standard UIA properties: `UIA_NamePropertyId`, `UIA_ControlTypePropertyId` (Button, Text, Group, Slider, Image, CheckBox, Pane, Custom), `UIA_BoundingRectanglePropertyId`, `UIA_HasKeyboardFocusPropertyId`, `UIA_IsEnabledPropertyId`, and `UIA_IsKeyboardFocusablePropertyId`.
+    - Implemented `create_fragment_runtime_id` constructing standard `[UiaAppendRuntimeId, <child_id>]` SAFEARRAYs.
+    - Connected `UiaRaiseAutomationEvent` with `UIA_AutomationFocusChangedEventId` and `UIA_Invoke_InvokedEventId` alongside legacy WinEvents.
+    - Resolved mutex re-entrancy deadlock in `WM_KEYDOWN` event dispatches.
+    - Added unit and integration tests verifying `WM_GETOBJECT`, provider lifecycle, property retrieval, fragment navigation, and hit-testing (28 tests in `aethershell-desktop`).
+    - Total workspace tests formally verified at **300 unique Cargo tests** (188 unit + 112 integration across 27 executables) + 29 PowerShell regression tests = 329 passing automated tests. Gate G14 truthfully maintained as `PARTIALLY_VERIFIED` pending physical VM Narrator audio output qualification.
 
