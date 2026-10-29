@@ -1,7 +1,7 @@
 # AetherShell — Engineering Qualification & Release-Gate Reconciliation Report
 
 **Document Baseline**: Active Working Branch `main`  
-**Latest Merged Commit on Main**: `4a95ee8 feat(governance,matrix): implement OS matrix compatibility auditor, G05 certification, and cryptographic release acceptance ledger (PR Milestone 4) (#68)`  
+**Latest Merged Commit on Main**: `b966032 feat(lifecycle,qualification): verify Gate G01 core startup, session singleton, CLI quit routing, and WM_ENDSESSION clean shutdown (#69)`  
 **Remote Repository**: `https://github.com/ArchdukeViel/aethershell`  
 **Host Environment**: Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM  
 **Host AppData Status**: `%LOCALAPPDATA%\AetherShell` strictly maintained at 0 items (100% clean)  
@@ -27,6 +27,7 @@ In accordance with explicit project owner authorization (`/goal implement the re
 | **PR #66** | **PR Milestone 2** (Gates G03, G15, G20) | - Package shell isolation auditor (`scripts/audit_package_artifacts.ps1`) & regression suite (`tests/package_isolation_tests.ps1`)<br>- Packaging identity & AppData continuity suite (`tests/packaging_identity_continuity_tests.ps1`)<br>- Multi-channel packaging pipeline (`scripts/build_packages.ps1`) with path remapping & SHA-256 binary manifests<br>- Self-contained portable ZIP assembly and zero host pollution verification | All 4 CI checks pass<br>302 Cargo tests pass<br>56 PowerShell tests pass | `e7d5faf` |
 | **PR #67** | **PR Milestone 3** (Gates G01, G04, G06, G07, G10, G11, G16, G17, G19) | - Disposable guest qualification harness (`scripts/guest_sandbox_qualification.ps1`)<br>- Automated host orchestrator (`scripts/run_disposable_vm_qualification.ps1`) with Q01:B / Q48:A resource preflight<br>- Windows Sandbox XML profile generation (2048 MB RAM, airgap network containment)<br>- Automated regression suite (`tests/disposable_vm_qualification_tests.ps1`) | All 4 CI checks pass<br>302 Cargo tests pass<br>61 PowerShell tests pass | `8552fbc` |
 | **PR #68** | **PR Milestone 4** (Gates G02, G05, G18) | - 7-tier OS matrix compatibility auditor (`scripts/audit_os_matrix_compatibility.ps1`) & regression suite (`tests/os_matrix_compatibility_tests.ps1`)<br>- Gate G05 formal certification as `NOT_APPLICABLE` (0 in-process Explorer extensions)<br>- Cryptographic release acceptance ledger generator (`scripts/generate_release_acceptance_ledger.ps1`) & regression suite (`tests/release_acceptance_ledger_tests.ps1`)<br>- Reconciled release ledger `FINAL_RELEASE_ACCEPTANCE_LEDGER.json` enforcing NO-GO disposition | All 4 CI checks pass<br>302 Cargo tests pass<br>65 PowerShell tests pass | `4a95ee8` |
+| **PR #69** | **Gate G01 Verification** (Core Startup, Session Singleton & Safe Shutdown) | - Win32 `WM_QUERYENDSESSION` (returns 1) & `WM_ENDSESSION` handling in tray and desktop windows<br>- Win32 `WM_CLOSE` / `WM_DESTROY` tray signal bridge to engine `shutdown_flag`<br>- CLI `--quit` routing to active session over Named Pipe IPC (`aethershell-app`)<br>- Synchronized lifecycle and tray test suites (`LIFECYCLE_TEST_LOCK` & `TRAY_TEST_MUTEX`)<br>- Guest sandbox qualification: non-elevated user startup, singleton, and clean exit in 83.8ms (< 1500ms budget) | All 4 CI checks pass<br>309 Cargo tests pass<br>71 PowerShell tests pass | `b966032` |
 
 ---
 
