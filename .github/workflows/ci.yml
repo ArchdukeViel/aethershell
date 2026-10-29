@@ -45,6 +45,13 @@ jobs:
         env:
           REQUIRE_LUA_WORKER_TEST: "1"
 
+      - name: Run PowerShell Qualification & Regression Suites
+        run: |
+          powershell -ExecutionPolicy Bypass -File tests/test_inventory_tests.ps1
+          powershell -ExecutionPolicy Bypass -File tests/provision_disposable_vm_tests.ps1
+          powershell -ExecutionPolicy Bypass -File tests/sbom_and_license_compliance_tests.ps1
+          powershell -ExecutionPolicy Bypass -File tests/network_isolation_tests.ps1
+
       - name: Build Release Binaries
         run: cargo build --workspace --release
         env:
