@@ -165,15 +165,17 @@ fn migrate_v1_0_to_v1_1(table: &mut toml::Table) -> Result<(), MigrationError> {
 }
 
 /// Forward migration from 1.1.0 to 2.0.0:
-/// Restructures presentation parameters into a dedicated runtime section while preserving legacy table.
+/// Restores or adds dedicated runtime section while preserving any existing user customizations.
 fn migrate_v1_1_to_v2_0(table: &mut toml::Table) -> Result<(), MigrationError> {
     table.insert(
         "schema_version".to_string(),
         Value::String("2.0.0".to_string()),
     );
 
-    // Move or add runtime section
-    if !table.contains_key("runtime") {
+    // If _preserved_runtime exists from a previous downgrade, restore user customizations intact
+    if let Some(preserved) = table.remove("_preserved_runtime") {
+        table.insert("runtime".to_string(), preserved);
+    } else if !table.contains_key("runtime") {
         let mut runtime = toml::Table::new();
         runtime.insert("process_isolation".to_string(), Value::Boolean(true));
         runtime.insert(
@@ -188,19 +190,21 @@ fn migrate_v1_1_to_v2_0(table: &mut toml::Table) -> Result<(), MigrationError> {
 }
 
 /// Reversible rollback migration from 2.0.0 to 1.1.0:
-/// Removes or encapsulates 2.0-specific runtime table while restoring 1.1.0 versioning.
+/// Non-destructively preserves user-defined runtime configurations under _preserved_runtime.
 fn migrate_v2_0_to_v1_1(table: &mut toml::Table) -> Result<(), MigrationError> {
     table.insert(
         "schema_version".to_string(),
         Value::String("1.1.0".to_string()),
     );
 
-    table.remove("runtime");
+    if let Some(runtime_table) = table.remove("runtime") {
+        table.insert("_preserved_runtime".to_string(), runtime_table);
+    }
     Ok(())
 }
 
-/// Reversible rollback migration from 1.1.0 to 1.0.0:
-/// Restores 1.0.0 versioning and cleans 1.1-specific fields so 1.0.0 parser validates cleanly.
+/// Rollback migration from 1.1.0 to 1.0.0:
+/// Strips 1.1-specific keys so the configuration validates against pure 1.0.0 schema.
 fn migrate_v1_1_to_v1_0(table: &mut toml::Table) -> Result<(), MigrationError> {
     table.insert(
         "schema_version".to_string(),

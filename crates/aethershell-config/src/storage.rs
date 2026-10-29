@@ -1,5 +1,5 @@
 use crate::migration::{migrate_toml_string, MigrationError, SchemaVersion};
-use crate::schema::{AppConfig, CURRENT_SCHEMA_VERSION};
+use crate::schema::{is_supported_schema_version, AppConfig, SUPPORTED_SCHEMA_VERSIONS};
 use std::fs;
 use std::io;
 use std::os::windows::ffi::OsStrExt;
@@ -152,7 +152,7 @@ impl ConfigManager {
 
         // Save pre-migration backup before writing
         let pre_backup = self.config_path.with_extension("pre_migrate.bak");
-        let _ = fs::copy(&self.config_path, &pre_backup);
+        fs::copy(&self.config_path, &pre_backup).map_err(ConfigStorageError::Io)?;
 
         self.heal_from_backup(&migrated_str)?;
         Ok(migrated_str)
@@ -168,10 +168,10 @@ impl ConfigManager {
         let content = fs::read_to_string(&self.config_path)?;
         match toml::from_str::<AppConfig>(&content) {
             Ok(cfg) => {
-                if cfg.schema_version != CURRENT_SCHEMA_VERSION {
+                if !is_supported_schema_version(&cfg.schema_version) {
                     return Err(ConfigStorageError::UnsupportedSchemaVersion(
                         cfg.schema_version,
-                        CURRENT_SCHEMA_VERSION.into(),
+                        format!("{:?}", SUPPORTED_SCHEMA_VERSIONS),
                     ));
                 }
                 cfg.validate()?;
@@ -181,10 +181,10 @@ impl ConfigManager {
                 if self.backup_path.exists() {
                     let backup_content = fs::read_to_string(&self.backup_path)?;
                     if let Ok(backup_cfg) = toml::from_str::<AppConfig>(&backup_content) {
-                        if backup_cfg.schema_version != CURRENT_SCHEMA_VERSION {
+                        if !is_supported_schema_version(&backup_cfg.schema_version) {
                             return Err(ConfigStorageError::UnsupportedSchemaVersion(
                                 backup_cfg.schema_version,
-                                CURRENT_SCHEMA_VERSION.into(),
+                                format!("{:?}", SUPPORTED_SCHEMA_VERSIONS),
                             ));
                         }
                         backup_cfg.validate()?;
@@ -212,10 +212,10 @@ impl ConfigManager {
         let content = fs::read_to_string(&self.config_path)?;
         match toml::from_str::<AppConfig>(&content) {
             Ok(cfg) => {
-                if cfg.schema_version != CURRENT_SCHEMA_VERSION {
+                if !is_supported_schema_version(&cfg.schema_version) {
                     return Err(ConfigStorageError::UnsupportedSchemaVersion(
                         cfg.schema_version,
-                        CURRENT_SCHEMA_VERSION.into(),
+                        format!("{:?}", SUPPORTED_SCHEMA_VERSIONS),
                     ));
                 }
                 cfg.validate()?;
@@ -226,10 +226,10 @@ impl ConfigManager {
                 if self.backup_path.exists() {
                     let backup_content = fs::read_to_string(&self.backup_path)?;
                     if let Ok(backup_cfg) = toml::from_str::<AppConfig>(&backup_content) {
-                        if backup_cfg.schema_version != CURRENT_SCHEMA_VERSION {
+                        if !is_supported_schema_version(&backup_cfg.schema_version) {
                             return Err(ConfigStorageError::UnsupportedSchemaVersion(
                                 backup_cfg.schema_version,
-                                CURRENT_SCHEMA_VERSION.into(),
+                                format!("{:?}", SUPPORTED_SCHEMA_VERSIONS),
                             ));
                         }
                         backup_cfg.validate()?;
@@ -842,7 +842,7 @@ mod tests {
         match res.err().unwrap() {
             ConfigStorageError::UnsupportedSchemaVersion(actual, expected) => {
                 assert_eq!(actual, "999.0");
-                assert_eq!(expected, CURRENT_SCHEMA_VERSION);
+                assert_eq!(expected, format!("{:?}", SUPPORTED_SCHEMA_VERSIONS));
             }
             other => panic!("Expected UnsupportedSchemaVersion, got {:?}", other),
         }
@@ -960,6 +960,71 @@ mod tests {
         let on_disk_v1 = fs::read_to_string(&manager.config_path).expect("read on-disk v1");
         assert!(on_disk_v1.contains(r#"schema_version = "1.0.0""#));
         assert!(!on_disk_v1.contains("dynamic_battery_backoff_ms"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_migration_followed_by_normal_application_load() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("test_migrate_load_{}", uuid::Uuid::new_v4()));
+        let manager = ConfigManager::new(&temp_dir);
+
+        // 1. Initial 1.0.0 config load_or_default creates default config
+        let initial = manager
+            .load_or_default()
+            .expect("load initial 1.0.0 default");
+        assert_eq!(initial.schema_version, "1.0.0");
+
+        // 2. Migrate to 1.1.0 and load via load_or_default and load_if_exists
+        manager
+            .migrate_to(SchemaVersion::V1_1_0)
+            .expect("migrate to 1.1.0");
+        let v1_1 = manager.load_or_default().expect("load migrated 1.1.0");
+        assert_eq!(v1_1.schema_version, "1.1.0");
+        assert_eq!(v1_1.telemetry.dynamic_battery_backoff_ms, 5000);
+        assert_eq!(
+            manager.load_if_exists().unwrap().unwrap().schema_version,
+            "1.1.0"
+        );
+
+        // 3. Migrate to 2.0.0 and customize runtime
+        manager
+            .migrate_to(SchemaVersion::V2_0_0)
+            .expect("migrate to 2.0.0");
+        let mut v2 = manager.load_or_default().expect("load migrated 2.0.0");
+        assert_eq!(v2.schema_version, "2.0.0");
+        assert_eq!(v2.runtime.ipc_timeout_ms, 1500);
+
+        // Customize runtime settings
+        v2.runtime.ipc_timeout_ms = 4500;
+        v2.runtime.job_object_memory_limit_mb = 256;
+        manager.save_atomic(&v2).expect("save customized 2.0.0");
+
+        let loaded_v2 = manager.load_or_default().expect("load customized 2.0.0");
+        assert_eq!(loaded_v2.runtime.ipc_timeout_ms, 4500);
+
+        // 4. Reversible rollback to 1.1.0 and then 1.0.0 - verify load_or_default continues to work cleanly
+        manager
+            .migrate_to(SchemaVersion::V1_1_0)
+            .expect("rollback to 1.1.0");
+        let loaded_v1_1 = manager.load_or_default().expect("load rolled back 1.1.0");
+        assert_eq!(loaded_v1_1.schema_version, "1.1.0");
+
+        manager
+            .migrate_to(SchemaVersion::V1_0_0)
+            .expect("rollback to 1.0.0");
+        let loaded_v1_0 = manager.load_or_default().expect("load rolled back 1.0.0");
+        assert_eq!(loaded_v1_0.schema_version, "1.0.0");
+
+        // 5. Migrate back forward to 2.0.0 - customized settings preserved non-destructively
+        manager
+            .migrate_to(SchemaVersion::V2_0_0)
+            .expect("re-upgrade to 2.0.0");
+        let restored_v2 = manager.load_or_default().expect("load re-upgraded 2.0.0");
+        assert_eq!(restored_v2.schema_version, "2.0.0");
+        assert_eq!(restored_v2.runtime.ipc_timeout_ms, 4500);
+        assert_eq!(restored_v2.runtime.job_object_memory_limit_mb, 256);
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
