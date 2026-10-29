@@ -348,11 +348,19 @@ impl AppEngine {
         );
 
         // Initialize taskbar recovery coordinator and start heartbeat pulse thread (PRD Section 4.3 & Gate G04)
-        let mut recovery_coordinator = TaskbarRecoveryCoordinator::new().ok();
-        let _recovery_heartbeat = recovery_coordinator
-            .as_ref()
-            .map(|c| c.start_heartbeat_thread(std::time::Duration::from_millis(500)));
-        if recovery_coordinator.is_some() {
+        let recovery_coordinator = Arc::new(std::sync::Mutex::new(
+            TaskbarRecoveryCoordinator::new().ok(),
+        ));
+        let _recovery_heartbeat = recovery_coordinator.lock().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .map(|c| c.start_heartbeat_thread(std::time::Duration::from_millis(500)))
+        });
+        if recovery_coordinator
+            .lock()
+            .map(|g| g.is_some())
+            .unwrap_or(false)
+        {
             info!(
                 "Taskbar recovery coordinator and heartbeat pulsing initialized (PID: {})",
                 std::process::id()
@@ -492,12 +500,49 @@ impl AppEngine {
                 }
             });
 
-            // Wire Explorer restart recovery across all desktop overlay windows
+            // Wire Explorer restart recovery across all desktop overlay windows and taskbar subsystem
             let win_mgr_restart = Arc::clone(&self.desktop_windows);
             let renderer_restart = Arc::clone(&self.desktop_renderer);
             let cached_restart = Arc::clone(&self.cached_bindings);
+            let recovery_restart = Arc::clone(&recovery_coordinator);
+            let taskbar_restart = Arc::clone(&self.taskbar);
             win_mgr.set_on_explorer_restart(move || {
                 info!("Explorer restart notification received: re-probing desktop hierarchy and re-synchronizing surfaces");
+
+                // Process dynamic TaskbarCreated message with 300ms debounce protection against restart storms (Gate G04)
+                let is_debounced = if let Ok(mut rec_lock) = recovery_restart.try_lock() {
+                    if let Some(ref mut coord) = *rec_lock {
+                        match coord.handle_taskbar_created() {
+                            aethershell_taskbar::TaskbarRecoveryEvent::Debounced { elapsed_ms } => {
+                                info!(
+                                    "TaskbarCreated dynamic broadcast debounced ({}ms elapsed); skipping duplicate taskbar re-application to prevent restart storm",
+                                    elapsed_ms
+                                );
+                                true
+                            }
+                            aethershell_taskbar::TaskbarRecoveryEvent::Recovered { primary_found, secondary_count, .. } => {
+                                info!(
+                                    "TaskbarCreated handled by recovery coordinator (primary={}, secondaries={}); re-evaluating taskbar appearance",
+                                    primary_found, secondary_count
+                                );
+                                false
+                            }
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if !is_debounced {
+                    if let Ok(mut tb) = taskbar_restart.try_lock() {
+                        let monitors = enumerate_monitors();
+                        for mon in &monitors {
+                            let _ = tb.evaluate_and_apply(&mon.hmonitor.to_string(), aethershell_core::MonitorTaskbarState::Desktop);
+                        }
+                    }
+                }
                 if let Ok(mut mgr) = win_mgr_restart.try_lock() {
                     let probe = mgr.handle_explorer_restart();
                     info!(
@@ -970,9 +1015,11 @@ impl AppEngine {
 
         info!("Shutting down AetherShell Engine...");
         let _ = shutdown_tx.send(true);
-        if let Some(ref mut coord) = recovery_coordinator {
-            let _ = coord.mark_clean_exit();
-            info!("Marked clean exit for taskbar recovery watchdog");
+        if let Ok(mut rec_lock) = recovery_coordinator.lock() {
+            if let Some(ref mut coord) = *rec_lock {
+                let _ = coord.mark_clean_exit();
+                info!("Marked clean exit for taskbar recovery watchdog");
+            }
         }
         if let Ok(mut tb) = self.taskbar.try_lock() {
             let _ = tb.restore_all_native();

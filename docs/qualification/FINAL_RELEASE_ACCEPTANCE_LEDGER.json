@@ -1,7 +1,7 @@
 {
     "LedgerType":  "AetherShellFinalReleaseAcceptanceLedger",
     "Version":  "0.1.0-dev",
-    "GeneratedAt":  "2026-10-30T01:59:38.4130686+07:00",
+    "GeneratedAt":  "2026-10-30T02:24:46.3317886+07:00",
     "ReleaseDisposition":  "NO-GO",
     "CoreStableCandidate":  false,
     "ProductionVersionTag":  "RESERVED (v1.0.0)",
@@ -14,9 +14,9 @@
                                   "Deferred":  1
                               },
     "AutomatedTestSummary":  {
-                                 "UniqueCargoTests":  349,
+                                 "UniqueCargoTests":  352,
                                  "PowerShellTests":  96,
-                                 "TotalAutomatedTests":  445,
+                                 "TotalAutomatedTests":  448,
                                  "HostAppDataItems":  0
                              },
     "CryptographicArtifacts":  {
@@ -24,8 +24,8 @@
                                    "aethershell-script-host.exe":  "2567eb821ffcbed5a27c51ce8b10d8c6b0d16169fe14b8f9d7809000206f74de",
                                    "aethershell-settings.exe":  "d30ba6e350f811ece250a64deda62591416bd4730e78c73931ffa2c2b9025216",
                                    "portable_zip":  "be3350d7e891c6879fcc5fcee23b192fbce933552b0009b39e8328e2ad376b4a",
-                                   "sbom.json":  "b2120e5846e2264c1647e054baac79f3848bc607f7b5dc45293038186e6f668f",
-                                   "THIRD_PARTY_LICENSES.md":  "321cc018b7e3253084444b19001be259c801b951d4e54fb4ad8450967e80eecf",
+                                   "sbom.json":  "df6ba7a15018ed3a83248785aac7f05dc400d7465c1dba1719c477f6c5ed2d09",
+                                   "THIRD_PARTY_LICENSES.md":  "d52621fabdacac0c802048bfe175f31bc698fe594db857a6056846e619384a33",
                                    "PRD.md":  "884875c3f67aea2a96d6d6f38c6889adcc910af3d1ceffe0de983ce29985b31d",
                                    "AGENTS.md":  "ba5b863e1dac704550dad3321d1e833c853e0a18f18e9f8d6641478341caf9b7",
                                    "LICENSE":  "f4d9b0aad8ff9e650f5890fa3eeb7c1311479cab901f8a9b416a2d9acaf54266",

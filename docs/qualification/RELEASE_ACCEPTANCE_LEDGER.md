@@ -24,9 +24,9 @@
 
 ## 2. Automated Test Inventory Baseline
 
-- **Discovered Unique Cargo Tests**: 349 (212 Unit + 137 Integration across 30 test executables)
+- **Discovered Unique Cargo Tests**: 352 (215 Unit + 137 Integration across 30 test executables)
 - **PowerShell Automated Regression Tests**: 96 across 14 regression test suites
-- **Total Automated Verification Tests**: **445 tests** (100% passing)
+- **Total Automated Verification Tests**: **448 tests** (100% passing)
 - **Production Host AppData Pollution**: **Strictly 0 items**
 
 ---

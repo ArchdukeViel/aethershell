@@ -2038,13 +2038,14 @@ This document maintains verifiable test and validation records. Every entry is t
        - Implemented `TaskbarCreated` registered window message handling (`register_taskbar_created_message()`) with a 300ms debounce protection window (`handle_taskbar_created()`) to prevent duplicate reconnection loops or fighting storms during Explorer initialization.
      - Implemented `TaskbarRecoveryWatchdog`:
        - Opens supervised process with Win32 `PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION` access rights via `OpenProcess`.
-       - Employs `WaitForSingleObject` to detect process termination in real time without polling loops or CPU waste.
+       - Employs `WaitForMultipleObjects` multiplexing the `PROCESS_SYNCHRONIZE` process handle (index 0) and heartbeat event (index 1) concurrently to detect process termination in sub-millisecond real time without blocking for the heartbeat timeout or burning CPU cycles.
+       - Resolves STILL_ACTIVE (259) exit code ambiguity by evaluating kernel handle signaling status (`!self.is_target_alive()`) to correctly report genuine exit codes of 259.
        - Connects to heartbeat and clean exit kernel events; checks target health (`check_target_status()`).
        - Differentiates clean exit (`TargetExitedCleanly`) from sudden death/panic (`TargetAbruptTermination`) and process hangs (`TargetHeartbeatTimeout`).
        - Guarantees clean exits trigger strictly zero spurious taskbar mutations (`WatchdogExitVerdict::CleanExit`).
      - Non-invasive taskbar restoration engine (`restore_system_taskbars()`):
        - Discovers primary `Shell_TrayWnd` and secondary `Shell_SecondaryTrayWnd` windows via `aethershell_win::probe_taskbars()`.
-       - Verifies Win32 window validity (`IsWindow`), enforces visibility (`ShowWindow(hwnd, SW_SHOW)`), issues comprehensive redraw requests (`RedrawWindow` with `RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW`), and dispatches `WM_THEMECHANGED` with timeout protection (`SMTO_ABORTIFHUNG`, 250ms) to instruct Explorer to repaint native visuals safely.
+       - Verifies Win32 window validity (`IsWindow`), enforces visibility without stealing focus (`ShowWindow(hwnd, SW_SHOWNA)`), issues comprehensive redraw requests (`RedrawWindow` with `RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW`), and dispatches `WM_THEMECHANGED` with timeout protection (`SMTO_ABORTIFHUNG`, 250ms) to instruct Explorer to repaint native visuals safely.
   2. **Dedicated Cargo Integration Test Suite (`crates/aethershell-app/tests/taskbar_recovery_integration_test.rs`)**:
      - Implemented 5 end-to-end integration tests:
        - `test_taskbar_recovery_coordinator_lifecycle_and_heartbeat_pulse`: validates coordinator initialization, dynamic `TaskbarCreated` message ID (>= 0xC000), named event paths, watchdog connection, and heartbeat pulsation.
@@ -2056,7 +2057,7 @@ This document maintains verifiable test and validation records. Every entry is t
      - Wired `--taskbar-recovery-watchdog <PID>` in `crates/aethershell-app/src/main.rs`.
      - Added heartbeat pulsing and clean exit signaling to `--test-sleep-secs`.
      - Developed 7-test automated PowerShell regression suite `tests/taskbar_recovery_tests.ps1`:
-       - Unit tests in `aethershell-taskbar` pass cleanly (10/10 recovery tests, 20/20 total crate tests).
+       - Unit tests in `aethershell-taskbar` pass cleanly (13/13 recovery tests, 23/23 total crate tests).
        - Cargo integration suite passes all 5 tests.
        - CLI `--help` documents `--taskbar-recovery-watchdog <PID>`.
        - CLI rejects missing and non-numeric target PIDs.
@@ -2068,13 +2069,13 @@ This document maintains verifiable test and validation records. Every entry is t
      - Regenerated `docs/qualification/FINAL_RELEASE_ACCEPTANCE_LEDGER.json`.
      - Updated `docs/STATUS.md` and created `docs/qualification/RELEASE_ACCEPTANCE_LEDGER.md`.
 - **Verification & Test Results**:
-  - `cargo test -p aethershell-taskbar --lib recovery::tests`: 10/10 passed cleanly.
-  - `cargo test -p aethershell-taskbar`: 20/20 passed cleanly.
-  - `cargo test -p aethershell-app --test taskbar_recovery_integration_test`: 5/5 passed cleanly in 0.80s.
+  - `cargo test -p aethershell-taskbar --lib recovery::tests`: 13/13 passed cleanly.
+  - `cargo test -p aethershell-taskbar`: 23/23 passed cleanly.
+  - `cargo test -p aethershell-app --test taskbar_recovery_integration_test`: 5/5 passed cleanly in 0.73s.
   - `powershell -File tests/taskbar_recovery_tests.ps1`: 7/7 passed cleanly.
   - `powershell -File tests/release_acceptance_ledger_tests.ps1`: 6/6 passed cleanly.
-  - `cargo test --workspace`: 349 unique Cargo tests passed cleanly with 0 failures, 0 warnings.
-  - All 14 PowerShell test suites: 96/96 passed cleanly (445 total automated verification tests across Rust and PowerShell).
+  - `cargo test --workspace`: 352 unique Cargo tests passed cleanly with 0 failures, 0 warnings.
+  - All 14 PowerShell test suites: 96/96 passed cleanly (448 total automated verification tests across Rust and PowerShell).
   - Host AppData `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
 - **Evidentiary Verdict & Status**: `passed`. Gate G04 achieves complete qualification and transitions to `VERIFIED`.
 

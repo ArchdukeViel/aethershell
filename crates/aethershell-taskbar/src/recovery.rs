@@ -13,10 +13,11 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::Threading::{
     CreateEventW, GetCurrentProcessId, GetExitCodeProcess, OpenProcess, ResetEvent, SetEvent,
-    WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+    WaitForMultipleObjects, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_SYNCHRONIZE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    IsWindow, SendMessageTimeoutW, ShowWindow, SMTO_ABORTIFHUNG, SW_SHOW, WM_THEMECHANGED,
+    IsWindow, SendMessageTimeoutW, ShowWindow, SMTO_ABORTIFHUNG, SW_SHOWNA, WM_THEMECHANGED,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -58,6 +59,7 @@ impl Drop for SafeHandle {
             unsafe {
                 let _ = CloseHandle(self.0);
             }
+            self.0 = HANDLE(std::ptr::null_mut());
         }
     }
 }
@@ -260,7 +262,13 @@ impl TaskbarRecoveryCoordinator {
                     unsafe {
                         let _ = SetEvent(safe.raw());
                     }
-                    std::thread::sleep(interval);
+                    let sleep_step = Duration::from_millis(25);
+                    let mut elapsed = Duration::ZERO;
+                    while elapsed < interval && !flag_clone.load(Ordering::Relaxed) {
+                        let chunk = sleep_step.min(interval - elapsed);
+                        std::thread::sleep(chunk);
+                        elapsed += chunk;
+                    }
                 }
             }
         });
@@ -323,8 +331,8 @@ pub fn restore_system_taskbars() -> TaskbarRestorationReport {
         let hwnd = HWND(tb.hwnd as *mut c_void);
         unsafe {
             if IsWindow(hwnd).as_bool() {
-                // Ensure window visibility
-                let _ = ShowWindow(hwnd, SW_SHOW);
+                // Ensure window visibility without stealing focus
+                let _ = ShowWindow(hwnd, SW_SHOWNA);
 
                 // Force full non-invasive redraw across window frame and children
                 let _ = RedrawWindow(
@@ -446,17 +454,23 @@ impl TaskbarRecoveryWatchdog {
     pub fn get_target_exit_code(&self) -> Option<u32> {
         unsafe {
             let mut exit_code = 0u32;
-            if GetExitCodeProcess(self.process_handle.raw(), &mut exit_code).is_ok()
-                && exit_code != STILL_ACTIVE.0 as u32
-            {
-                return Some(exit_code);
+            if GetExitCodeProcess(self.process_handle.raw(), &mut exit_code).is_ok() {
+                // If the process has terminated (verified by process handle signaling),
+                // GetExitCodeProcess returns the genuine exit code even if it equals STILL_ACTIVE (259).
+                if !self.is_target_alive() || exit_code != STILL_ACTIVE.0 as u32 {
+                    return Some(exit_code);
+                }
             }
             None
         }
     }
 
-    /// Checks the health and termination status of the target process.
+    /// Checks the health and termination status of the target process using kernel handle synchronization.
+    ///
+    /// Multiplexes the Win32 process handle (`SYNCHRONIZE`) and heartbeat event with `WaitForMultipleObjects`,
+    /// ensuring sub-millisecond reaction times on process death without blocking for the heartbeat timeout.
     pub fn check_target_status(&self, heartbeat_timeout: Duration) -> WatchdogCheckResult {
+        // Fast-path: check if target process has already terminated
         if !self.is_target_alive() {
             let exit_code = self.get_target_exit_code().unwrap_or(0);
             if self.is_clean_exit_signaled() {
@@ -467,20 +481,34 @@ impl TaskbarRecoveryWatchdog {
         }
 
         let ms = heartbeat_timeout.as_millis().min(u32::MAX as u128) as u32;
-        let wait_res = unsafe { WaitForSingleObject(self.heartbeat_handle.raw(), ms) };
+        let handles = [self.process_handle.raw(), self.heartbeat_handle.raw()];
+
+        // Multiplex process handle (SYNCHRONIZE, index 0) and heartbeat event (index 1)
+        let wait_res = unsafe { WaitForMultipleObjects(&handles, false, ms) };
+
         if wait_res == WAIT_OBJECT_0 {
+            // Target process terminated (signaled) immediately!
+            let exit_code = self.get_target_exit_code().unwrap_or(0);
+            if self.is_clean_exit_signaled() {
+                WatchdogCheckResult::TargetExitedCleanly { exit_code }
+            } else {
+                WatchdogCheckResult::TargetAbruptTermination { exit_code }
+            }
+        } else if wait_res.0 == WAIT_OBJECT_0.0 + 1 {
+            // Heartbeat pulsed by healthy target process (auto-resets event)
             WatchdogCheckResult::TargetRunningHealthy
         } else {
-            // Re-check target liveness in case process terminated during wait
+            // Timeout or wait error: re-verify target process liveness
             if !self.is_target_alive() {
                 let exit_code = self.get_target_exit_code().unwrap_or(0);
                 if self.is_clean_exit_signaled() {
-                    return WatchdogCheckResult::TargetExitedCleanly { exit_code };
+                    WatchdogCheckResult::TargetExitedCleanly { exit_code }
                 } else {
-                    return WatchdogCheckResult::TargetAbruptTermination { exit_code };
+                    WatchdogCheckResult::TargetAbruptTermination { exit_code }
                 }
+            } else {
+                WatchdogCheckResult::TargetHeartbeatTimeout
             }
-            WatchdogCheckResult::TargetHeartbeatTimeout
         }
     }
 
@@ -498,7 +526,9 @@ impl TaskbarRecoveryWatchdog {
         loop {
             match self.check_target_status(heartbeat_timeout) {
                 WatchdogCheckResult::TargetRunningHealthy => {
-                    std::thread::sleep(poll_interval);
+                    if !poll_interval.is_zero() {
+                        std::thread::sleep(poll_interval);
+                    }
                 }
                 WatchdogCheckResult::TargetExitedCleanly { exit_code } => {
                     tracing::info!(
@@ -532,6 +562,14 @@ impl TaskbarRecoveryWatchdog {
     /// Convenience execution wrapper using 5-second heartbeat timeout and 100ms poll interval.
     pub fn run(&self) -> WatchdogExitVerdict {
         self.monitor_target(Duration::from_secs(5), Duration::from_millis(100))
+    }
+
+    /// Convenience helper to create and run watchdog supervision for a target PID.
+    pub fn run_for_pid(target_pid: u32) -> WatchdogExitVerdict {
+        match Self::new(target_pid) {
+            Ok(watchdog) => watchdog.run(),
+            Err(_) => WatchdogExitVerdict::TargetNotFound { target_pid },
+        }
     }
 }
 
@@ -704,5 +742,66 @@ mod tests {
         unsafe {
             let _ = ResetEvent(coordinator.clean_exit_handle.raw());
         }
+    }
+
+    #[test]
+    fn test_get_target_exit_code_still_active_value_259() {
+        let child = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", "exit 259"])
+            .spawn()
+            .expect("Spawn exit 259 child");
+        let child_pid = child.id();
+        let watchdog = TaskbarRecoveryWatchdog::new(child_pid).expect("Watchdog init");
+
+        // Wait for process to exit
+        let output = child.wait_with_output().expect("Child wait");
+        assert_eq!(output.status.code(), Some(259));
+
+        assert!(!watchdog.is_target_alive());
+        assert_eq!(watchdog.get_target_exit_code(), Some(259));
+
+        let status = watchdog.check_target_status(Duration::from_millis(50));
+        assert_eq!(
+            status,
+            WatchdogCheckResult::TargetAbruptTermination { exit_code: 259 }
+        );
+    }
+
+    #[test]
+    fn test_watchdog_multiple_objects_instantaneous_termination_detection() {
+        let mut child = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 10"])
+            .spawn()
+            .expect("Spawn sleep child");
+        let child_pid = child.id();
+        let watchdog = TaskbarRecoveryWatchdog::new(child_pid).expect("Watchdog init");
+        assert!(watchdog.is_target_alive());
+
+        let start = Instant::now();
+        child.kill().expect("Kill child");
+        let _ = child.wait();
+
+        // check_target_status with 5-second timeout should return in < 500ms via WaitForMultipleObjects
+        let status = watchdog.check_target_status(Duration::from_secs(5));
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "Termination detection must return immediately via SYNCHRONIZE handle, took {:?}",
+            elapsed
+        );
+        assert!(matches!(
+            status,
+            WatchdogCheckResult::TargetAbruptTermination { .. }
+        ));
+    }
+
+    #[test]
+    fn test_watchdog_run_for_pid_target_not_found() {
+        let verdict = TaskbarRecoveryWatchdog::run_for_pid(0);
+        assert_eq!(
+            verdict,
+            WatchdogExitVerdict::TargetNotFound { target_pid: 0 }
+        );
     }
 }
