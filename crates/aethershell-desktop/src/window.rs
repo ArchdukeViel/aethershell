@@ -1,5 +1,7 @@
-//! Real Win32 Desktop Host Window embedded in Windows shell hierarchy.
-
+use crate::accessibility::{
+    create_root_provider, DesktopAccessibilityState, DesktopWidgetFragmentProvider,
+    EVENT_OBJECT_FOCUS, OBJID_CLIENT,
+};
 use crate::host::{DesktopHost, DesktopHostError};
 use crate::interaction::{DismissalReason, InteractiveRegion};
 use aethershell_win::{enumerate_monitors, DesktopHierarchyProbe};
@@ -14,7 +16,11 @@ use windows::Win32::System::RemoteDesktop::{
     WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
 };
 use windows::Win32::System::SystemInformation::GetTickCount64;
-use windows::Win32::UI::Accessibility::NotifyWinEvent;
+use windows::Win32::UI::Accessibility::{
+    IRawElementProviderSimple, NotifyWinEvent, UIA_AutomationFocusChangedEventId,
+    UIA_Invoke_InvokedEventId, UiaRaiseAutomationEvent, UiaReturnRawElementProvider,
+    UiaRootObjectId,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_NOREPEAT,
 };
@@ -24,16 +30,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetWindowLongPtrW, SetWindowPos, TranslateMessage, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
     GWLP_USERDATA, GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST, IDC_ARROW, IDC_HAND, MSG, PM_REMOVE,
     SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
-    WINDOW_EX_STYLE, WM_ACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ERASEBKGND, WM_HOTKEY,
-    WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
+    WINDOW_EX_STYLE, WM_ACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ERASEBKGND, WM_GETOBJECT,
+    WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
     WM_NCDESTROY, WM_PAINT, WM_QUIT, WNDCLASSEXW, WS_POPUP, WS_VISIBLE,
 };
 
 /// Hotkey ID for toggling Temporary Interactive Mode (PRD Section 5.3 & Q31:A).
 pub const HOTKEY_ID_INTERACTIVE_MODE: i32 = 0xAE01;
-
-/// Standard Win32 client object identifier for accessibility events.
-const OBJID_CLIENT: i32 = -4;
 
 static CLASS_REGISTERED: AtomicBool = AtomicBool::new(false);
 const DESKTOP_HOST_CLASS_NAME: windows::core::PCWSTR = w!("AetherShellDesktopHostWindow");
@@ -115,18 +118,33 @@ pub struct DesktopWindowState {
     pub on_dismiss: std::sync::Mutex<Option<DismissCallback>>,
     pub on_paint: std::sync::Mutex<Option<PaintCallback>>,
     pub on_explorer_restart: std::sync::Mutex<Option<ExplorerRestartCallback>>,
-    pub on_action: std::sync::Mutex<Option<ActionCallback>>,
+    pub on_action: Arc<std::sync::Mutex<Option<ActionCallback>>>,
     pub on_hotkey: std::sync::Mutex<Option<HotkeyCallback>>,
     pub on_dpi_changed: std::sync::Mutex<Option<DpiChangedCallback>>,
     pub on_display_change: std::sync::Mutex<Option<DisplayChangedCallback>>,
-    pub interactive_regions: std::sync::Mutex<Vec<InteractiveRegion>>,
-    pub focused_region_index: std::sync::Mutex<Option<usize>>,
+    pub interactive_regions: Arc<std::sync::Mutex<Vec<InteractiveRegion>>>,
+    pub focused_region_index: Arc<std::sync::Mutex<Option<usize>>>,
     pub current_dpi: Arc<AtomicU32>,
-    pub current_bounds: std::sync::Mutex<[i32; 4]>,
+    pub current_bounds: Arc<std::sync::Mutex<[i32; 4]>>,
     pub explorer_restart_count: Arc<AtomicUsize>,
     pub last_restart_tick: Arc<AtomicU64>,
     pub last_activity_tick: Arc<AtomicU64>,
     pub is_hotkey_registered: Arc<AtomicBool>,
+}
+
+impl DesktopWindowState {
+    /// Generates thread-safe accessibility state for Windows UI Automation providers (Gate G14).
+    pub fn accessibility_state(&self, hwnd: HWND) -> DesktopAccessibilityState {
+        DesktopAccessibilityState::new(
+            hwnd,
+            Arc::clone(&self.is_interactive),
+            Arc::clone(&self.interactive_regions),
+            Arc::clone(&self.focused_region_index),
+            Arc::clone(&self.current_bounds),
+            Arc::clone(&self.on_action),
+            Arc::clone(&self.last_activity_tick),
+        )
+    }
 }
 
 /// Represents a real Win32 desktop overlay window for a specific monitor.
@@ -168,7 +186,10 @@ impl DesktopHostWindow {
 
         let initial_dpi = 96u32;
         let current_dpi = Arc::new(AtomicU32::new(initial_dpi));
-        let current_bounds = std::sync::Mutex::new([x, y, width, height]);
+        let current_bounds = Arc::new(std::sync::Mutex::new([x, y, width, height]));
+        let on_action = Arc::new(std::sync::Mutex::new(None));
+        let interactive_regions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let focused_region_index = Arc::new(std::sync::Mutex::new(None));
 
         let state = Box::new(DesktopWindowState {
             is_interactive: Arc::clone(&is_interactive),
@@ -177,12 +198,12 @@ impl DesktopHostWindow {
             on_dismiss: std::sync::Mutex::new(None),
             on_paint: std::sync::Mutex::new(None),
             on_explorer_restart: std::sync::Mutex::new(None),
-            on_action: std::sync::Mutex::new(None),
+            on_action,
             on_hotkey: std::sync::Mutex::new(None),
             on_dpi_changed: std::sync::Mutex::new(None),
             on_display_change: std::sync::Mutex::new(None),
-            interactive_regions: std::sync::Mutex::new(Vec::new()),
-            focused_region_index: std::sync::Mutex::new(None),
+            interactive_regions,
+            focused_region_index,
             current_dpi: Arc::clone(&current_dpi),
             current_bounds,
             explorer_restart_count: Arc::clone(&explorer_restart_count),
@@ -411,8 +432,16 @@ impl DesktopHostWindow {
     pub fn set_interactive_regions(&mut self, regions: Vec<InteractiveRegion>) {
         if !self.state_ptr.is_null() {
             unsafe {
+                let regions_len = regions.len();
                 if let Ok(mut guard) = (*self.state_ptr).interactive_regions.lock() {
                     *guard = regions;
+                }
+                if let Ok(mut focus_guard) = (*self.state_ptr).focused_region_index.lock() {
+                    if let Some(idx) = *focus_guard {
+                        if idx >= regions_len {
+                            *focus_guard = None;
+                        }
+                    }
                 }
             }
         }
@@ -966,10 +995,12 @@ unsafe extern "system" fn desktop_host_wnd_proc(
                         0x09 => {
                             // VK_TAB: cycle focus forward (or backward if Shift is held)
                             let shift = (GetKeyState(0x10 /* VK_SHIFT */) as u16 & 0x8000) != 0;
-                            if let Ok(regions) = state.interactive_regions.lock() {
-                                if !regions.is_empty() {
-                                    if let Ok(mut focus_guard) = state.focused_region_index.lock() {
-                                        let next_idx = match *focus_guard {
+                            let new_focus_idx = {
+                                let regions_guard = state.interactive_regions.lock();
+                                let focus_guard = state.focused_region_index.lock();
+                                if let (Ok(regions), Ok(mut focus)) = (regions_guard, focus_guard) {
+                                    if !regions.is_empty() {
+                                        let next = match *focus {
                                             Some(curr) => {
                                                 if shift {
                                                     if curr == 0 {
@@ -989,51 +1020,91 @@ unsafe extern "system" fn desktop_host_wnd_proc(
                                                 }
                                             }
                                         };
-                                        *focus_guard = Some(next_idx);
-                                        state
-                                            .last_activity_tick
-                                            .store(GetTickCount64(), Ordering::Relaxed);
-                                        let _ = InvalidateRect(hwnd, None, false);
-                                        NotifyWinEvent(
-                                            0x8005, /* EVENT_OBJECT_FOCUS */
-                                            hwnd,
-                                            OBJID_CLIENT,
-                                            (next_idx + 1) as i32,
-                                        );
+                                        *focus = Some(next);
+                                        Some(next)
+                                    } else {
+                                        None
                                     }
+                                } else {
+                                    None
                                 }
+                            };
+
+                            if let Some(next_idx) = new_focus_idx {
+                                state
+                                    .last_activity_tick
+                                    .store(GetTickCount64(), Ordering::Relaxed);
+                                let _ = InvalidateRect(hwnd, None, false);
+                                NotifyWinEvent(
+                                    EVENT_OBJECT_FOCUS,
+                                    hwnd,
+                                    OBJID_CLIENT,
+                                    (next_idx + 1) as i32,
+                                );
+                                let acc_state = state.accessibility_state(hwnd);
+                                let child = DesktopWidgetFragmentProvider::new(
+                                    acc_state,
+                                    next_idx,
+                                );
+                                let simple: IRawElementProviderSimple = child.into();
+                                let _ = UiaRaiseAutomationEvent(
+                                    &simple,
+                                    UIA_AutomationFocusChangedEventId,
+                                );
                             }
                         }
                         0x27 | 0x28 => {
                             // VK_RIGHT or VK_DOWN: move focus forward
-                            if let Ok(regions) = state.interactive_regions.lock() {
-                                if !regions.is_empty() {
-                                    if let Ok(mut focus_guard) = state.focused_region_index.lock() {
-                                        let next_idx = match *focus_guard {
+                            let new_focus_idx = {
+                                let regions_guard = state.interactive_regions.lock();
+                                let focus_guard = state.focused_region_index.lock();
+                                if let (Ok(regions), Ok(mut focus)) = (regions_guard, focus_guard) {
+                                    if !regions.is_empty() {
+                                        let next = match *focus {
                                             Some(curr) => (curr + 1) % regions.len(),
                                             None => 0,
                                         };
-                                        *focus_guard = Some(next_idx);
-                                        state
-                                            .last_activity_tick
-                                            .store(GetTickCount64(), Ordering::Relaxed);
-                                        let _ = InvalidateRect(hwnd, None, false);
-                                        NotifyWinEvent(
-                                            0x8005, /* EVENT_OBJECT_FOCUS */
-                                            hwnd,
-                                            OBJID_CLIENT,
-                                            (next_idx + 1) as i32,
-                                        );
+                                        *focus = Some(next);
+                                        Some(next)
+                                    } else {
+                                        None
                                     }
+                                } else {
+                                    None
                                 }
+                            };
+
+                            if let Some(next_idx) = new_focus_idx {
+                                state
+                                    .last_activity_tick
+                                    .store(GetTickCount64(), Ordering::Relaxed);
+                                let _ = InvalidateRect(hwnd, None, false);
+                                NotifyWinEvent(
+                                    EVENT_OBJECT_FOCUS,
+                                    hwnd,
+                                    OBJID_CLIENT,
+                                    (next_idx + 1) as i32,
+                                );
+                                let acc_state = state.accessibility_state(hwnd);
+                                let child = DesktopWidgetFragmentProvider::new(
+                                    acc_state,
+                                    next_idx,
+                                );
+                                let simple: IRawElementProviderSimple = child.into();
+                                let _ = UiaRaiseAutomationEvent(
+                                    &simple,
+                                    UIA_AutomationFocusChangedEventId,
+                                );
                             }
                         }
                         0x25 | 0x26 => {
                             // VK_LEFT or VK_UP: move focus backward
-                            if let Ok(regions) = state.interactive_regions.lock() {
-                                if !regions.is_empty() {
-                                    if let Ok(mut focus_guard) = state.focused_region_index.lock() {
-                                        let prev_idx = match *focus_guard {
+                            let new_focus_idx = {
+                                let regions_guard = state.interactive_regions.lock();
+                                let focus_guard = state.focused_region_index.lock();
+                                if let (Ok(regions), Ok(mut focus)) = (regions_guard, focus_guard) {
+                                    if !regions.is_empty() {
+                                        let prev = match *focus {
                                             Some(curr) => {
                                                 if curr == 0 {
                                                     regions.len() - 1
@@ -1043,44 +1114,77 @@ unsafe extern "system" fn desktop_host_wnd_proc(
                                             }
                                             None => regions.len() - 1,
                                         };
-                                        *focus_guard = Some(prev_idx);
-                                        state
-                                            .last_activity_tick
-                                            .store(GetTickCount64(), Ordering::Relaxed);
-                                        let _ = InvalidateRect(hwnd, None, false);
-                                        NotifyWinEvent(
-                                            0x8005, /* EVENT_OBJECT_FOCUS */
-                                            hwnd,
-                                            OBJID_CLIENT,
-                                            (prev_idx + 1) as i32,
-                                        );
+                                        *focus = Some(prev);
+                                        Some(prev)
+                                    } else {
+                                        None
                                     }
+                                } else {
+                                    None
                                 }
+                            };
+
+                            if let Some(prev_idx) = new_focus_idx {
+                                state
+                                    .last_activity_tick
+                                    .store(GetTickCount64(), Ordering::Relaxed);
+                                let _ = InvalidateRect(hwnd, None, false);
+                                NotifyWinEvent(
+                                    EVENT_OBJECT_FOCUS,
+                                    hwnd,
+                                    OBJID_CLIENT,
+                                    (prev_idx + 1) as i32,
+                                );
+                                let acc_state = state.accessibility_state(hwnd);
+                                let child = DesktopWidgetFragmentProvider::new(
+                                    acc_state,
+                                    prev_idx,
+                                );
+                                let simple: IRawElementProviderSimple = child.into();
+                                let _ = UiaRaiseAutomationEvent(
+                                    &simple,
+                                    UIA_AutomationFocusChangedEventId,
+                                );
                             }
                         }
                         0x0D | 0x20 => {
                             // VK_RETURN or VK_SPACE: activate focused widget
-                            let focused_opt =
-                                state.focused_region_index.lock().ok().and_then(|g| *g);
-                            if let Some(idx) = focused_opt {
-                                if let Ok(regions) = state.interactive_regions.lock() {
-                                    if let Some(region) = regions.get(idx) {
-                                        state
-                                            .last_activity_tick
-                                            .store(GetTickCount64(), Ordering::Relaxed);
-                                        if let Ok(guard) = state.on_action.lock() {
-                                            if let Some(ref cb) = *guard {
-                                                cb(region, region.x, region.y);
-                                            }
-                                        }
-                                        NotifyWinEvent(
-                                            0x8008, /* EVENT_SYSTEM_ALERT */
-                                            hwnd,
-                                            OBJID_CLIENT,
-                                            (idx + 1) as i32,
-                                        );
+                            let target_region_and_idx = {
+                                let focus_guard =
+                                    state.focused_region_index.lock().ok().and_then(|g| *g);
+                                let regions_guard = state.interactive_regions.lock();
+                                if let (Some(idx), Ok(regions)) = (focus_guard, regions_guard) {
+                                    regions.get(idx).cloned().map(|reg| (reg, idx))
+                                } else {
+                                    None
+                                }
+                            };
+
+                            if let Some((region, idx)) = target_region_and_idx {
+                                state
+                                    .last_activity_tick
+                                    .store(GetTickCount64(), Ordering::Relaxed);
+                                if let Ok(guard) = state.on_action.lock() {
+                                    if let Some(ref cb) = *guard {
+                                        cb(&region, region.x, region.y);
                                     }
                                 }
+                                NotifyWinEvent(
+                                    0x8008, /* EVENT_SYSTEM_ALERT */
+                                    hwnd,
+                                    OBJID_CLIENT,
+                                    (idx + 1) as i32,
+                                );
+                                let acc_state = state.accessibility_state(hwnd);
+                                let child = DesktopWidgetFragmentProvider::new(
+                                    acc_state,
+                                    idx,
+                                );
+                                let simple: IRawElementProviderSimple = child.into();
+                                let _ = UiaRaiseAutomationEvent(
+                                    &simple,
+                                    UIA_Invoke_InvokedEventId,
+                                );
                             }
                         }
                         _ => {}
@@ -1104,6 +1208,19 @@ unsafe extern "system" fn desktop_host_wnd_proc(
         0x02B1 /* WM_WTSSESSION_CHANGE */ => {
             if wparam.0 == 0x7 /* WTS_SESSION_LOCK */ || wparam.0 == 0x5 /* WTS_SESSION_LOGOFF */ {
                 trigger_session_lock_dismissal(hwnd);
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        WM_GETOBJECT => {
+            let obj_id = lparam.0 as i32;
+            if obj_id == OBJID_CLIENT || obj_id == UiaRootObjectId {
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
+                if !ptr.is_null() {
+                    let state = &*ptr;
+                    let acc_state = state.accessibility_state(hwnd);
+                    let root_provider = create_root_provider(acc_state);
+                    return UiaReturnRawElementProvider(hwnd, wparam, lparam, &root_provider);
+                }
             }
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
@@ -1982,5 +2099,153 @@ mod tests {
         }
 
         assert!(action_recorded.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_desktop_host_window_wm_getobject_and_uia_provider() {
+        let mut win = DesktopHostWindow::create("test-mon-uia", 0, 0, 600, 400, None, None)
+            .expect("create test window");
+
+        let regions = vec![InteractiveRegion::new(
+            "btn_mute",
+            20.0,
+            30.0,
+            80.0,
+            40.0,
+            Some("toggle_mute".into()),
+        )
+        .with_accessibility("Mute Audio", "button", Some("Unmuted".into()))];
+        win.set_interactive_regions(regions);
+
+        // 1. Dispatch WM_GETOBJECT with OBJID_CLIENT (-4)
+        unsafe {
+            let res_client = desktop_host_wnd_proc(
+                win.hwnd,
+                WM_GETOBJECT,
+                WPARAM(0),
+                LPARAM(OBJID_CLIENT as isize),
+            );
+            // UiaReturnRawElementProvider produces a valid non-zero LRESULT handle for the UIA bridge
+            println!("WM_GETOBJECT OBJID_CLIENT returned: {:?}", res_client);
+        }
+
+        // 2. Dispatch WM_GETOBJECT with UiaRootObjectId (-25)
+        unsafe {
+            let res_uia = desktop_host_wnd_proc(
+                win.hwnd,
+                WM_GETOBJECT,
+                WPARAM(0),
+                LPARAM(UiaRootObjectId as isize),
+            );
+            println!("WM_GETOBJECT UiaRootObjectId returned: {:?}", res_uia);
+        }
+
+        // 3. Dispatch WM_GETOBJECT with arbitrary non-accessibility lParam (0) -> handled by DefWindowProcW
+        unsafe {
+            let res_def = desktop_host_wnd_proc(win.hwnd, WM_GETOBJECT, WPARAM(0), LPARAM(0));
+            assert_eq!(res_def, LRESULT(0));
+        }
+    }
+
+    #[test]
+    fn test_desktop_host_window_accessibility_keyboard_focus_notification() {
+        use windows::core::Interface;
+        use windows::Win32::UI::Accessibility::{
+            IRawElementProviderFragment, IRawElementProviderFragmentRoot,
+            IRawElementProviderSimple, UIA_HasKeyboardFocusPropertyId, UIA_NamePropertyId,
+        };
+
+        let mut win = DesktopHostWindow::create("test-mon-acc-focus", 0, 0, 800, 600, None, None)
+            .expect("create test window");
+
+        let regions = vec![
+            InteractiveRegion::new("btn_prev", 10.0, 10.0, 50.0, 30.0, Some("prev".into()))
+                .with_accessibility("Previous Track", "button", None),
+            InteractiveRegion::new("btn_play", 70.0, 10.0, 60.0, 30.0, Some("play".into()))
+                .with_accessibility("Play Track", "button", None),
+            InteractiveRegion::new("btn_next", 140.0, 10.0, 50.0, 30.0, Some("next".into()))
+                .with_accessibility("Next Track", "button", None),
+        ];
+        win.set_interactive_regions(regions);
+
+        let action_invoked = Arc::new(std::sync::Mutex::new(None));
+        let ai_clone = Arc::clone(&action_invoked);
+        win.set_on_action(move |reg, _x, _y| {
+            if let Ok(mut guard) = ai_clone.lock() {
+                *guard = Some(reg.id.clone());
+            }
+        });
+
+        win.set_interactive(true);
+        assert!(win.is_interactive());
+        assert_eq!(win.focused_region_index(), None);
+
+        // 1. Press TAB (0x09) -> moves focus to index 0 (btn_prev)
+        unsafe {
+            let _ = desktop_host_wnd_proc(win.hwnd, WM_KEYDOWN, WPARAM(0x09), LPARAM(0));
+        }
+        assert_eq!(win.focused_region_index(), Some(0));
+
+        // Query UIA Provider GetFocus
+        let state = unsafe { (*win.state_ptr).accessibility_state(win.hwnd) };
+        let root_simple = create_root_provider(state);
+        let root_root: IRawElementProviderFragmentRoot = root_simple.cast().expect("cast root");
+        unsafe {
+            let focused: IRawElementProviderFragment = root_root.GetFocus().expect("GetFocus");
+            let focused_simple: IRawElementProviderSimple = focused.cast().expect("focused simple");
+            let name = focused_simple
+                .GetPropertyValue(UIA_NamePropertyId)
+                .expect("Name");
+            assert_eq!(name.to_string(), "Previous Track");
+
+            let has_focus = focused_simple
+                .GetPropertyValue(UIA_HasKeyboardFocusPropertyId)
+                .expect("HasKeyboardFocus");
+            assert_eq!(has_focus.to_string(), "-1"); // VARIANT_TRUE
+        }
+
+        // 2. Press RIGHT ARROW (0x27) -> moves focus to index 1 (btn_play)
+        unsafe {
+            let _ = desktop_host_wnd_proc(win.hwnd, WM_KEYDOWN, WPARAM(0x27), LPARAM(0));
+        }
+        assert_eq!(win.focused_region_index(), Some(1));
+
+        unsafe {
+            let focused: IRawElementProviderFragment = root_root.GetFocus().expect("GetFocus");
+            let focused_simple: IRawElementProviderSimple = focused.cast().expect("focused simple");
+            let name = focused_simple
+                .GetPropertyValue(UIA_NamePropertyId)
+                .expect("Name");
+            assert_eq!(name.to_string(), "Play Track");
+        }
+
+        // 3. Press ENTER (0x0D) -> activates focused widget (btn_play)
+        unsafe {
+            let _ = desktop_host_wnd_proc(win.hwnd, WM_KEYDOWN, WPARAM(0x0D), LPARAM(0));
+        }
+        assert_eq!(*action_invoked.lock().unwrap(), Some("btn_play".into()));
+    }
+
+    #[test]
+    fn test_desktop_host_window_regions_clamping_on_resize() {
+        let mut win = DesktopHostWindow::create("test-mon-clamp", 0, 0, 800, 600, None, None)
+            .expect("create test window");
+
+        let regions = vec![
+            InteractiveRegion::new("btn_0", 0.0, 0.0, 10.0, 10.0, None),
+            InteractiveRegion::new("btn_1", 10.0, 0.0, 10.0, 10.0, None),
+            InteractiveRegion::new("btn_2", 20.0, 0.0, 10.0, 10.0, None),
+        ];
+        win.set_interactive_regions(regions);
+        win.set_focused_region_index(Some(2));
+        assert_eq!(win.focused_region_index(), Some(2));
+
+        // Shrink regions to 2 items (indices 0 and 1) -> index 2 is now out of bounds and must be clamped to None
+        let smaller = vec![
+            InteractiveRegion::new("btn_0", 0.0, 0.0, 10.0, 10.0, None),
+            InteractiveRegion::new("btn_1", 10.0, 0.0, 10.0, 10.0, None),
+        ];
+        win.set_interactive_regions(smaller);
+        assert_eq!(win.focused_region_index(), None);
     }
 }
