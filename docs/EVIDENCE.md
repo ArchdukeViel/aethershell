@@ -1489,4 +1489,38 @@ This document maintains verifiable test and validation records. Every entry is t
   - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
 - **Evidentiary Verdict & Status**: `passed`. Gate G13 reaffirmed truthfully as `PARTIALLY_VERIFIED`. `CORE_STABLE_CANDIDATE` strictly not declared; `v1.0.0` reserved.
 
+---
+
+### EVD-038: Reversible Schema Migrations & Exclusive Cross-Process File-Locking Concurrency Guard (Gate G12)
+- **Requirement / Gate**: Gate G12 (Configuration Schema, Migrations, Backup & Concurrency Protection), PRD Section 11, PRD Section 18.2
+- **Candidate Commit**: HEAD
+- **Date & Environment**: 2026-10-29, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Gate G12 mandates that all TOML configuration samples parse cleanly, schema migrations are bidirectional and reversible without losing unknown user keys, pre-migration backups are created before disk modifications, and cross-process file-locking prevents concurrent write collisions.
+- **Implementation & Remediation**:
+  1. **Reversible Schema Migration Engine (`crates/aethershell-config/src/migration.rs`)**:
+     - Introduced `SchemaVersion` enum (`V1_0_0`, `V1_1_0`, `V2_0_0`) implementing `FromStr`, `Display`, and ordering.
+     - Implemented `migrate_toml_string(content: &str, target_version: SchemaVersion) -> Result<String, MigrationError>` supporting multi-step forward (`1.0.0 -> 1.1.0 -> 2.0.0`) and reversible rollback migrations (`2.0.0 -> 1.1.0 -> 1.0.0`).
+     - Migrations preserve custom and user-defined tables and fields while adding or pruning version-specific schema parameters.
+     - Added 6 unit tests covering parsing, missing versions, malformed TOML, idempotent migrations, forward upgrades, and full roundtrip bidirectional rollbacks.
+  2. **Win32 Exclusive File-Locking Concurrency Guard (`crates/aethershell-config/src/storage.rs`)**:
+     - Implemented RAII `ConfigLockGuard` wrapping an owned Win32 `HANDLE` on `config.lock`.
+     - `acquire_exclusive_lock()` invokes `CreateFileW` with `FILE_SHARE_MODE(0)` (strictly 0 sharing allowed) and `CREATE_ALWAYS`.
+     - Detects concurrent access attempts: returns `ConfigStorageError::ConcurrentConflict` on Win32 `ERROR_SHARING_VIOLATION` (os error 32).
+     - RAII teardown automatically closes the Windows handle and removes `config.lock`.
+  3. **Atomic Migration Execution & Pre-Migration Backup**:
+     - Added `ConfigManager::migrate_to(&self, target_version: SchemaVersion) -> Result<String, ConfigStorageError>`.
+     - Acquires exclusive write lock before reading or modifying disk state.
+     - Creates a pre-migration backup (`config.pre_migrate.bak`) prior to applying transformations.
+     - Applies changes atomically using `ReplaceFileW` via `heal_from_backup`, guaranteeing zero partial or corrupted file writes on crash or power loss.
+- **Verification & Test Results**:
+  - `cargo test -p aethershell-config`: 32/32 tests passed (including `test_acquire_exclusive_lock_and_concurrent_conflict` and `test_migrate_to_updates_disk_and_creates_backup`).
+  - `cargo test --workspace`: 288 passed, 0 failed, 0 ignored (177 unit + 111 integration across 27 test executables).
+  - `cargo clippy --workspace --all-targets -- -D warnings`: passed cleanly (0 errors, 0 warnings).
+  - `cargo fmt --all --check`: passed cleanly (0 diff).
+  - `powershell -File scripts/test_inventory.ps1 -Strict`: passed cleanly; verified 288 unique passing tests across 13 crates.
+  - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gate G12 truthfully maintained as `PARTIALLY_VERIFIED` pending cross-process execution in disposable VM. `CORE_STABLE_CANDIDATE` strictly not declared; `v1.0.0` reserved.
+
+
 
