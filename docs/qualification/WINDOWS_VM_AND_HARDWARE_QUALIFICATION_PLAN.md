@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary & Objective
 
-AetherShell has achieved clean component-level unit and integration test verification across its 13 workspace crates (271 unique passing tests). However, under the strict evidentiary governance defined in **PRD Section 18.2** and **AGENTS.md**, **no gate can be certified as `VERIFIED` based solely on in-process tests or headless CI runners**.
+AetherShell has achieved clean component-level unit and integration test verification across its 13 workspace crates (300 unique passing tests across 27 test executables + 36 passing PowerShell regression tests across 6 test suites = 336 total passing automated tests). However, under the strict evidentiary governance defined in **PRD Section 18.2** and **AGENTS.md**, **no gate can be certified as `VERIFIED` based solely on in-process tests or headless CI runners**.
 
 The objective of this Qualification Plan is to establish a rigorous, repeatable, and non-destructive empirical test campaign to evaluate AetherShell across:
 1. Isolated, disposable Windows Virtual Machines (VMs) for disruptive shell and fault-injection testing.
@@ -177,14 +177,15 @@ Every gate from G01 through G20 is mapped directly to its canonical PRD requirem
 - **Pass Criteria:** Core continues running with uninterrupted audio and desktop presentation; pipe server handles broken pipe gracefully and accepts subsequent reconnections.
 
 ### Gate G12: Configuration Schema Parsing, Versioned Migrations, Atomic Persistence & AppData Sharing
-- **Authoritative Requirement:** TOML configuration parsing and validation (`ConfigValidationError`); reversible schema migrations; atomic write replacement (`ReplaceFileW`); backup corruption protection (`.bak` rotation); concurrent multi-instance file conflict protection in canonical `%LOCALAPPDATA%\AetherShell`.
+- **Authoritative Requirement:** TOML configuration parsing and validation (`ConfigValidationError`); bidirectional reversible schema migrations (`1.0.0 <-> 1.1.0 <-> 2.0.0`); non-destructive user customization preservation (`_preserved_runtime`); loader version negotiation (`is_supported_schema_version`); atomic write replacement (`ReplaceFileW`); fail-closed pre-migration backup (`.bak`); concurrent multi-instance Win32 exclusive file-locking (`FILE_SHARE_MODE(0)`) in canonical `%LOCALAPPDATA%\AetherShell`.
 - **Target Environment:** Clean disposable VMs, isolated host test directories.
 - **Test Procedure:**
-  1. Parse all valid and invalid TOML sample configurations. Verify invalid configurations are rejected with descriptive errors.
+  1. Parse all valid and invalid TOML sample configurations across versions 1.0.0, 1.1.0, and 2.0.0. Verify invalid configurations are rejected with descriptive errors.
   2. Mutate settings and execute atomic write persistence via `ReplaceFileW`. Verify file write atomicity and `.bak` backup creation.
-  3. Simulate sudden process termination during file write; verify config self-healing restores from backup.
-  4. Execute installed and portable binaries concurrently with shared AppData store; verify file-locking conflict protection.
-- **Pass Criteria:** Zero configuration corruption; atomic persistence verified; backup rollback operates reliably; shared AppData access complies with PRD Q38:B.
+  3. Execute bidirectional migrations forward and backward (`1.0.0 -> 1.1.0 -> 2.0.0 -> 1.1.0 -> 1.0.0`), asserting zero loss of custom user fields and successful post-migration application loading.
+  4. Simulate sudden process termination during file write; verify config self-healing restores from backup.
+  5. Execute installed and portable binaries concurrently with shared AppData store; verify exclusive file-locking conflict protection (`ConfigLockGuard` / `ERROR_SHARING_VIOLATION`).
+- **Pass Criteria:** Zero configuration corruption; atomic persistence verified; backup rollback operates reliably; bidirectional migration round-trips succeed cleanly; shared AppData access complies with PRD Q38:B.
 
 ### Gate G13: Empirical Multi-Process Runtime Performance Qualification (PRD Section 14)
 - **Authoritative Requirement:** Real measured workloads meet ratified PRD Section 14.2 budgets on baseline matrix; multi-process working set (`WorkingSetSize`) and private commit (`PrivateUsage`); normalized CPU; variance documented; honest GPU status; no false exact-zero claims.
@@ -203,15 +204,16 @@ Every gate from G01 through G20 is mapped directly to its canonical PRD requirem
   - Truthful disposition: Gate G13 remains `PARTIALLY_VERIFIED`. While private commit (25.2 MB) satisfies the <= 30 MB budget, resident physical WorkingSetSize (43.8 MB) and CPU (0.52%) exceed preliminary PRD Section 14.2 goals, providing the first authentic baseline to guide optimization or ratification under PRD Section 14.4.
 
 ### Gate G14: Accessibility, Keyboard Navigation, UI Automation & High-Contrast Themes
-- **Authoritative Requirement:** Full keyboard navigation; Narrator / Windows UI Automation (UIA) tree representation; Windows high-contrast theme support; DPI/text scaling; reduced motion respect; localization truncation rules.
+- **Authoritative Requirement:** Full keyboard navigation; native Windows UI Automation (UIA) COM provider hierarchy via `WM_GETOBJECT (0x003D)`; Win32 `NotifyWinEvent` focus/alert dispatch; Narrator screen reader speech; Windows high-contrast theme support; DPI/text scaling; reduced motion respect; localization truncation rules.
 - **Target Environment:** VM-WIN11-24H2, VM-WIN10-22H2.
 - **Test Procedure:**
   1. Enable Windows High Contrast mode (Desert, Aquatic, Dusk, Night Sky). Verify AetherShell theme engine applies high-contrast color tokens with compliant contrast ratios.
   2. Enable Windows "Make text bigger" (up to 200% text scaling). Verify widgets recalculate layout without clipped or overlapping text.
   3. Enable Windows "Show animations" off (reduced motion). Verify visual transitions and spectrum smoothing adapt to non-animated presentation.
-  4. Audit keyboard navigation in Settings and Interactive Mode: Tab, Shift+Tab, Arrow keys, Enter, Space, Escape.
-  5. Inspect UIA accessibility tree using `Accessibility Insights for Windows` or `Inspect.exe`.
-- **Pass Criteria:** Full keyboard navigability; high-contrast readability; text scaling without truncation; UIA tree exposes actionable controls to screen readers.
+  4. Audit keyboard navigation in Settings and Interactive Mode: Tab, Shift+Tab, Arrow keys, Enter, Space, Escape with focus ring invalidation.
+  5. Inspect UIA accessibility tree using `Accessibility Insights for Windows` or `Inspect.exe`, verifying `WM_GETOBJECT` returns `IRawElementProviderSimple` and exposes full `IRawElementProviderFragment` hierarchy, standard properties (Name, ControlType, BoundingRectangle, HasKeyboardFocus, IsEnabled), and `IInvokeProvider`.
+  6. Audit Windows Narrator audio announcements for focus changes and action invocations in clean VM.
+- **Pass Criteria:** Full keyboard navigability; high-contrast readability; text scaling without truncation; UIA tree exposes actionable controls to screen readers; Narrator announces element names and values.
 
 ### Gate G15: Five-Channel Packaging Release Qualification (MSI, MSIX, Store, WinGet, Portable)
 - **Authoritative Requirement:** MSI, MSIX, Microsoft Store approved listing, WinGet package, and self-contained portable fully qualified; no partial stable release (Q40:A); deferred during 0.1.0-dev development.
@@ -225,14 +227,16 @@ Every gate from G01 through G20 is mapped directly to its canonical PRD requirem
 - **Pass Criteria:** Clean installation, upgrade, and removal across all 5 channels; zero orphaned registry keys or files; Store certification passes. *Status: DEFERRED during 0.1.0-dev per Q40:A/Q46:B.*
 
 ### Gate G16: License, Privacy & Network Isolation Audit
-- **Authoritative Requirement:** Apache-2.0 `LICENSE` and complete `NOTICE`; compiler path remapping (`--remap-path-prefix`, `/pathmap`); zero unsolicited analytics or audio upload; dynamic network capture audit proving 0 outbound packets.
-- **Target Environment:** VM-WIN11-24H2.
+- **Authoritative Requirement:** Apache-2.0 `LICENSE` and complete `NOTICE`; compiler path remapping (`--remap-path-prefix`, `/pathmap`); zero unsolicited analytics or audio upload; machine-readable SPDX-2.3 SBOM with `NOASSERTION` concluded licenses; dynamic packet-level NDIS capture audit (`scripts/audit_packet_level_network_isolation.ps1`) and continuous socket sampling + DNS cache differential proving 0 outbound packets/connections.
+- **Target Environment:** VM-WIN11-24H2, isolated host test directories.
 - **Test Procedure:**
-  1. Attach Wireshark / Microsoft Network Monitor to network adapter in clean VM.
-  2. Run AetherShell continuously for 60 minutes across audio visualization, settings changes, and widget updates.
-  3. Audit captured packets for DNS queries, HTTP/HTTPS requests, or outbound telemetry packets.
-  4. Audit third-party license notices (`NOTICE`, `LICENSE`, SBOM) and verify compiler path remapping eliminates developer paths from release binaries.
-- **Pass Criteria:** Exactly zero outbound network packets generated; binary strings reveal no internal paths; SBOM and license attributions 100% compliant with Apache-2.0.
+  1. Execute `scripts/generate_sbom.ps1 -Strict` to verify 100% permissive dependencies and SPDX-2.3 JSON schema compliance.
+  2. Execute `scripts/audit_runtime_network_isolation.ps1 -Strict -SpawnTestProcess` to audit active socket tables on live instances.
+  3. Execute `scripts/audit_packet_level_network_isolation.ps1 -SpawnAllComponents -DurationSeconds 3 -Strict` to perform continuous 25ms socket sampling and DNS client cache differential analysis across Core, Settings, and Script Host.
+  4. In clean disposable VM, execute NDIS packet capture via `pktmon.exe` (`audit_packet_level_network_isolation.ps1 -RequirePktMon -Strict`) to capture all network adapter traffic during 60 minutes of live execution.
+  5. Audit captured packets for DNS queries, HTTP/HTTPS requests, or outbound telemetry packets.
+  6. Verify compiler path remapping eliminates developer paths from release binaries.
+- **Pass Criteria:** Exactly zero outbound network packets generated; zero sockets opened; zero DNS queries; binary strings reveal no internal paths; SBOM and license attributions 100% compliant with Apache-2.0.
 
 ### Gate G17: Safe Mode, Failure Injection Recovery & Subsystem Quarantine
 - **Authoritative Requirement:** `--safe-mode` command-line switch forces `NativeNoopBackend` and bypasses hooks; widget/worker crash quarantine; Explorer recovery; graphics driver TDR / device loss exponential backoff recovery; IPC and update recovery.

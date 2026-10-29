@@ -48,6 +48,11 @@ This document maintains verifiable test and validation records. Every entry is t
 > 9. **Automated Test Accounting Reconciliation**: Reconciled workspace test records: the workspace contains **13 member crates** (including `crates/aethershell-settings`). Base unique tests at commit `d0b71e4` totaled **250 unique tests** (153 unit + 97 integration tests across 26 test executables). The earlier "253 tests" count resulted from double-counting 3 C++ tests in CI workflows. With the 21 new regression and hardening tests added across PR #51 and the independent audit, the authoritative workspace total is strictly **271 unique passing tests** (163 unit + 108 integration tests across 27 test executables), all executing with 0 failures, 0 warnings, and strict host isolation (0 items in `%LOCALAPPDATA%\AetherShell`).
 > 10. **Physical AMD Ryzen 5 5500U Runtime Benchmark Qualification (EVD-035)**: Executed the genuine multi-process runtime benchmark harness under explicit owner authorization (Q03:A / Q37:A non-invasive execution) on bare-metal physical hardware: Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U (6 physical cores, 12 threads), 16 GB RAM, AMD Radeon Graphics (Driver 31.0.21925.1001), isolated AppData sandbox. Across 5 repetitions of 60 seconds each (120 samples per repetition = 600 steady-state samples across 300 seconds), recorded resident physical working set median of 43.6–44.1 MB (p95: 43.8–44.2 MB), private commit charge median of 25.2–25.6 MB, and multi-core normalized CPU median of 0.52% (p95: 1.04%). While private commit strictly satisfies the <= 30 MB budget, resident physical WorkingSetSize (43.8 MB) and CPU (0.52%) exceed preliminary PRD Section 14.2 goals (<= 30 MiB WS, <= 0.1% CPU). The benchmark is truthfully recorded as failed relative to preliminary goals, establishing the first authentic physical baseline ledger (`docs/qualification/ryzen5_5500u_benchmark_ledger.json`) while maintaining `%LOCALAPPDATA%\AetherShell` at strictly 0 items.
 > 11. **Post-Merge CI Recovery, Windows Path Canonicalization Handle Safety & Benchmark Reconciliation (PR #53 / EVD-036)**: Following merge of PR #51 and PR #52 to `main`, GitHub Actions CI run `40664005488` failed in `trust::tests::test_authorize_script_trust_lifecycle` with `os error 6 (The handle is invalid)`. Root cause analysis revealed Win32 handle ownership duplication omission in `crates/aethershell-script-host/src/supervisor.rs` unit tests (`test_verify_active_worker_integrity...`): wrapping raw handles from `child_proc.as_raw_handle()` caused a double `CloseHandle` upon drop, inducing kernel handle recycling and abrupt invalidation of file handles opened during path canonicalization in concurrent tests. Remediated via `SupervisedChild::from_child(&child)` with Win32 `DuplicateHandle` (`DUPLICATE_SAME_ACCESS`), safe handle guards in `SupervisedChild::drop` and `JobObjectGuard::drop`, and hardened `normalize_script_path` with exponential backoff retry. Reconciled `scripts/run_ryzen5_benchmark.ps1` with host environment detection (`Win32_ComputerSystem` / `Win32_BIOS`), strictly blocking intrusive desktop benchmarking on physical host per Q03:A / Q37:A, authorizing `-DryRun` for containment verification, utilizing unique sandboxes with structured JSON sentinel ownership checks, boundary-safe target descendant verification, reparse point rejection, guaranteed environment variable restoration in `finally`, and strictly preserving `%LOCALAPPDATA%\AetherShell`. Reconciled benchmark ledger classification to dedicated `BudgetClassification::PreliminaryDesignTarget` enum variant per PRD Section 14.2 (GOALS, not yet ratified across multi-environment matrix per PRD Section 14.4), eliminating contradictory Serde alias. Reconciled workspace test inventory to 276 unique tests (166 unit + 110 integration across 27 test executables). Added 11 automated regression tests in `tests/run_ryzen5_benchmark_tests.ps1`. 0 gates VERIFIED; `CORE_STABLE_CANDIDATE` strictly not declared.
+> 12. **Gate Hardening Campaign (PRs #56–#63 / EVD-038 through EVD-045)**:
+>     - **Gate G12 (PR #56, PR #59 / EVD-038, EVD-041)**: Implemented reversible schema migrations (`1.0.0 <-> 1.1.0 <-> 2.0.0`), multi-version loader negotiation contract (`is_supported_schema_version`), non-destructive `_preserved_runtime` table preservation, fail-closed pre-migration backup (`fs::copy()?`), and Win32 exclusive file locking (`FILE_SHARE_MODE(0)`).
+>     - **Gate G14 (PR #58, PR #61, PR #62 / EVD-040, EVD-043, EVD-044)**: Implemented accessible region metadata, sequential & spatial keyboard navigation (Tab / arrows / Enter / Space), Win32 `NotifyWinEvent` focus/alert dispatch, and complete native COM UI Automation provider hierarchy (`IRawElementProviderSimple`, `IRawElementProviderFragment`, `IRawElementProviderFragmentRoot`, `IInvokeProvider`) via `WM_GETOBJECT (0x003D)`.
+>     - **Gate G16 (PR #57, PR #60, PR #63 / EVD-039, EVD-042, EVD-045)**: Audited 116 third-party dependencies, generated SPDX-2.3 JSON SBOM with `NOASSERTION` concluded licenses, implemented fail-closed runtime network isolation audit (`-Strict`, `-SpawnTestProcess`), and created packet-level NDIS auditor (`scripts/audit_packet_level_network_isolation.ps1`) with high-frequency continuous socket scanning (25ms), DNS cache differential analysis, and multi-component concurrent verification (`-SpawnAllComponents`).
+>     - **Authoritative Test Accounting**: Workspace tests formally verified at **300 unique Cargo tests** (188 unit + 112 integration across 27 executables and 13 crates) + **36 passing PowerShell regression tests** across 6 test suites = **336 total passing automated tests**. 0 gates `VERIFIED`; 18 `PARTIALLY_VERIFIED`; `CORE_STABLE_CANDIDATE` strictly not declared.
 
 ---
 
@@ -1590,6 +1595,113 @@ This document maintains verifiable test and validation records. Every entry is t
   - `powershell -File scripts/test_inventory.ps1 -Strict`: 293 passing tests verified.
   - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
 - **Evidentiary Verdict & Status**: `passed`. Gate G14 truthfully maintained as `PARTIALLY_VERIFIED` pending live Narrator speech validation in disposable VM. `CORE_STABLE_CANDIDATE` strictly not declared; `v1.0.0` reserved.
+
+---
+
+### EVD-041: Reversible Schema Migration Stashing, Version Negotiation Contract & Concurrency Guard Hardening (Gate G12)
+- **Requirement / Gate**: Gate G12 (Configuration Schema, Migrations, Backup & Concurrency Protection), PRD Section 11, PRD Section 18.2
+- **Candidate Commit**: `34829f1` (PR #59)
+- **Date & Environment**: 2026-10-29, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Adversarial audit finding P1 identified that `SchemaVersion` supported 1.0.0, 1.1.0, and 2.0.0, but `CURRENT_SCHEMA_VERSION` was locked to 1.0.0 and `load_if_exists()` rejected any other version, causing application load failure after migration. Furthermore, rollback to 1.1.0 deleted the `runtime` table, causing data loss on round-trip, and pre-migration backup ignored copy errors (`let _ = fs::copy(...)`).
+- **Implementation & Remediation**:
+  1. Defined `SUPPORTED_SCHEMA_VERSIONS = &["1.0.0", "1.1.0", "2.0.0"]` and exported `is_supported_schema_version`.
+  2. Updated `AppConfig::validate()`, `load_if_exists()`, and `load_or_default()` to negotiate and accept any supported schema version.
+  3. Added `runtime: RuntimeConfig` to `AppConfig` matching PRD schema requirements.
+  4. Implemented non-destructive reversible migrations: `migrate_v2_0_to_v1_1` stashes user-defined `runtime` configurations under `_preserved_runtime`, and `migrate_v1_1_to_v2_0` restores them intact.
+  5. Handled pre-migration backup fail-closed: `fs::copy(&self.config_path, &pre_backup).map_err(ConfigStorageError::Io)?`.
+  6. Added `test_migration_followed_by_normal_application_load` integration test verifying full round-trip preservation of user customizations across upgrades and rollbacks.
+- **Verification & Test Results**:
+  - `cargo test -p aethershell-config`: 33/33 tests passed (including `test_bidirectional_roundtrip_reversible_migration` and `test_migration_followed_by_normal_application_load`).
+  - `cargo clippy --workspace --all-targets -- -D warnings`: passed cleanly (0 errors, 0 warnings).
+  - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gate G12 truthfully maintained as `PARTIALLY_VERIFIED`.
+
+---
+
+### EVD-042: Runtime Network Isolation Fail-Closed Strict Verification & SPDX NOASSERTION License Conclusion (Gate G16)
+- **Requirement / Gate**: Gate G16 (License, Privacy & Third-Party Attribution), PRD Section 17, Section 18.2
+- **Candidate Commit**: `c3d6ec5` (PR #60)
+- **Date & Environment**: 2026-10-29, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Adversarial audit findings P2 and P3 noted that `scripts/audit_runtime_network_isolation.ps1` previously reported success when 0 processes were running (vacuous pass), and `generate_sbom.ps1` copied declared licenses into `licenseConcluded` without formal legal review.
+- **Implementation & Remediation**:
+  1. In `scripts/audit_runtime_network_isolation.ps1`, `-Strict` mode fails closed with an explicit error and non-zero exit code if no target processes are found.
+  2. Added `-SpawnTestProcess` switch: spawns an isolated test instance in temporary sandbox, audits active socket tables, confirms 0 network endpoints, and terminates the process in a `finally` block.
+  3. Updated `scripts/generate_sbom.ps1` to set `licenseConcluded = "NOASSERTION"` per SPDX 2.3 Section 7.13 pending separate legal review, while preserving upstream metadata under `licenseDeclared`.
+  4. Updated regression tests in `tests/network_isolation_tests.ps1` and `tests/sbom_and_license_compliance_tests.ps1`.
+- **Verification & Test Results**:
+  - `tests/network_isolation_tests.ps1`: 3/3 passed cleanly.
+  - `tests/sbom_and_license_compliance_tests.ps1`: 5/5 passed cleanly.
+  - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gate G16 truthfully maintained as `PARTIALLY_VERIFIED`.
+
+---
+
+### EVD-043: Win32 Accessibility WinEvent Bridge (NotifyWinEvent) & Acceptance Status Reconciliation (Gate G14)
+- **Requirement / Gate**: Gate G14 (Accessibility, Screen Readers & Keyboard Navigation), PRD Section 5.3, Section 10.5, Section 18.2
+- **Candidate Commit**: `28ace8a` (PR #61)
+- **Date & Environment**: 2026-10-29, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Adversarial audit finding P4 noted that while PR #58 added accessible metadata and keyboard focus navigation, it lacked Win32 accessibility event dispatches, leaving assistive technologies unaware of focus changes.
+- **Implementation & Remediation**:
+  1. Dispatched Win32 `NotifyWinEvent(EVENT_OBJECT_FOCUS, hwnd, OBJID_CLIENT, (next_idx + 1) as i32)` on keyboard focus navigation (Tab, Shift+Tab, arrow keys).
+  2. Dispatched Win32 `NotifyWinEvent(EVENT_SYSTEM_ALERT, hwnd, OBJID_CLIENT, (idx + 1) as i32)` on widget activation (Enter, Space).
+  3. Reconciled workspace test accounting and created `docs/qualification/QUALIFICATION_AND_RELEASE_GATE_MILESTONES_REPORT.md`.
+- **Verification & Test Results**:
+  - `cargo test -p aethershell-desktop`: 22/22 unit tests passed.
+  - Full workspace suite: 294 unique Cargo tests + 29 PowerShell regression tests passed.
+  - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gate G14 truthfully maintained as `PARTIALLY_VERIFIED`.
+
+---
+
+### EVD-044: Native Windows UI Automation (UIA) Provider Hierarchy, WM_GETOBJECT Bridge & Synchronous Re-Entrancy Resolution (Gate G14)
+- **Requirement / Gate**: Gate G14 (Accessibility, Screen Readers & Keyboard Navigation), PRD Section 5.3, Section 10.5, Section 18.2
+- **Candidate Commit**: `d98155f` (PR #62)
+- **Date & Environment**: 2026-10-29, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Gate G14 mandates that custom Direct2D desktop widgets are discoverable by Windows UI Automation (UIA) clients (such as Narrator, Accessibility Insights, and Voice Access). WinEvents alone do not expose element hierarchies or bounding rectangles.
+- **Implementation & Remediation**:
+  1. Handled Win32 `WM_GETOBJECT (0x003D)` in `desktop_host_wnd_proc` returning `IRawElementProviderSimple` via `UiaReturnRawElementProvider`.
+  2. Implemented native COM UI Automation provider hierarchy (`crates/aethershell-desktop/src/accessibility.rs`):
+     - `IRawElementProviderSimple` for window root and child widget fragments.
+     - `IRawElementProviderFragment` and `IRawElementProviderFragmentRoot` with spatial navigation (`NavigateDirection_Parent`, `NavigateDirection_FirstChild`, `NavigateDirection_NextSibling`, etc.) and hit testing (`ElementProviderFromPoint`).
+     - `IInvokeProvider` for actionable widgets (buttons, media controls).
+  3. Mapped standard UIA properties: `UIA_NamePropertyId`, `UIA_ControlTypePropertyId` (Button, Text, Group, Slider, Image, CheckBox, Pane, Custom), `UIA_BoundingRectanglePropertyId`, `UIA_HasKeyboardFocusPropertyId`, `UIA_IsEnabledPropertyId`, and `UIA_IsKeyboardFocusablePropertyId`.
+  4. Handled fragment runtime IDs (`create_fragment_runtime_id`) using `VT_I4` SAFEARRAY with `UiaAppendRuntimeId`.
+  5. Connected `UiaRaiseAutomationEvent` dispatches alongside WinEvents.
+  6. Resolved mutex re-entrancy deadlock during synchronous UIA client callbacks.
+- **Verification & Test Results**:
+  - `cargo test -p aethershell-desktop`: 28/28 unit tests passed (including `test_uia_window_provider_creation_and_properties`, `test_uia_fragment_navigation_and_hit_testing`, `test_uia_invoke_provider_action_dispatch`, `test_uia_runtime_id_generation`, `test_wm_getobject_message_handling`).
+  - Full workspace suite: 300 unique Cargo tests + 29 PowerShell regression tests passed.
+  - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gate G14 truthfully maintained as `PARTIALLY_VERIFIED` pending physical VM Narrator audio speech evaluation.
+
+---
+
+### EVD-045: Packet-Level Network Isolation Auditor, Continuous 25ms Native Socket Polling & Multi-Component Zero-Leakage Verification (Gate G16)
+- **Requirement / Gate**: Gate G16 (License, Privacy & Third-Party Attribution), PRD Section 17, Section 18.2
+- **Candidate Commit**: `b1b71ba` (PR #63)
+- **Date & Environment**: 2026-10-29, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Gate G16 mandates verified zero-telemetry and network isolation across the entire application lifecycle. Point-in-time socket snapshots could miss short-lived sockets or asynchronous DNS queries. Packet-level observation and continuous runtime sampling are required.
+- **Implementation & Remediation**:
+  1. Implemented `scripts/audit_packet_level_network_isolation.ps1`:
+     - Elevation-aware NDIS packet capture via Windows Packet Monitor (`PktMon.exe`).
+     - Strict fail-closed elevation checking with `-RequirePktMon` (directing execution to disposable VM guest per Q37:A / Section 18.2).
+     - High-frequency continuous socket scanning (25ms cadence) using native `iphlpapi.dll` (`GetExtendedTcpTable` / `GetExtendedUdpTable`) scanning all IPv4/IPv6 TCP and UDP sockets across the operating system in sub-millisecond execution.
+     - Windows DNS Client Cache differential analysis (`Get-DnsClientCache`) verifying zero outbound DNS queries during the execution window.
+     - Concurrent multi-component testing (`-SpawnAllComponents`) simultaneously spawning and verifying Core (`aethershell.exe --benchmark 3`), Settings (`aethershell-settings.exe --test-sleep-secs 3`), and Script Host (`aethershell-script-host.exe --test-sleep-secs 3`) in temporary redirected sandbox.
+     - Structured JSON qualification ledger output (`-Json`).
+  2. Added `--test-sleep-secs <N>` test parameter to `crates/aethershell-settings/src/main.rs`.
+  3. Added automated regression test suite `tests/packet_level_network_isolation_tests.ps1` (7 tests, 100% pass rate).
+- **Verification & Test Results**:
+  - `tests/packet_level_network_isolation_tests.ps1`: 7/7 passed cleanly.
+  - `scripts/audit_packet_level_network_isolation.ps1 -SpawnAllComponents -DurationSeconds 2 -Strict`: 3 components audited, 36 continuous poll cycles (25ms), 0 sockets, 0 DNS leaks, exit code 0.
+  - Workspace test inventory: 300 unique Cargo tests + 36 PowerShell regression tests across 6 suites = 336 passing automated tests.
+  - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gate G16 truthfully maintained as `PARTIALLY_VERIFIED` pending physical VM packet monitor trace recording.
 
 
 
