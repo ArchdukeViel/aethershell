@@ -1555,6 +1555,43 @@ This document maintains verifiable test and validation records. Every entry is t
   - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
 - **Evidentiary Verdict & Status**: `passed`. Gate G16 truthfully maintained as `PARTIALLY_VERIFIED` pending dynamic packet capture in disposable VM. `CORE_STABLE_CANDIDATE` strictly not declared; `v1.0.0` reserved.
 
+---
+
+### EVD-040: Desktop Widget Accessibility Descriptions and Keyboard Focus Navigation (Gate G14)
+- **Requirement / Gate**: Gate G14 (Accessibility, Screen Readers & Keyboard Navigation), PRD Section 5.3, Section 10.5, Section 18.2
+- **Candidate Commit**: HEAD
+- **Date & Environment**: 2026-10-29, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Gate G14 mandates complete accessibility support including keyboard navigation, Narrator/screen reader accessibility representation, high contrast themes, scaling, and reduced motion. Prior implementation provided high contrast and WinUI 3 UIA controls, but desktop widgets rendered via Direct2D lacked accessibility descriptions and keyboard focus cycling.
+- **Implementation & Remediation**:
+  1. **Accessible Widget Metadata & Descriptions (`crates/aethershell-desktop/src/interaction.rs`)**:
+     - Enhanced `InteractiveRegion` with `accessible_name: Option<String>`, `accessible_role: Option<String>`, and `accessible_value: Option<String>`.
+     - Added builder `with_accessibility(name, role, value)`.
+     - Implemented `accessible_description(&self) -> String` producing standardized screen reader announcements (e.g. `"Play button, action: media.play"` or `"CPU Load: 24%, role: progressbar"`).
+  2. **Sequential & Spatial Keyboard Navigation (`crates/aethershell-desktop/src/interaction.rs`)**:
+     - Implemented `focused_region_index: Option<usize>` tracking active keyboard focus.
+     - Implemented `focus_next` (Tab / Right / Down) and `focus_prev` (Shift+Tab / Left / Up) with wrap-around focus cycling.
+     - Implemented `activate_focused` (Enter / Space) triggering widget action dispatch.
+     - Implemented `handle_keyboard_navigation(vk, shift, regions)` returning structured `KeyboardNavigationResult` (`FocusChanged`, `Activated`, `Dismissed`, `Ignored`).
+     - Added accessible announcement queue (`pop_accessible_announcement`) for Narrator and assistive technologies.
+  3. **Win32 Message Loop Keyboard Integration (`crates/aethershell-desktop/src/window.rs`)**:
+     - Extended `desktop_host_wnd_proc` under `WM_KEYDOWN` to handle `VK_TAB`, `VK_SHIFT`, arrows, `VK_RETURN`, `VK_SPACE`, and `VK_ESCAPE`.
+     - On focus change, marks activity and invalidates window rect (`InvalidateRect`) to redraw focus rings.
+     - On activation, invokes `on_action` callback.
+     - Added `focused_region_index()` and `set_focused_region_index()` accessors to `DesktopHostWindow`.
+  4. **Scene Graph Accessible Extraction (`crates/aethershell-app/src/engine.rs`)**:
+     - Enhanced `extract_interactive_regions` to automatically populate accessible name, role ("button", "progressbar", "text", "visualizer", "widget"), and value (e.g. progress percentage) from compiled declarative `ResolvedNode` elements.
+- **Verification & Test Results**:
+  - `cargo test -p aethershell-desktop`: 22/22 unit tests passed (including `test_interactive_region_accessibility_metadata_and_description`, `test_keyboard_navigation_tab_and_shift_tab_focus_cycle`, `test_keyboard_navigation_activation_with_enter_and_space`, and `test_accessible_announcements_drain`).
+  - `cargo test -p aethershell-app --test interactive_mode_hotkey_and_hit_testing_test`: 7/7 integration tests passed (including `test_keyboard_navigation_and_accessible_widget_extraction`).
+  - `cargo test --workspace`: 293 passed, 0 failed, 0 ignored (181 unit + 112 integration across 27 test executables).
+  - `cargo clippy --workspace --all-targets -- -D warnings`: passed cleanly (0 errors, 0 warnings).
+  - `cargo fmt --all --check`: passed cleanly (0 diff).
+  - `powershell -File scripts/test_inventory.ps1 -Strict`: 293 passing tests verified.
+  - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gate G14 truthfully maintained as `PARTIALLY_VERIFIED` pending live Narrator speech validation in disposable VM. `CORE_STABLE_CANDIDATE` strictly not declared; `v1.0.0` reserved.
+
+
 
 
 

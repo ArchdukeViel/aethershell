@@ -1801,12 +1801,31 @@ pub fn compile_first_run_scene(screen_width: f32, _screen_height: f32) -> SceneG
     compile_live_scene(screen_width, _screen_height, &bindings)
 }
 
-/// Extracts interactive regions from resolved layout nodes for pointer hit-testing.
+/// Extracts interactive regions from resolved layout nodes for pointer hit-testing and accessibility (Gate G14).
 pub fn extract_interactive_regions(resolved: &[ResolvedNode]) -> Vec<InteractiveRegion> {
     resolved
         .iter()
         .filter(|node| node.node_type == NodeType::Button || node.action.is_some())
         .map(|node| {
+            let role = match node.node_type {
+                NodeType::Button => "button",
+                NodeType::Progress => "progressbar",
+                NodeType::Text => "text",
+                NodeType::SpectrumVisualizer => "visualizer",
+                _ => {
+                    if node.action.is_some() {
+                        "button"
+                    } else {
+                        "widget"
+                    }
+                }
+            };
+            let name = node
+                .text
+                .clone()
+                .unwrap_or_else(|| node.id.replace('_', " "));
+            let val = node.progress.map(|p| format!("{:.0}%", p * 100.0));
+
             InteractiveRegion::new(
                 node.id.clone(),
                 node.x,
@@ -1815,6 +1834,7 @@ pub fn extract_interactive_regions(resolved: &[ResolvedNode]) -> Vec<Interactive
                 node.height,
                 node.action.clone(),
             )
+            .with_accessibility(name, role, val)
         })
         .collect()
 }

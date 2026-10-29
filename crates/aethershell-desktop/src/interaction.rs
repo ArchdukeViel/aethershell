@@ -23,6 +23,12 @@ pub struct InteractiveRegion {
     pub width: f32,
     pub height: f32,
     pub action: Option<String>,
+    #[serde(default)]
+    pub accessible_name: Option<String>,
+    #[serde(default)]
+    pub accessible_role: Option<String>,
+    #[serde(default)]
+    pub accessible_value: Option<String>,
 }
 
 impl InteractiveRegion {
@@ -41,6 +47,44 @@ impl InteractiveRegion {
             width,
             height,
             action,
+            accessible_name: None,
+            accessible_role: None,
+            accessible_value: None,
+        }
+    }
+
+    /// Attaches accessibility metadata for Screen Readers / Narrator (Gate G14).
+    pub fn with_accessibility(
+        mut self,
+        name: impl Into<String>,
+        role: impl Into<String>,
+        value: Option<String>,
+    ) -> Self {
+        self.accessible_name = Some(name.into());
+        self.accessible_role = Some(role.into());
+        self.accessible_value = value;
+        self
+    }
+
+    /// Generates a human- and screen-reader-friendly accessible description of this widget region.
+    pub fn accessible_description(&self) -> String {
+        let name = self.accessible_name.as_deref().unwrap_or(self.id.as_str());
+        let role = self
+            .accessible_role
+            .as_deref()
+            .unwrap_or(if self.action.is_some() {
+                "button"
+            } else {
+                "widget"
+            });
+
+        match (&self.accessible_value, &self.action) {
+            (Some(val), Some(act)) => {
+                format!("{}: {}, role: {}, action: {}", name, val, role, act)
+            }
+            (Some(val), None) => format!("{}: {}, role: {}", name, val, role),
+            (None, Some(act)) => format!("{} {}, action: {}", name, role, act),
+            (None, None) => format!("{} {}", name, role),
         }
     }
 
@@ -48,6 +92,19 @@ impl InteractiveRegion {
     pub fn contains_point(&self, px: f32, py: f32) -> bool {
         px >= self.x && px <= (self.x + self.width) && py >= self.y && py <= (self.y + self.height)
     }
+}
+
+/// The result of a keyboard navigation action across desktop interactive widgets (Gate G14).
+#[derive(Debug, Clone, PartialEq)]
+pub enum KeyboardNavigationResult {
+    /// Escape dismissed interactive mode back to passive desktop icons.
+    Dismissed(DismissalReason),
+    /// Focus moved to a widget region (Tab / Shift+Tab / Arrows).
+    FocusChanged { index: usize, description: String },
+    /// Focused widget was activated (Enter / Space).
+    Activated { action: String },
+    /// Key ignored or not applicable.
+    Ignored,
 }
 
 /// The result of a spatial pointer hit-test dispatch in interactive mode.
@@ -61,12 +118,14 @@ pub enum PointerHitResult {
     IgnoredPassive,
 }
 
-/// Manages interactive state transitions, timers, and automatic dismissals.
+/// Manages interactive state transitions, timers, keyboard navigation, and automatic dismissals.
 pub struct InteractionController {
     current_mode: InteractionMode,
     session_start: Option<DateTime<Utc>>,
     session_deadline: Option<DateTime<Utc>>,
     last_dismissal: Option<DismissalReason>,
+    focused_region_index: Option<usize>,
+    pending_announcements: Vec<String>,
 }
 
 impl InteractionController {
@@ -76,6 +135,8 @@ impl InteractionController {
             session_start: None,
             session_deadline: None,
             last_dismissal: None,
+            focused_region_index: None,
+            pending_announcements: Vec::new(),
         }
     }
 
@@ -87,6 +148,156 @@ impl InteractionController {
         self.last_dismissal
     }
 
+    pub fn focused_region_index(&self) -> Option<usize> {
+        self.focused_region_index
+    }
+
+    pub fn focused_region<'a>(
+        &self,
+        regions: &'a [InteractiveRegion],
+    ) -> Option<&'a InteractiveRegion> {
+        self.focused_region_index.and_then(|idx| regions.get(idx))
+    }
+
+    pub fn set_focus(&mut self, index: Option<usize>, regions: &[InteractiveRegion]) {
+        self.focused_region_index = index.filter(|&i| i < regions.len());
+        if let Some(r) = self.focused_region(regions) {
+            self.pending_announcements.push(r.accessible_description());
+        }
+    }
+
+    /// Moves focus to next widget region (Tab / Right / Down). Wraps around.
+    pub fn focus_next(&mut self, regions: &[InteractiveRegion]) -> Option<usize> {
+        if regions.is_empty() {
+            self.focused_region_index = None;
+            return None;
+        }
+        let next_idx = match self.focused_region_index {
+            Some(curr) => (curr + 1) % regions.len(),
+            None => 0,
+        };
+        self.focused_region_index = Some(next_idx);
+        let desc = format!(
+            "Focused: {} ({}/{})",
+            regions[next_idx].accessible_description(),
+            next_idx + 1,
+            regions.len()
+        );
+        self.pending_announcements.push(desc);
+        self.reset_activity();
+        Some(next_idx)
+    }
+
+    /// Moves focus to previous widget region (Shift+Tab / Left / Up). Wraps around.
+    pub fn focus_prev(&mut self, regions: &[InteractiveRegion]) -> Option<usize> {
+        if regions.is_empty() {
+            self.focused_region_index = None;
+            return None;
+        }
+        let prev_idx = match self.focused_region_index {
+            Some(0) | None => regions.len() - 1,
+            Some(curr) => curr - 1,
+        };
+        self.focused_region_index = Some(prev_idx);
+        let desc = format!(
+            "Focused: {} ({}/{})",
+            regions[prev_idx].accessible_description(),
+            prev_idx + 1,
+            regions.len()
+        );
+        self.pending_announcements.push(desc);
+        self.reset_activity();
+        Some(prev_idx)
+    }
+
+    /// Activates the currently focused widget region.
+    pub fn activate_focused(&mut self, regions: &[InteractiveRegion]) -> Option<String> {
+        let action = self.focused_region(regions).and_then(|r| r.action.clone());
+        if action.is_some() {
+            self.reset_activity();
+        }
+        action
+    }
+
+    /// Retrieves and drains the next pending accessible announcement for Narrator.
+    pub fn pop_accessible_announcement(&mut self) -> Option<String> {
+        if self.pending_announcements.is_empty() {
+            None
+        } else {
+            Some(self.pending_announcements.remove(0))
+        }
+    }
+
+    /// Handles keyboard navigation across interactive widget regions (Gate G14).
+    pub fn handle_keyboard_navigation(
+        &mut self,
+        vk_code: u32,
+        shift_pressed: bool,
+        regions: &[InteractiveRegion],
+    ) -> KeyboardNavigationResult {
+        if self.current_mode == InteractionMode::LockedPassive {
+            return KeyboardNavigationResult::Ignored;
+        }
+
+        match vk_code {
+            0x1B => {
+                // VK_ESCAPE
+                self.dismiss(DismissalReason::EscapeKey);
+                KeyboardNavigationResult::Dismissed(DismissalReason::EscapeKey)
+            }
+            0x09 => {
+                // VK_TAB
+                let new_idx = if shift_pressed {
+                    self.focus_prev(regions)
+                } else {
+                    self.focus_next(regions)
+                };
+                if let Some(idx) = new_idx {
+                    let desc = regions[idx].accessible_description();
+                    KeyboardNavigationResult::FocusChanged {
+                        index: idx,
+                        description: desc,
+                    }
+                } else {
+                    KeyboardNavigationResult::Ignored
+                }
+            }
+            0x27 | 0x28 => {
+                // VK_RIGHT (0x27) or VK_DOWN (0x28)
+                if let Some(idx) = self.focus_next(regions) {
+                    let desc = regions[idx].accessible_description();
+                    KeyboardNavigationResult::FocusChanged {
+                        index: idx,
+                        description: desc,
+                    }
+                } else {
+                    KeyboardNavigationResult::Ignored
+                }
+            }
+            0x25 | 0x26 => {
+                // VK_LEFT (0x25) or VK_UP (0x26)
+                if let Some(idx) = self.focus_prev(regions) {
+                    let desc = regions[idx].accessible_description();
+                    KeyboardNavigationResult::FocusChanged {
+                        index: idx,
+                        description: desc,
+                    }
+                } else {
+                    KeyboardNavigationResult::Ignored
+                }
+            }
+            0x0D | 0x20 => {
+                // VK_RETURN (0x0D) or VK_SPACE (0x20)
+                if let Some(action) = self.activate_focused(regions) {
+                    KeyboardNavigationResult::Activated { action }
+                } else {
+                    KeyboardNavigationResult::Ignored
+                }
+            }
+            _ => KeyboardNavigationResult::Ignored,
+        }
+    }
+
     /// User enters temporary interactive mode with configured timeout in seconds.
     pub fn enter_temporary_mode(&mut self, timeout_seconds: u32) {
         let now = Utc::now();
@@ -94,6 +305,8 @@ impl InteractionController {
         self.session_start = Some(now);
         self.session_deadline = Some(now + Duration::seconds(timeout_seconds as i64));
         self.last_dismissal = None;
+        self.focused_region_index = None;
+        self.pending_announcements.clear();
     }
 
     /// User enters visual layout editing mode.
@@ -102,6 +315,8 @@ impl InteractionController {
         self.session_start = Some(Utc::now());
         self.session_deadline = None;
         self.last_dismissal = None;
+        self.focused_region_index = None;
+        self.pending_announcements.clear();
     }
 
     /// Returns to locked/passive default with an explicit reason.
@@ -110,6 +325,8 @@ impl InteractionController {
         self.session_start = None;
         self.session_deadline = None;
         self.last_dismissal = Some(reason);
+        self.focused_region_index = None;
+        self.pending_announcements.clear();
     }
 
     /// Returns to locked/passive default.
@@ -375,5 +592,158 @@ mod tests {
             controller.last_dismissal(),
             Some(DismissalReason::ClickOutside)
         );
+    }
+
+    #[test]
+    fn test_interactive_region_accessibility_metadata_and_description() {
+        // 1. Button with action and accessible name
+        let play_btn = InteractiveRegion::new(
+            "btn_play",
+            10.0,
+            10.0,
+            50.0,
+            30.0,
+            Some("media.play".into()),
+        )
+        .with_accessibility("Play", "button", None);
+        assert_eq!(
+            play_btn.accessible_description(),
+            "Play button, action: media.play"
+        );
+
+        // 2. Status widget with value
+        let cpu_widget = InteractiveRegion::new("cpu_gauge", 70.0, 10.0, 100.0, 40.0, None)
+            .with_accessibility("CPU Load", "progressbar", Some("24%".into()));
+        assert_eq!(
+            cpu_widget.accessible_description(),
+            "CPU Load: 24%, role: progressbar"
+        );
+
+        // 3. Fallback when accessibility unset
+        let raw_widget = InteractiveRegion::new("clock_text", 180.0, 10.0, 80.0, 30.0, None);
+        assert_eq!(raw_widget.accessible_description(), "clock_text widget");
+    }
+
+    #[test]
+    fn test_keyboard_navigation_tab_and_shift_tab_focus_cycle() {
+        let mut controller = InteractionController::new();
+        let regions = vec![
+            InteractiveRegion::new("prev", 0.0, 0.0, 40.0, 30.0, Some("media.prev".into()))
+                .with_accessibility("Previous Track", "button", None),
+            InteractiveRegion::new("play", 50.0, 0.0, 40.0, 30.0, Some("media.play".into()))
+                .with_accessibility("Play", "button", None),
+            InteractiveRegion::new("next", 100.0, 0.0, 40.0, 30.0, Some("media.next".into()))
+                .with_accessibility("Next Track", "button", None),
+        ];
+
+        controller.enter_temporary_mode(10);
+        assert_eq!(controller.focused_region_index(), None);
+
+        // 1. Tab -> Focus index 0 (Previous)
+        let res = controller.handle_keyboard_navigation(0x09, false, &regions);
+        assert!(matches!(
+            res,
+            KeyboardNavigationResult::FocusChanged { index: 0, .. }
+        ));
+        assert_eq!(controller.focused_region_index(), Some(0));
+
+        // 2. Tab -> Focus index 1 (Play)
+        let res = controller.handle_keyboard_navigation(0x09, false, &regions);
+        assert!(matches!(
+            res,
+            KeyboardNavigationResult::FocusChanged { index: 1, .. }
+        ));
+        assert_eq!(controller.focused_region_index(), Some(1));
+
+        // 3. Tab -> Focus index 2 (Next)
+        let res = controller.handle_keyboard_navigation(0x09, false, &regions);
+        assert!(matches!(
+            res,
+            KeyboardNavigationResult::FocusChanged { index: 2, .. }
+        ));
+        assert_eq!(controller.focused_region_index(), Some(2));
+
+        // 4. Tab wraps around -> Focus index 0 (Previous)
+        let res = controller.handle_keyboard_navigation(0x09, false, &regions);
+        assert!(matches!(
+            res,
+            KeyboardNavigationResult::FocusChanged { index: 0, .. }
+        ));
+        assert_eq!(controller.focused_region_index(), Some(0));
+
+        // 5. Shift+Tab wraps backwards -> Focus index 2 (Next)
+        let res = controller.handle_keyboard_navigation(0x09, true, &regions);
+        assert!(matches!(
+            res,
+            KeyboardNavigationResult::FocusChanged { index: 2, .. }
+        ));
+        assert_eq!(controller.focused_region_index(), Some(2));
+
+        // 6. Shift+Tab -> Focus index 1 (Play)
+        let res = controller.handle_keyboard_navigation(0x09, true, &regions);
+        assert!(matches!(
+            res,
+            KeyboardNavigationResult::FocusChanged { index: 1, .. }
+        ));
+        assert_eq!(controller.focused_region_index(), Some(1));
+    }
+
+    #[test]
+    fn test_keyboard_navigation_activation_with_enter_and_space() {
+        let mut controller = InteractionController::new();
+        let regions =
+            vec![
+                InteractiveRegion::new("mute", 0.0, 0.0, 40.0, 30.0, Some("audio.mute".into()))
+                    .with_accessibility("Mute Audio", "button", None),
+            ];
+
+        controller.enter_temporary_mode(10);
+        controller.focus_next(&regions);
+        assert_eq!(controller.focused_region_index(), Some(0));
+
+        // Enter key activates
+        let res = controller.handle_keyboard_navigation(0x0D, false, &regions);
+        assert_eq!(
+            res,
+            KeyboardNavigationResult::Activated {
+                action: "audio.mute".into()
+            }
+        );
+
+        // Space key activates
+        let res = controller.handle_keyboard_navigation(0x20, false, &regions);
+        assert_eq!(
+            res,
+            KeyboardNavigationResult::Activated {
+                action: "audio.mute".into()
+            }
+        );
+
+        // Escape dismisses
+        let res = controller.handle_keyboard_navigation(0x1B, false, &regions);
+        assert_eq!(
+            res,
+            KeyboardNavigationResult::Dismissed(DismissalReason::EscapeKey)
+        );
+        assert_eq!(controller.current_mode(), InteractionMode::LockedPassive);
+        assert_eq!(controller.focused_region_index(), None);
+    }
+
+    #[test]
+    fn test_accessible_announcements_drain() {
+        let mut controller = InteractionController::new();
+        let regions = vec![
+            InteractiveRegion::new("btn", 0.0, 0.0, 10.0, 10.0, Some("act".into()))
+                .with_accessibility("Test Button", "button", None),
+        ];
+
+        controller.enter_temporary_mode(10);
+        controller.focus_next(&regions);
+
+        let ann = controller.pop_accessible_announcement();
+        assert!(ann.is_some());
+        assert!(ann.unwrap().contains("Test Button"));
+
+        assert_eq!(controller.pop_accessible_announcement(), None);
     }
 }
