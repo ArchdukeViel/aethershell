@@ -77,10 +77,10 @@ pub enum WindowsBuildFamily {
 impl WindowsBuildFamily {
     pub fn from_build(build: u32) -> Self {
         match build {
-            19045 => Self::Win10_22H2,
+            19041..=19045 => Self::Win10_22H2,
             22000 => Self::Win11_21H2,
-            22621 => Self::Win11_22H2,
-            22631 => Self::Win11_23H2,
+            22621..=22624 => Self::Win11_22H2,
+            22631..=22635 => Self::Win11_23H2,
             26100 => Self::Win11_24H2,
             26200 => Self::Win11_25H2,
             26300 => Self::Win11_26H2,
@@ -122,6 +122,14 @@ impl WindowsBuildFamily {
             Self::Win10_22H2 => false,
             Self::Unknown(b) if *b < 22000 => false,
             _ => true,
+        }
+    }
+
+    pub fn is_windows_10(&self) -> bool {
+        match self {
+            Self::Win10_22H2 => true,
+            Self::Unknown(b) if (10240..22000).contains(b) => true,
+            _ => false,
         }
     }
 
@@ -704,5 +712,34 @@ mod tests {
         assert!(!old_win10.tier_capabilities().supports_per_monitor_v2);
         let creators_win10 = WindowsBuildFamily::Unknown(15063);
         assert!(creators_win10.tier_capabilities().supports_per_monitor_v2);
+
+        // 10. Windows 10 servicing range (19041..=19045) and is_windows_10()
+        for b in 19041..=19045 {
+            let fam = WindowsBuildFamily::from_build(b);
+            assert_eq!(fam, WindowsBuildFamily::Win10_22H2);
+            assert!(fam.is_windows_10());
+            assert!(!fam.is_windows_11());
+            assert_eq!(fam.taskbar_architecture(), TaskbarArchitecture::LegacyWin32);
+        }
+
+        // 11. Windows 11 servicing builds
+        assert_eq!(
+            WindowsBuildFamily::from_build(22621),
+            WindowsBuildFamily::Win11_22H2
+        );
+        assert_eq!(
+            WindowsBuildFamily::from_build(22624),
+            WindowsBuildFamily::Win11_22H2
+        );
+        assert_eq!(
+            WindowsBuildFamily::from_build(22631),
+            WindowsBuildFamily::Win11_23H2
+        );
+        assert_eq!(
+            WindowsBuildFamily::from_build(22635),
+            WindowsBuildFamily::Win11_23H2
+        );
+        assert!(WindowsBuildFamily::Win11_26H2.is_windows_11());
+        assert!(!WindowsBuildFamily::Win11_26H2.is_windows_10());
     }
 }
