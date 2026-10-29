@@ -16,7 +16,7 @@ use aethershell_renderer::{
     CanvasRenderer, D2D1CanvasRenderer, LayoutEngine, ResolvedNode, SceneGraph,
 };
 use aethershell_script_host::ScriptSupervisor;
-use aethershell_taskbar::TaskbarCoordinator;
+use aethershell_taskbar::{ExternalAppearanceBackend, TaskbarCoordinator};
 use aethershell_telemetry::TelemetryRegistry;
 use aethershell_win::{
     enumerate_monitors, probe_desktop_hierarchy, probe_taskbars, SessionSingletonGuard, ShellEvent,
@@ -78,10 +78,13 @@ impl AppEngine {
         config_manager: ConfigManager,
         initial_config: AppConfig,
     ) -> Self {
+        let os_info = WindowsVersionInfo::detect();
         Self {
-            os_info: WindowsVersionInfo::detect(),
+            os_info: os_info.clone(),
             interaction: Arc::new(Mutex::new(InteractionController::new())),
-            taskbar: Arc::new(Mutex::new(TaskbarCoordinator::new())),
+            taskbar: Arc::new(Mutex::new(TaskbarCoordinator::with_backend(Box::new(
+                ExternalAppearanceBackend::with_version_and_verification(os_info, false),
+            )))),
             telemetry: Arc::new(Mutex::new(TelemetryRegistry::new())),
             audio: Arc::new(Mutex::new(WasapiLoopbackCapture::new(
                 32,
@@ -1161,6 +1164,7 @@ impl AppEngine {
                     "get_capabilities" => {
                         let taskbars = probe_taskbars();
                         let desktop = probe_desktop_hierarchy();
+                        let caps = os_info.family.tier_capabilities();
                         IpcResponse::ok(
                             req.message_id,
                             serde_json::json!({
@@ -1169,8 +1173,8 @@ impl AppEngine {
                                 "os_tier": os_info.family.tier_id(),
                                 "is_v1_supported": os_info.is_supported_v1,
                                 "taskbar_architecture": os_info.family.taskbar_architecture().to_string(),
-                                "per_monitor_v2_dpi_aware": true,
-                                "direct2d_available": true,
+                                "per_monitor_v2_dpi_aware": caps.supports_per_monitor_v2,
+                                "direct2d_available": caps.supports_direct2d_1_1,
                                 "taskbar_count": taskbars.len(),
                                 "desktop_layering_available": desktop.shelldll_defview_hwnd.is_some(),
                                 "audio_spectrum_enabled": true,

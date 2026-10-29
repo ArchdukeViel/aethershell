@@ -270,7 +270,7 @@ try {
         $testExit = $LASTEXITCODE
 
         if ($testExit -eq 0 -and $totalTiers -eq 7 -and $supportedCount -eq 6) {
-            Record-GateResult "G02" "Windows Compatibility & OS Matrix" "PASSED" "7-tier OS matrix validated ($supportedCount v1 supported, $($matrixReport.SpecialTiers) special); host build $hostBuild ($matchStatus); honest fallback contracts and PerMonitorV2 DPI awareness verified across 8 automated tests."
+            Record-GateResult "G02" "Windows Compatibility & OS Matrix" "PASSED" "7-tier OS matrix validated ($supportedCount v1 supported, $($matrixReport.SpecialTiers) special); host build $hostBuild ($matchStatus); honest fallback contracts and PerMonitorV2 DPI awareness verified across 9 automated tests."
         } else {
             Record-GateResult "G02" "Windows Compatibility & OS Matrix" "FAILED" "Matrix test exit=$testExit, totalTiers=$totalTiers, supportedCount=$supportedCount"
         }

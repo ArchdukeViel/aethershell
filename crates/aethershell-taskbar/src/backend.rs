@@ -115,6 +115,49 @@ impl TaskbarBackend for ExternalAppearanceBackend {
         state: MonitorTaskbarState,
         effect: TaskbarEffect,
     ) -> Result<TaskbarResolution, TaskbarBackendError> {
+        // Honest state-based fallbacks (PRD Section 4.1 TB-04, Section 2.2 [S05], Section 4.3)
+        if effect != TaskbarEffect::NativeNoop {
+            match state {
+                MonitorTaskbarState::BatterySaver => {
+                    return Ok(TaskbarResolution {
+                        monitor_id: monitor_id.to_string(),
+                        state,
+                        requested_effect: effect,
+                        applied_effect: TaskbarEffect::NativeNoop,
+                        backend: "external_appearance".into(),
+                        fallback_reason: Some(
+                            "Battery saver active; taskbar composition effects suppressed per PRD Section 2.2 [S05] / TB-04".into(),
+                        ),
+                    });
+                }
+                MonitorTaskbarState::Suspended => {
+                    return Ok(TaskbarResolution {
+                        monitor_id: monitor_id.to_string(),
+                        state,
+                        requested_effect: effect,
+                        applied_effect: TaskbarEffect::NativeNoop,
+                        backend: "external_appearance".into(),
+                        fallback_reason: Some(
+                            "Presentation suspended; taskbar composition suppressed per PRD Section 4.3".into(),
+                        ),
+                    });
+                }
+                MonitorTaskbarState::ExplorerUnavailable | MonitorTaskbarState::Disconnected => {
+                    return Ok(TaskbarResolution {
+                        monitor_id: monitor_id.to_string(),
+                        state,
+                        requested_effect: effect,
+                        applied_effect: TaskbarEffect::NativeNoop,
+                        backend: "external_appearance".into(),
+                        fallback_reason: Some(
+                            "Explorer shell or display unavailable; taskbar mutations safely routed to native_noop per PRD Section 4.3".into(),
+                        ),
+                    });
+                }
+                _ => {}
+            }
+        }
+
         let verdict = self
             .version_info
             .family
@@ -295,5 +338,68 @@ mod tests {
             .fallback_reason
             .unwrap()
             .contains("outside authoritative PRD Section 2.1 matrix"));
+    }
+
+    #[test]
+    fn test_external_backend_win11_21h2_fallback() {
+        let win11_21h2 = make_test_version(WindowsBuildFamily::Win11_21H2);
+        let mut backend =
+            ExternalAppearanceBackend::with_version_and_verification(win11_21h2, true);
+        let res = backend
+            .apply_effect("mon-1", MonitorTaskbarState::Desktop, TaskbarEffect::Clear)
+            .unwrap();
+        assert_eq!(res.applied_effect, TaskbarEffect::NativeNoop);
+        assert!(res
+            .fallback_reason
+            .unwrap()
+            .contains("below initial Windows 11 baseline"));
+    }
+
+    #[test]
+    fn test_external_backend_runtime_states_fallback() {
+        let win11 = make_test_version(WindowsBuildFamily::Win11_26H2);
+        let mut backend = ExternalAppearanceBackend::with_version_and_verification(win11, true);
+
+        // 1. BatterySaver forces NativeNoop even when verified
+        let res_battery = backend
+            .apply_effect(
+                "mon-1",
+                MonitorTaskbarState::BatterySaver,
+                TaskbarEffect::Clear,
+            )
+            .unwrap();
+        assert_eq!(res_battery.applied_effect, TaskbarEffect::NativeNoop);
+        assert!(res_battery
+            .fallback_reason
+            .unwrap()
+            .contains("Battery saver active"));
+
+        // 2. Suspended forces NativeNoop
+        let res_suspended = backend
+            .apply_effect(
+                "mon-1",
+                MonitorTaskbarState::Suspended,
+                TaskbarEffect::Clear,
+            )
+            .unwrap();
+        assert_eq!(res_suspended.applied_effect, TaskbarEffect::NativeNoop);
+        assert!(res_suspended
+            .fallback_reason
+            .unwrap()
+            .contains("Presentation suspended"));
+
+        // 3. ExplorerUnavailable forces NativeNoop
+        let res_exp = backend
+            .apply_effect(
+                "mon-1",
+                MonitorTaskbarState::ExplorerUnavailable,
+                TaskbarEffect::Clear,
+            )
+            .unwrap();
+        assert_eq!(res_exp.applied_effect, TaskbarEffect::NativeNoop);
+        assert!(res_exp
+            .fallback_reason
+            .unwrap()
+            .contains("Explorer shell or display unavailable"));
     }
 }

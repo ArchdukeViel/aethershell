@@ -1,7 +1,7 @@
 {
     "LedgerType":  "AetherShellFinalReleaseAcceptanceLedger",
     "Version":  "0.1.0-dev",
-    "GeneratedAt":  "2026-10-29T20:44:42.7323599+07:00",
+    "GeneratedAt":  "2026-10-29T21:08:27.2667132+07:00",
     "ReleaseDisposition":  "NO-GO",
     "CoreStableCandidate":  false,
     "ProductionVersionTag":  "RESERVED (v1.0.0)",
@@ -14,9 +14,9 @@
                                   "Deferred":  1
                               },
     "AutomatedTestSummary":  {
-                                 "UniqueCargoTests":  320,
-                                 "PowerShellTests":  75,
-                                 "TotalAutomatedTests":  395,
+                                 "UniqueCargoTests":  325,
+                                 "PowerShellTests":  76,
+                                 "TotalAutomatedTests":  401,
                                  "HostAppDataItems":  0
                              },
     "CryptographicArtifacts":  {
@@ -46,7 +46,7 @@
                                 "PassCondition":  "Required Windows 10/11 x64 matrix; honest fallback on unsupported effects",
                                 "Status":  "VERIFIED",
                                 "Evidence":  "EVD-002, EVD-022, EVD-049, EVD-051",
-                                "Reason":  "7-tier OS matrix specified in PRD Section 2.1 (VM-WIN10-22H2 through VM-WIN11-26H1) verified; registry UBR detection, TaskbarArchitecture modeling (LegacyWin32 vs XamlIsland), PerMonitorV2 dynamic scaling (96 -\u003e 1.0, 144 -\u003e 1.5, 192 -\u003e 2.0), and honest effect fallback contracts (Mica/Acrylic fallback on Win10 per PRD 2.2 [S05], unverified XAML taskbar fallback to NativeNoop per PRD 4.2, special validation tier gating on 26H1) empirically verified across 8 automated regression tests and guest qualification runner."
+                                "Reason":  "7-tier OS matrix specified in PRD Section 2.1 (VM-WIN10-22H2 through VM-WIN11-26H1) verified; registry UBR detection, TaskbarArchitecture modeling (LegacyWin32 vs XamlIsland), PerMonitorV2 dynamic scaling (96 -\u003e 1.0, 144 -\u003e 1.5, 192 -\u003e 2.0), and honest effect fallback contracts (Mica/Acrylic fallback on Win10 per PRD 2.2 [S05], unverified XAML taskbar fallback to NativeNoop per PRD 4.2, special validation tier gating on 26H1, Win11 21H2 below baseline gating, runtime BatterySaver/Suspended fallbacks) empirically verified across 9 automated regression tests and guest qualification runner."
                             },
                             {
                                 "GateId":  "G03",

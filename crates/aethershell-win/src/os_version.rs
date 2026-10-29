@@ -304,7 +304,7 @@ impl WindowsBuildFamily {
                 taskbar_architecture: self.taskbar_architecture(),
                 is_v1_supported: false,
                 is_special_validation_tier: false,
-                supports_per_monitor_v2: *b >= 1703,
+                supports_per_monitor_v2: *b >= 15063, // Windows 10 Creators Update (Version 1703, Build 15063)
                 supports_direct2d_1_1: *b >= 9600,
                 supports_job_object_quotas: true,
                 supports_named_pipe_security: true,
@@ -349,8 +349,7 @@ impl WindowsBuildFamily {
             | Self::Win11_23H2
             | Self::Win11_24H2
             | Self::Win11_25H2
-            | Self::Win11_26H2
-            | Self::Win11_21H2 => {
+            | Self::Win11_26H2 => {
                 if is_capability_verified {
                     EffectSupportVerdict::Supported
                 } else {
@@ -363,6 +362,10 @@ impl WindowsBuildFamily {
                     }
                 }
             }
+            Self::Win11_21H2 => EffectSupportVerdict::UnsupportedFallback {
+                reason: "Windows 11 21H2 (Build 22000) is below initial Windows 11 baseline; evaluate separately per PRD Section 2.1; safely routed to native_noop".into(),
+                target_effect: TaskbarEffect::NativeNoop,
+            },
             Self::Win11_26H1 => EffectSupportVerdict::UnsupportedFallback {
                 reason: "Windows 11 26H1 (Build 28000) is a special validation tier outside v1.0.0 production baseline; safely routed to native_noop per PRD Section 2.1".into(),
                 target_effect: TaskbarEffect::NativeNoop,
@@ -674,7 +677,18 @@ mod tests {
             assert!(reason.contains("special validation tier outside v1.0.0 production baseline"));
         }
 
-        // 7. Unknown build falls back honestly
+        // 7. Win11 21H2 below initial baseline honestly falls back even if verified
+        let win11_21h2 = WindowsBuildFamily::Win11_21H2;
+        let res_21h2 = win11_21h2.evaluate_taskbar_effect(TaskbarEffect::Clear, true);
+        assert!(matches!(
+            res_21h2,
+            EffectSupportVerdict::UnsupportedFallback { .. }
+        ));
+        if let EffectSupportVerdict::UnsupportedFallback { reason, .. } = res_21h2 {
+            assert!(reason.contains("below initial Windows 11 baseline"));
+        }
+
+        // 8. Unknown build falls back honestly
         let unknown = WindowsBuildFamily::Unknown(99999);
         let unknown_res = unknown.evaluate_taskbar_effect(TaskbarEffect::Clear, true);
         assert!(matches!(
@@ -684,5 +698,11 @@ mod tests {
         if let EffectSupportVerdict::UnsupportedFallback { reason, .. } = unknown_res {
             assert!(reason.contains("outside authoritative PRD Section 2.1 matrix"));
         }
+
+        // 9. PerMonitorV2 capability boundary: Build 10240 (1507) false, Build 15063 (1703) true
+        let old_win10 = WindowsBuildFamily::Unknown(10240);
+        assert!(!old_win10.tier_capabilities().supports_per_monitor_v2);
+        let creators_win10 = WindowsBuildFamily::Unknown(15063);
+        assert!(creators_win10.tier_capabilities().supports_per_monitor_v2);
     }
 }

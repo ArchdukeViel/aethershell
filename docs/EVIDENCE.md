@@ -1908,37 +1908,45 @@ This document maintains verifiable test and validation records. Every entry is t
      - Defined `EffectSupportVerdict` enum: `SupportedNative`, `UnsupportedFallbackNoop { reason: &'static str }`.
      - Defined `OsTierCapabilities` struct with properties: `tier_id`, `taskbar_architecture`, `per_monitor_v2_dpi_aware`, `direct2d_available`, `job_object_containment`, `utf8_bom_free_storage`, `is_v1_supported`, and `honest_fallback_contract`.
      - Implemented `tier_id()`, `all_authoritative_tiers()`, `tier_capabilities()`, and `evaluate_taskbar_effect(effect, is_capability_verified)`.
+     - Corrected PerMonitorV2 build threshold for unknown builds to 15063 (Windows 10 Creators Update / Version 1703).
+     - Separated Windows 11 21H2 (Build 22000) into dedicated honest fallback citing PRD Section 2.1 below-baseline designation.
   2. **Honest Fallback Contract in Appearance Backend (`crates/aethershell-taskbar/src/backend.rs`)**:
      - Upgraded `ExternalAppearanceBackend` with `with_version_and_verification()` constructor accepting `WindowsVersionInfo` and capability verification flag.
-     - Wired `apply_effect()` to call `tier_capabilities.evaluate_taskbar_effect()`:
+     - Wired `apply_effect()` to call `tier_capabilities.evaluate_taskbar_effect()` and evaluate runtime states:
        - On Windows 10 (`Shell_TrayWnd`), Acrylic and Mica are unsupported and fall back honestly to `NativeNoop` citing PRD Section 2.2 [S05] / TB-03.
        - On Windows 11 (`DesktopWindowContentBridge`), external non-invasive modification of child XAML brushes without VM verification safely falls back to `NativeNoop` citing PRD Section 4.2.
        - On special validation tier Build 28000 (`VM-WIN11-26H1`), non-native effects fall back to `NativeNoop` citing PRD Section 2.1.
+       - On Windows 11 21H2 (Build 22000), effects fall back honestly to `NativeNoop` citing PRD Section 2.1 below-baseline designation.
        - On unknown builds, effects fall back honestly to `NativeNoop` citing PRD Section 2.1 unknown build contract.
-     - Added 4 unit tests in `crates/aethershell-taskbar/src/backend.rs` covering all fallback and pass branches (8/8 backend unit tests passing).
-  3. **IPC Endpoint Capabilities Enrichment (`crates/aethershell-app/src/engine.rs`)**:
-     - Enriched `get_capabilities` IPC query response to report:
+       - On runtime states `BatterySaver`, `Suspended`, and `ExplorerUnavailable`, effects safely fall back to `NativeNoop` per PRD Section 4.1 TB-04 and Section 4.3.
+     - Added unit tests in `crates/aethershell-taskbar/src/backend.rs` covering all fallback, runtime state, and pass branches (10/10 backend unit tests passing).
+  3. **IPC Endpoint Capabilities Enrichment & Core Engine Wiring (`crates/aethershell-app/src/engine.rs`)**:
+     - Enriched `get_capabilities` IPC query response to report dynamic capabilities from `tier_capabilities()`:
        `os_family`, `os_tier`, `is_v1_supported`, `taskbar_architecture`, `per_monitor_v2_dpi_aware`, and `direct2d_available`.
+     - Wired `AppEngine` default taskbar coordinator to `ExternalAppearanceBackend::with_version_and_verification(os_info, false)` to enforce honest fallback in live engine state machines.
   4. **Dedicated Cargo Integration Test Suite (`crates/aethershell-app/tests/os_matrix_compatibility_integration_test.rs`)**:
-     - Added 5 end-to-end integration tests:
-       - `test_os_matrix_all_seven_tiers_formalized`: validates all 7 PRD Section 2.1 tiers, architecture detection, Direct2D availability, and PerMonitorV2 awareness.
-       - `test_os_matrix_honest_fallback_contract_enforcement`: validates honest fallback across Win10, Win11 unverified, Win11 verified, Build 28000, and unknown builds.
-       - `test_os_matrix_dpi_awareness_and_scaling_matrix`: validates PerMonitorV2 awareness declaration and dynamic scaling factors across 96 DPI (100%), 120 DPI (125%), 144 DPI (150%), 168 DPI (175%), 192 DPI (200%), and 288 DPI (300%).
-       - `test_os_matrix_desktop_hierarchy_probe`: validates `Progman` / `WorkerW` discovery and non-invasive desktop overlay parentage.
-       - `test_os_matrix_host_appdata_zero_pollution`: validates `%LOCALAPPDATA%\AetherShell` is strictly unpolluted (0 items).
+     - Added 8 end-to-end integration tests:
+       - `test_os_matrix_seven_tiers_capability_contracts`: validates all 7 PRD Section 2.1 tiers, architecture detection, Direct2D availability, and PerMonitorV2 awareness.
+       - `test_honest_taskbar_effects_fallback_across_all_tiers`: validates honest fallback across Win10, Win11 unverified, Win11 verified, Build 28000, and unknown builds.
+       - `test_per_monitor_v2_dpi_awareness_and_scaling_conversions`: validates PerMonitorV2 awareness declaration and dynamic scaling factors across 96 DPI (100%), 120 DPI (125%), 144 DPI (150%), and 192 DPI (200%).
+       - `test_desktop_hierarchy_probe_contract`: validates `Progman` / `WorkerW` discovery and non-invasive desktop overlay parentage.
+       - `test_host_appdata_isolation_clean_at_zero_items`: validates `%LOCALAPPDATA%\AetherShell` is strictly unpolluted (0 items).
+       - `test_win11_21h2_and_unknown_builds_boundary_fallbacks`: validates Build 22000 below baseline fallback and Build 10240 vs 15063 PerMonitorV2 boundary.
+       - `test_taskbar_runtime_states_honest_fallback`: validates BatterySaver, Suspended, and ExplorerUnavailable fallback routing.
+       - `test_app_engine_default_coordinator_uses_external_appearance_with_os_info`: validates AppEngine default coordinator wiring and honest fallback diagnostics.
   5. **Auditor & PowerShell Regression Harnesses**:
      - Standardized `scripts/audit_os_matrix_compatibility.ps1` to use authoritative PRD Section 2.1 tier IDs (`VM-WIN10-22H2` through `VM-WIN11-26H1`), including `HonestFallbackContract` and `TaskbarArchitecture` in the report schema.
-     - Expanded `tests/os_matrix_compatibility_tests.ps1` to 8 comprehensive regression tests (100% pass).
+     - Expanded `tests/os_matrix_compatibility_tests.ps1` to 9 comprehensive regression tests (100% pass).
      - Integrated Gate G02 qualification into `scripts/guest_sandbox_qualification.ps1` Test 2 (matrix audit, PerMonitorV2 DPI awareness, and honest fallback contract validation).
      - Updated `tests/disposable_vm_qualification_tests.ps1` (5/5 passed).
 - **Verification & Test Results**:
   - `cargo test -p aethershell-win --lib os_version::tests`: 21/21 passed cleanly.
-  - `cargo test -p aethershell-taskbar --lib backend::tests`: 8/8 passed cleanly.
-  - `cargo test -p aethershell-app --test os_matrix_compatibility_integration_test`: 5/5 passed cleanly.
-  - `cargo test --workspace`: 320 unique Cargo tests (199 unit + 121 integration across 28 test executables in 13 member crates) passed cleanly with 0 failures, 0 warnings.
-  - `powershell -File tests/os_matrix_compatibility_tests.ps1`: 8/8 passed cleanly.
+  - `cargo test -p aethershell-taskbar --lib backend::tests`: 10/10 passed cleanly.
+  - `cargo test -p aethershell-app --test os_matrix_compatibility_integration_test`: 8/8 passed cleanly.
+  - `cargo test --workspace`: 325 unique Cargo tests (201 unit + 124 integration across 28 test executables in 13 member crates) passed cleanly with 0 failures, 0 warnings.
+  - `powershell -File tests/os_matrix_compatibility_tests.ps1`: 9/9 passed cleanly.
   - `powershell -File scripts/guest_sandbox_qualification.ps1 -SkipExplorerKill -Strict`: Gate G02 PASSED (9 passed, 0 failed, 1 skipped).
   - `powershell -File tests/disposable_vm_qualification_tests.ps1`: 5/5 passed cleanly.
-  - All 13 PowerShell test suites: 75/75 passed cleanly (395 total automated tests across Rust and PowerShell).
+  - All 13 PowerShell test suites: 76/76 passed cleanly (401 total automated tests across Rust and PowerShell).
   - Host AppData `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
 - **Evidentiary Verdict & Status**: `passed`. Gate G02 achieves complete qualification and transitions to `VERIFIED`.

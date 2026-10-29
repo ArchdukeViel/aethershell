@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary & Objective
 
-AetherShell has achieved clean component-level unit and integration test verification across its 13 workspace crates (320 unique passing tests across 28 test executables + 75 passing PowerShell regression tests across 13 test suites = 395 total passing automated tests). Gates G01 and G02 are empirically `VERIFIED` across live subprocess, 7-tier OS matrix capabilities, honest fallback contracts, dynamic DPI scaling, and guest qualification harnesses. However, under the strict evidentiary governance defined in **PRD Section 18.2** and **AGENTS.md**, **subsequent disruptive shell and hardware gates require isolated disposable VM and bare-metal qualification before transitioning to `VERIFIED`**.
+AetherShell has achieved clean component-level unit and integration test verification across its 13 workspace crates (325 unique passing tests across 28 test executables + 76 passing PowerShell regression tests across 13 test suites = 401 total passing automated tests). Gates G01 and G02 are empirically `VERIFIED` across live subprocess, 7-tier OS matrix capabilities, honest fallback contracts, dynamic DPI scaling, and guest qualification harnesses. However, under the strict evidentiary governance defined in **PRD Section 18.2** and **AGENTS.md**, **subsequent disruptive shell and hardware gates require isolated disposable VM and bare-metal qualification before transitioning to `VERIFIED`**.
 
 The objective of this Qualification Plan is to establish a rigorous, repeatable, and non-destructive empirical test campaign to evaluate AetherShell across:
 1. Isolated, disposable Windows Virtual Machines (VMs) for disruptive shell and fault-injection testing.

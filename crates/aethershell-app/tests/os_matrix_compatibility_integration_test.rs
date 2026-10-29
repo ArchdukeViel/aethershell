@@ -1,4 +1,5 @@
-use aethershell_core::TaskbarEffect;
+use aethershell_app::AppEngine;
+use aethershell_core::{MonitorTaskbarState, TaskbarEffect};
 use aethershell_taskbar::{ExternalAppearanceBackend, TaskbarBackend};
 use aethershell_win::{
     dpi_to_scale_factor, probe_desktop_hierarchy, scale_dip_to_pixels, scale_pixels_to_dip,
@@ -232,4 +233,89 @@ fn test_host_appdata_isolation_clean_at_zero_items() {
             );
         }
     }
+}
+
+#[test]
+fn test_win11_21h2_and_unknown_builds_boundary_fallbacks() {
+    // Win11 21H2 (Build 22000) is below initial baseline per PRD 2.1
+    let win11_21h2 = make_test_version(WindowsBuildFamily::Win11_21H2);
+    let mut backend_21h2 =
+        ExternalAppearanceBackend::with_version_and_verification(win11_21h2, true);
+    let res = backend_21h2
+        .apply_effect("mon-1", MonitorTaskbarState::Desktop, TaskbarEffect::Clear)
+        .unwrap();
+    assert_eq!(res.applied_effect, TaskbarEffect::NativeNoop);
+    assert!(res
+        .fallback_reason
+        .unwrap()
+        .contains("below initial Windows 11 baseline"));
+
+    // Old Win10 (Build 10240) does not support PerMonitorV2
+    let old_win10 = WindowsBuildFamily::Unknown(10240);
+    assert!(!old_win10.tier_capabilities().supports_per_monitor_v2);
+
+    // Creators Update (Build 15063) introduced PerMonitorV2
+    let creators = WindowsBuildFamily::Unknown(15063);
+    assert!(creators.tier_capabilities().supports_per_monitor_v2);
+}
+
+#[test]
+fn test_taskbar_runtime_states_honest_fallback() {
+    let win11 = make_test_version(WindowsBuildFamily::Win11_26H2);
+    let mut backend = ExternalAppearanceBackend::with_version_and_verification(win11, true);
+
+    // BatterySaver forces NativeNoop
+    let res_batt = backend
+        .apply_effect(
+            "mon-1",
+            MonitorTaskbarState::BatterySaver,
+            TaskbarEffect::Clear,
+        )
+        .unwrap();
+    assert_eq!(res_batt.applied_effect, TaskbarEffect::NativeNoop);
+    assert!(res_batt
+        .fallback_reason
+        .unwrap()
+        .contains("Battery saver active"));
+
+    // Suspended forces NativeNoop
+    let res_susp = backend
+        .apply_effect(
+            "mon-1",
+            MonitorTaskbarState::Suspended,
+            TaskbarEffect::Clear,
+        )
+        .unwrap();
+    assert_eq!(res_susp.applied_effect, TaskbarEffect::NativeNoop);
+    assert!(res_susp
+        .fallback_reason
+        .unwrap()
+        .contains("Presentation suspended"));
+
+    // ExplorerUnavailable forces NativeNoop
+    let res_exp = backend
+        .apply_effect(
+            "mon-1",
+            MonitorTaskbarState::ExplorerUnavailable,
+            TaskbarEffect::Clear,
+        )
+        .unwrap();
+    assert_eq!(res_exp.applied_effect, TaskbarEffect::NativeNoop);
+    assert!(res_exp
+        .fallback_reason
+        .unwrap()
+        .contains("Explorer shell or display unavailable"));
+}
+
+#[tokio::test]
+async fn test_app_engine_default_coordinator_uses_external_appearance_with_os_info() {
+    let engine = AppEngine::new();
+    let taskbar = engine.taskbar();
+    let mut tb = taskbar.lock().await;
+
+    // Evaluates effect through ExternalAppearanceBackend which is wired to detected os_info
+    let res = tb.evaluate_and_apply("DISPLAY1", MonitorTaskbarState::Desktop);
+    assert_eq!(res.applied_effect, TaskbarEffect::NativeNoop);
+    assert_eq!(res.backend, "external_appearance");
+    assert!(res.fallback_reason.is_some());
 }

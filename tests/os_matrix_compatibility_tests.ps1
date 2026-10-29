@@ -253,6 +253,28 @@ Run-TestCase "Verify production %LOCALAPPDATA%\AetherShell is preserved at stric
 }
 
 # -----------------------------------------------------------------------------
+# Test 9: AppEngine default coordinator initializes with ExternalAppearanceBackend
+# -----------------------------------------------------------------------------
+Run-TestCase "AppEngine default coordinator initializes with ExternalAppearanceBackend and honest fallback" {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = cmd /c "cargo test --test os_matrix_compatibility_integration_test test_app_engine_default_coordinator_uses_external_appearance_with_os_info 2>&1"
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    $outStr = ($out | Out-String)
+
+    if ($exitCode -ne 0) {
+        throw "cargo test failed with exit code ${exitCode}: $outStr"
+    }
+    if ($outStr -notmatch "test result: ok\.") {
+        throw "Expected 'test result: ok.', got: $outStr"
+    }
+}
+
+# -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
 Write-Host "--------------------------------------------------------------------------------" -ForegroundColor Cyan

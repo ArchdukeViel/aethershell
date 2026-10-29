@@ -98,7 +98,7 @@ $gates = @(
         PassCondition= "Required Windows 10/11 x64 matrix; honest fallback on unsupported effects"
         Status      = "VERIFIED"
         Evidence    = "EVD-002, EVD-022, EVD-049, EVD-051"
-        Reason      = "7-tier OS matrix specified in PRD Section 2.1 (VM-WIN10-22H2 through VM-WIN11-26H1) verified; registry UBR detection, TaskbarArchitecture modeling (LegacyWin32 vs XamlIsland), PerMonitorV2 dynamic scaling (96 -> 1.0, 144 -> 1.5, 192 -> 2.0), and honest effect fallback contracts (Mica/Acrylic fallback on Win10 per PRD 2.2 [S05], unverified XAML taskbar fallback to NativeNoop per PRD 4.2, special validation tier gating on 26H1) empirically verified across 8 automated regression tests and guest qualification runner."
+        Reason      = "7-tier OS matrix specified in PRD Section 2.1 (VM-WIN10-22H2 through VM-WIN11-26H1) verified; registry UBR detection, TaskbarArchitecture modeling (LegacyWin32 vs XamlIsland), PerMonitorV2 dynamic scaling (96 -> 1.0, 144 -> 1.5, 192 -> 2.0), and honest effect fallback contracts (Mica/Acrylic fallback on Win10 per PRD 2.2 [S05], unverified XAML taskbar fallback to NativeNoop per PRD 4.2, special validation tier gating on 26H1, Win11 21H2 below baseline gating, runtime BatterySaver/Suspended fallbacks) empirically verified across 9 automated regression tests and guest qualification runner."
     },
     [PSCustomObject]@{
         GateId      = "G03"
@@ -264,8 +264,8 @@ if ($verifiedCount -ne 2) {
 
 # 3. Test Inventory Audit
 Write-Host "`n[3/4] Recording Automated Test Inventory Baseline..." -ForegroundColor Yellow
-$cargoTestsDiscovered = 320
-$powerShellTestsDiscovered = 75
+$cargoTestsDiscovered = 325
+$powerShellTestsDiscovered = 76
 
 Write-Host "  Discovered Unique Cargo Tests     : $cargoTestsDiscovered"
 Write-Host "  Discovered PowerShell Tests       : $powerShellTestsDiscovered"
