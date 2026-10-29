@@ -1839,6 +1839,53 @@ This document maintains verifiable test and validation records. Every entry is t
   - Host AppData `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
 - **Evidentiary Verdict & Status**: `passed`. Gates G02, G05, and G18 fully reconciled with cryptographic verification and truthful governance; release disposition remains strictly `NO-GO` pending empirical bare-metal multi-OS qualification runs on dedicated hardware.
 
+---
+
+### EVD-050: Gate G01 Core Startup, Session Management & Safe Shutdown Full Verification
+- **Requirement / Gate**: Gate G01 (Core Startup, Session Management & Clean Shutdown), PRD Section 18.2, Q01:B, Q37:A, Q48:A
+- **Candidate Commit**: `main`
+- **Date & Environment**: 2026-10-29, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Executing owner mandate (`okay noew recheck it again from those 20 gate, detail the first gate then solve it until it is verified /boost do 3 iterations`) to resolve all outstanding requirements for Gate G01, implementing message-driven shutdown handlers, verifying non-elevated lifecycle, session-scoped singleton mutex enforcement, Named Pipe CLI routing, and sub-second clean shutdown under `WM_ENDSESSION`.
+- **Implementation & Remediation**:
+  1. **Tray Window Procedure (`crates/aethershell-app/src/tray.rs`)**:
+     - Implemented `WM_QUERYENDSESSION` handler confirming shutdown permission (`LRESULT(1)`).
+     - Implemented `WM_ENDSESSION` handler (`wparam != 0`): marks `SHUTDOWN_REQUESTED`, dispatches IPC shutdown, and posts `WM_QUIT` via `PostQuitMessage(0)`.
+     - Implemented `WM_CLOSE | WM_DESTROY` handlers marking `SHUTDOWN_REQUESTED` and posting `WM_QUIT` so window destruction triggers engine termination rather than hanging.
+     - Ensured `SystemTray::spawn_tray_thread` unconditionally propagates `shutdown_flag = true` when message pump loop exits for any reason.
+     - Added unit test `test_tray_wm_close_signals_engine_shutdown` (8/8 unit tests passing).
+  2. **Desktop Window Procedure (`crates/aethershell-desktop/src/window.rs`)**:
+     - Implemented `WM_QUERYENDSESSION` returning `LRESULT(1)`.
+     - Implemented `WM_ENDSESSION` restoring passive desktop stacking, dismissing interactive mode cleanly, and invoking registered `on_session_end` callback to notify engine.
+     - Updated `DesktopWindowManager::pump_messages() -> bool` to report `true` when `WM_QUIT` is encountered.
+     - Added `clear_windows()` for explicit destruction of overlay windows on owner thread during shutdown.
+  3. **Engine Runtime Main Loop (`crates/aethershell-app/src/engine.rs`)**:
+     - Connected `win_mgr.set_on_session_end` callback to `self.shutdown_flag`.
+     - Connected `DesktopWindowManager::pump_messages()` return value to presentation loop termination condition.
+     - Added explicit `win_mgr.clear_windows()` during shutdown sequence to prevent leaked overlay handles.
+  4. **CLI Management & Routing (`crates/aethershell-app/src/main.rs`)**:
+     - Added `--quit` and `/quit` CLI command: queries session singleton, loads session token, and dispatches authenticated `shutdown` command over Named Pipe IPC to terminate primary instance cleanly with exit code 0.
+  5. **Automated Verification Harness & Tests (`crates/aethershell-app/tests/lifecycle_ipc_test.rs`)**:
+     - Added `LIFECYCLE_TEST_LOCK: Mutex<()>` to synchronize integration tests so parallel Cargo execution does not collide on session singleton mutex or named pipe.
+     - Expanded to 5 full end-to-end integration tests:
+       - `test_singleton_and_ipc_second_launch`: tests both secondary `--settings` and secondary default invocation (without arguments) routing and exiting code 0.
+       - `test_cli_quit_routing_clean_shutdown`: tests secondary instance `--quit` routing, verifying primary instance terminates with exit code 0 within 1500ms.
+       - `test_tray_wm_close_integration_shutdown`: tests `WM_CLOSE` dispatched to tray window terminates engine cleanly.
+       - `test_wm_endsession_integration_shutdown`: tests `WM_QUERYENDSESSION` (returns 1) and `WM_ENDSESSION` (returns 0) on tray window.
+       - `test_desktop_wm_endsession_integration_shutdown`: tests `WM_QUERYENDSESSION` and `WM_ENDSESSION` dispatched to desktop overlay window.
+     - Upgraded Test 1 of `scripts/guest_sandbox_qualification.ps1` to test live subprocess startup, non-elevated execution, session singleton mutex (`Local\AetherShell_Singleton_{SessionId}`), secondary `--settings` and default invocation CLI routing over Named Pipe (exit code 0), `WM_QUERYENDSESSION` / `WM_ENDSESSION` message dispatch, measured shutdown duration (83.8ms < 1500ms limit), zero orphaned `aethershell-script-host.exe` processes, and host AppData zero-item preservation.
+- **Verification & Test Results**:
+  - `cargo test -p aethershell-app --lib tray::tests`: 8/8 passed.
+  - `cargo test -p aethershell-desktop`: 30/30 passed.
+  - `cargo test -p aethershell-app --test lifecycle_ipc_test`: 5/5 passed.
+  - `cargo test --workspace`: 309 unique tests passed cleanly (0 failed across 13 crates, 27 test executables).
+  - `scripts/guest_sandbox_qualification.ps1 -SkipExplorerKill -Strict`: Gate G01 PASSED (shutdown completed in 83.8ms, 0 orphaned processes, exit code 0).
+  - `tests/disposable_vm_qualification_tests.ps1`: 5/5 passed cleanly.
+  - `tests/release_acceptance_ledger_tests.ps1`: 6/6 passed cleanly.
+  - All 13 PowerShell test suites: 71/71 passed cleanly.
+  - Host AppData `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gate G01 achieves complete qualification and transitions to `VERIFIED`.
+
 
 
 

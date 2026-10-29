@@ -77,24 +77,33 @@ Run-TestCase "FINAL_RELEASE_ACCEPTANCE_LEDGER.json exists and conforms to schema
 # -----------------------------------------------------------------------------
 # Test 3: Reconciled 20 gates strictly adhere to PRD Section 18.2
 # -----------------------------------------------------------------------------
-Run-TestCase "Gate accounting strictly enforces 0 VERIFIED, 18 PARTIAL, 1 N/A, 1 DEFERRED" {
+Run-TestCase "Gate accounting strictly enforces 1 VERIFIED (G01), 17 PARTIAL, 1 N/A, 1 DEFERRED" {
     $ledgerJson = Get-Content -LiteralPath $ledgerPath -Raw | ConvertFrom-Json
     $summary = $ledgerJson.GateAccountingSummary
 
     if ($summary.TotalGates -ne 20) {
         throw "Expected 20 TotalGates, got: $($summary.TotalGates)"
     }
-    if ($summary.Verified -ne 0) {
-        throw "GOVERNANCE BREACH: Verified count must be strictly 0, got: $($summary.Verified)"
+    if ($summary.Verified -ne 1) {
+        throw "GOVERNANCE BREACH: Verified count must be strictly 1 (Gate G01), got: $($summary.Verified)"
     }
-    if ($summary.PartiallyVerified -ne 18) {
-        throw "Expected 18 PartiallyVerified gates, got: $($summary.PartiallyVerified)"
+    if ($summary.PartiallyVerified -ne 17) {
+        throw "Expected 17 PartiallyVerified gates, got: $($summary.PartiallyVerified)"
     }
     if ($summary.NotApplicable -ne 1) {
         throw "Expected 1 NotApplicable gate (G05), got: $($summary.NotApplicable)"
     }
     if ($summary.Deferred -ne 1) {
         throw "Expected 1 Deferred gate (G15), got: $($summary.Deferred)"
+    }
+
+    # Verify G01 specifically
+    $g01 = $ledgerJson.AcceptanceGates | Where-Object { $_.GateId -eq "G01" }
+    if ($g01.Status -ne "VERIFIED") {
+        throw "Expected G01 to be VERIFIED, got: $($g01.Status)"
+    }
+    if ($g01.Evidence -notmatch "EVD-050") {
+        throw "Expected G01 Evidence to cite EVD-050, got: $($g01.Evidence)"
     }
 
     # Verify G05 and G15 specifically

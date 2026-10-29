@@ -53,6 +53,38 @@ async fn main() -> ExitCode {
         }
     }
 
+    if args.iter().any(|a| a == "--quit" || a == "/quit") {
+        let singleton = SessionSingletonGuard::acquire();
+        let session_id = singleton.as_ref().map(|s| s.session_id()).unwrap_or(1);
+        let pipe_name = format!(r"\\.\pipe\aethershell-ipc-{}", session_id);
+
+        let token = aethershell_ipc::SessionToken::load().unwrap_or_default();
+        println!("Requesting active AetherShell instance to shut down cleanly...");
+        match IpcClient::send_command(
+            &pipe_name,
+            "shutdown",
+            serde_json::json!({ "session_token": token }),
+        )
+        .await
+        {
+            Ok(res) if res.success => {
+                println!("AetherShell instance shutdown initiated successfully.");
+                return ExitCode::SUCCESS;
+            }
+            Ok(res) => {
+                eprintln!(
+                    "AetherShell shutdown rejected: {}",
+                    res.error_message.unwrap_or_default()
+                );
+                return ExitCode::FAILURE;
+            }
+            Err(e) => {
+                eprintln!("No active AetherShell instance found or IPC failed: {}", e);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
     // Dedicated sleep test mode for multi-process qualification and isolation audits
     if let Some(pos) = args.iter().position(|a| a == "--test-sleep-secs") {
         if let Some(s) = args.get(pos + 1).and_then(|s| s.parse::<u64>().ok()) {
@@ -344,7 +376,7 @@ async fn main() -> ExitCode {
     let unhandled: Vec<&String> = args
         .iter()
         .skip(1)
-        .filter(|a| *a != "--safe-mode" && *a != "/safe-mode")
+        .filter(|a| *a != "--safe-mode" && *a != "/safe-mode" && *a != "--quit" && *a != "/quit")
         .collect();
 
     if !unhandled.is_empty() {
@@ -426,6 +458,7 @@ fn print_usage() {
     println!("    -h, --help, /?           Print help information");
     println!("    -v, --version            Print version information");
     println!("    --safe-mode              Launch in Safe Mode (forces NativeNoopBackend, bypasses hooks)");
+    println!("    --quit                   Request active instance to shut down cleanly");
     println!("    --test-sleep-secs <N>    Test mode: sleep N seconds and exit cleanly");
     println!("    --diagnostics            Generate and print sanitized JSON diagnostics report");
     println!("    --settings               Request active instance to open Settings window");
@@ -463,6 +496,7 @@ mod tests {
         assert!(is_help_flag("/help"));
         assert!(!is_help_flag("--unknown"));
         assert!(!is_help_flag("--safe-mode"));
+        assert!(!is_help_flag("--quit"));
 
         assert!(is_version_flag("--version"));
         assert!(is_version_flag("-v"));

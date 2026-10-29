@@ -122,6 +122,21 @@ function Record-GateResult([string]$GateId, [string]$Name, [string]$Status, [str
     Write-Host "  [$Status] $GateId - ${Name}: $Detail" -ForegroundColor $color
 }
 
+if (-not ([System.Management.Automation.PSTypeName]'AetherWin32Helper').Type) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class AetherWin32Helper {
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+}
+"@
+}
+
 function Start-SandboxedProcess {
     param(
         [string]$FilePath,
@@ -129,16 +144,30 @@ function Start-SandboxedProcess {
         [string]$SandboxDir,
         [switch]$Wait = $false
     )
-    $orig = $env:AETHERSHELL_APP_DATA_DIR
+    $origAppData = $env:AETHERSHELL_APP_DATA_DIR
+    $origConfig = $env:AETHERSHELL_CONFIG_DIR
+    $origToken = $env:AETHERSHELL_SESSION_TOKEN_PATH
     try {
         $env:AETHERSHELL_APP_DATA_DIR = $SandboxDir
-        if ($Wait) {
-            return Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -Wait
+        $env:AETHERSHELL_CONFIG_DIR = $SandboxDir
+        $env:AETHERSHELL_SESSION_TOKEN_PATH = Join-Path $SandboxDir "session_1.token"
+        if ([string]::IsNullOrWhiteSpace($ArgumentList)) {
+            if ($Wait) {
+                return Start-Process -FilePath $FilePath -PassThru -Wait
+            } else {
+                return Start-Process -FilePath $FilePath -PassThru
+            }
         } else {
-            return Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru
+            if ($Wait) {
+                return Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -Wait
+            } else {
+                return Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru
+            }
         }
     } finally {
-        $env:AETHERSHELL_APP_DATA_DIR = $orig
+        $env:AETHERSHELL_APP_DATA_DIR = $origAppData
+        $env:AETHERSHELL_CONFIG_DIR = $origConfig
+        $env:AETHERSHELL_SESSION_TOKEN_PATH = $origToken
     }
 }
 
@@ -150,28 +179,70 @@ try {
     # -------------------------------------------------------------------------
     # TEST 1: Gate G01 — Core Startup, Singleton Enforcement & Clean Shutdown
     # -------------------------------------------------------------------------
-    Write-Host "`n[Test 1/7] Gate G01: Core Startup, Singleton & Clean Shutdown..." -ForegroundColor Cyan
+    Write-Host "`n[Test 1/7] Gate G01: Core Startup, Singleton & Clean Shutdown (PRD Section 18.2)..." -ForegroundColor Cyan
     $g01Sandbox = Join-Path $sandboxRoot "G01"
     New-Item -ItemType Directory -Path $g01Sandbox -Force | Out-Null
 
-    $proc = Start-SandboxedProcess -FilePath $coreExe -ArgumentList "--test-sleep-secs 3" -SandboxDir $g01Sandbox
+    # 1. Start primary instance in background in isolated sandbox directory
+    $primaryProc = Start-SandboxedProcess -FilePath $coreExe -ArgumentList "" -SandboxDir $g01Sandbox
 
-    Start-Sleep -Milliseconds 600
-
-    if (-not $proc.HasExited) {
-        # Test singleton enforcement: secondary instance should detect singleton and exit cleanly
-        $procSecondary = Start-SandboxedProcess -FilePath $coreExe -ArgumentList "--help" -SandboxDir $g01Sandbox -Wait
-
-        $secExit = $procSecondary.ExitCode
-        $proc | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
-
-        if ($secExit -eq 0 -and $proc.ExitCode -eq 0) {
-            Record-GateResult "G01" "Core Startup & Lifecycle" "PASSED" "Session singleton enforced; clean exit code 0; clean shutdown within timeout."
-        } else {
-            Record-GateResult "G01" "Core Startup & Lifecycle" "FAILED" "Process exit code mismatch: primary=$($proc.ExitCode), secondary=$secExit"
+    # Allow primary instance to initialize tray, acquire singleton mutex, and start IPC
+    $trayHwnd = [IntPtr]::Zero
+    $maxWaitSec = 8
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt $maxWaitSec -and -not $primaryProc.HasExited) {
+        $trayHwnd = [AetherWin32Helper]::FindWindow("AetherShellTrayWindowClass", "AetherShellTrayWindow")
+        if ($trayHwnd -ne [IntPtr]::Zero) {
+            break
         }
+        Start-Sleep -Milliseconds 150
+    }
+
+    if ($primaryProc.HasExited) {
+        Record-GateResult "G01" "Core Startup & Lifecycle" "FAILED" "Primary process exited prematurely with code $($primaryProc.ExitCode)"
+    } elseif ($trayHwnd -eq [IntPtr]::Zero) {
+        $primaryProc | Stop-Process -Force -ErrorAction SilentlyContinue
+        Record-GateResult "G01" "Core Startup & Lifecycle" "FAILED" "Primary process failed to create tray window within ${maxWaitSec}s"
     } else {
-        Record-GateResult "G01" "Core Startup & Lifecycle" "FAILED" "Primary process exited prematurely with code $($proc.ExitCode)"
+        # 2. Test singleton enforcement & CLI argument routing:
+        # Launch secondary instance with --settings.
+        # It must detect singleton mutex Local\AetherShell_Singleton_{SessionId}, route command to primary, and exit 0.
+        $secProc = Start-SandboxedProcess -FilePath $coreExe -ArgumentList "--settings" -SandboxDir $g01Sandbox -Wait
+        $secExit = $secProc.ExitCode
+
+        # 2b. Test secondary instance without arguments (default double-click invocation routes to primary and exits 0)
+        $defaultProc = Start-SandboxedProcess -FilePath $coreExe -ArgumentList "" -SandboxDir $g01Sandbox -Wait
+        $defaultExit = $defaultProc.ExitCode
+
+        # 3. Test WM_QUERYENDSESSION: window must return LRESULT(1) confirming safe shutdown agreement
+        # 0x0011 is WM_QUERYENDSESSION
+        $queryResult = [AetherWin32Helper]::SendMessage($trayHwnd, 0x0011, [IntPtr]::Zero, [IntPtr]::Zero)
+        $queryConfirmed = ($queryResult.ToInt64() -eq 1)
+
+        # 4. Test WM_ENDSESSION: wParam = 1 (session is ending); app must exit gracefully within 1.5s
+        # 0x0016 is WM_ENDSESSION
+        $shutdownSw = [System.Diagnostics.Stopwatch]::StartNew()
+        $endResult = [AetherWin32Helper]::SendMessage($trayHwnd, 0x0016, [IntPtr]1, [IntPtr]::Zero)
+
+        $primaryProc | Wait-Process -Timeout 5 -ErrorAction SilentlyContinue
+        $shutdownDuration = $shutdownSw.Elapsed
+        $primaryExited = $primaryProc.HasExited
+        $primaryExitCode = if ($primaryExited) { $primaryProc.ExitCode } else { -1 }
+
+        if (-not $primaryExited) {
+            $primaryProc | Stop-Process -Force -ErrorAction SilentlyContinue
+        }
+
+        # 5. Verify zero orphaned script host child processes
+        $orphanedScriptHosts = @(Get-Process -Name "aethershell-script-host" -ErrorAction SilentlyContinue)
+
+        $passCriteriaMet = ($secExit -eq 0) -and ($defaultExit -eq 0) -and $queryConfirmed -and ($primaryExitCode -eq 0) -and ($shutdownDuration.TotalMilliseconds -lt 1500) -and ($orphanedScriptHosts.Count -eq 0)
+
+        if ($passCriteriaMet) {
+            Record-GateResult "G01" "Core Startup & Lifecycle" "PASSED" "Session singleton enforced; secondary --settings and default invocation routed cleanly (exit 0); WM_QUERYENDSESSION confirmed (LRESULT 1); WM_ENDSESSION shutdown completed in $([math]::Round($shutdownDuration.TotalMilliseconds, 1))ms (< 1500ms); zero orphaned script hosts; zero exit code."
+        } else {
+            Record-GateResult "G01" "Core Startup & Lifecycle" "FAILED" "Criteria failed: secondaryExit=$secExit, defaultExit=$defaultExit, queryConfirmed=$queryConfirmed, primaryExit=$primaryExitCode, shutdownMs=$($shutdownDuration.TotalMilliseconds), orphaned=$($orphanedScriptHosts.Count)"
+        }
     }
 
     # -------------------------------------------------------------------------

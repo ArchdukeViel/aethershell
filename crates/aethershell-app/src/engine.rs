@@ -419,6 +419,13 @@ impl AppEngine {
                 }
             });
 
+            // Wire session end callback to trigger clean engine shutdown on WM_ENDSESSION
+            let shutdown_flag_desktop = Arc::clone(&self.shutdown_flag);
+            win_mgr.set_on_session_end(move || {
+                info!("Desktop window received WM_ENDSESSION; triggering engine shutdown");
+                shutdown_flag_desktop.store(true, Ordering::SeqCst);
+            });
+
             // Wire hotkey toggle callback across all windows
             let ctrl_hotkey = Arc::clone(&self.interaction);
             let active_cfg_hotkey = Arc::clone(&self.active_config);
@@ -753,7 +760,10 @@ impl AppEngine {
 
         while !self.shutdown_flag.load(Ordering::Relaxed) {
             // Pump Win32 messages (WM_PAINT, WM_KEYDOWN, WM_ACTIVATE, WM_WTSSESSION_CHANGE, etc.)
-            DesktopWindowManager::pump_messages();
+            if DesktopWindowManager::pump_messages() {
+                info!("WM_QUIT received on desktop message pump; breaking main loop.");
+                break;
+            }
 
             tokio::time::sleep(tokio::time::Duration::from_millis(16)).await;
 
@@ -936,7 +946,7 @@ impl AppEngine {
                 last_render_tick = now;
             }
 
-            if *shutdown_tx.borrow() {
+            if *shutdown_tx.borrow() || self.shutdown_flag.load(Ordering::Relaxed) {
                 break;
             }
         }
@@ -956,6 +966,13 @@ impl AppEngine {
         tray_shutdown.store(true, Ordering::SeqCst);
         let _ = tray_handle.join();
         let _ = ipc_handle.await;
+
+        // Clean up desktop overlay windows deterministically on this thread
+        {
+            if let Ok(mut win_mgr) = self.desktop_windows.try_lock() {
+                win_mgr.clear_windows();
+            }
+        }
 
         Ok(())
     }
