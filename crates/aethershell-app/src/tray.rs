@@ -243,6 +243,7 @@ impl SystemTray {
         shutdown_flag: Arc<AtomicBool>,
         pipe_name: Option<String>,
     ) -> (std::thread::JoinHandle<()>, TrayShutdownHandle) {
+        SHUTDOWN_REQUESTED.store(false, Ordering::SeqCst);
         if let Some(pipe) = pipe_name {
             if let Ok(mut lock) = TRAY_PIPE_NAME.write() {
                 *lock = Some(pipe);
@@ -697,8 +698,11 @@ mod tests {
     use super::*;
     use windows::Win32::UI::WindowsAndMessaging::SendMessageW;
 
+    static TRAY_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_tray_initialization_non_panicking() {
+        let _test_lock = TRAY_TEST_MUTEX.lock().unwrap();
         let tray = SystemTray::new();
         if let Ok(t) = tray {
             println!("Tray icon initialized: {}", t.is_active());
@@ -707,6 +711,7 @@ mod tests {
 
     #[test]
     fn test_tray_thread_lifecycle_iva_p1_001() {
+        let _test_lock = TRAY_TEST_MUTEX.lock().unwrap();
         let flag = Arc::new(AtomicBool::new(false));
         let (join_handle, tray_shutdown) =
             SystemTray::spawn_tray_thread(Arc::clone(&flag), Some(r"\\.\pipe\test-tray".into()));
@@ -721,6 +726,7 @@ mod tests {
 
     #[test]
     fn test_tray_context_menu_command_dispatch() {
+        let _test_lock = TRAY_TEST_MUTEX.lock().unwrap();
         // Test audio pause/resume toggle state
         SystemTray::set_audio_paused_state(false);
         assert!(!SystemTray::is_audio_paused());
@@ -734,6 +740,7 @@ mod tests {
 
     #[test]
     fn test_tray_taskbar_created_reconnect_and_debounce() {
+        let _test_lock = TRAY_TEST_MUTEX.lock().unwrap();
         let msg = taskbar_created_msg();
         assert!(
             msg >= 0xC000,
@@ -791,6 +798,7 @@ mod tests {
 
     #[test]
     fn test_tray_event_driven_blocking_and_shutdown_handle() {
+        let _test_lock = TRAY_TEST_MUTEX.lock().unwrap();
         let flag = Arc::new(AtomicBool::new(false));
         let (join_handle, tray_shutdown) = SystemTray::spawn_tray_thread(Arc::clone(&flag), None);
 
@@ -817,6 +825,7 @@ mod tests {
 
     #[test]
     fn test_tray_concurrent_shutdown_signals() {
+        let _test_lock = TRAY_TEST_MUTEX.lock().unwrap();
         let flag = Arc::new(AtomicBool::new(false));
         let (join_handle, tray_shutdown) = SystemTray::spawn_tray_thread(Arc::clone(&flag), None);
 
@@ -844,6 +853,7 @@ mod tests {
 
     #[test]
     fn test_tray_wm_queryendsession_and_wm_endsession_handling() {
+        let _test_lock = TRAY_TEST_MUTEX.lock().unwrap();
         let flag = Arc::new(AtomicBool::new(false));
         let (join_handle, tray_shutdown) = SystemTray::spawn_tray_thread(
             Arc::clone(&flag),
@@ -888,6 +898,7 @@ mod tests {
 
     #[test]
     fn test_tray_wm_close_signals_engine_shutdown() {
+        let _test_lock = TRAY_TEST_MUTEX.lock().unwrap();
         let flag = Arc::new(AtomicBool::new(false));
         let (join_handle, tray_shutdown) = SystemTray::spawn_tray_thread(Arc::clone(&flag), None);
 
