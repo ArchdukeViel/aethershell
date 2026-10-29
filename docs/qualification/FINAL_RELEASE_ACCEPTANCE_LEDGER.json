@@ -1,7 +1,7 @@
 {
     "LedgerType":  "AetherShellFinalReleaseAcceptanceLedger",
     "Version":  "0.1.0-dev",
-    "GeneratedAt":  "2026-10-29T21:08:27.2667132+07:00",
+    "GeneratedAt":  "2026-10-29T22:14:54.4037183+07:00",
     "ReleaseDisposition":  "NO-GO",
     "CoreStableCandidate":  false,
     "ProductionVersionTag":  "RESERVED (v1.0.0)",
@@ -14,18 +14,18 @@
                                   "Deferred":  1
                               },
     "AutomatedTestSummary":  {
-                                 "UniqueCargoTests":  325,
-                                 "PowerShellTests":  76,
-                                 "TotalAutomatedTests":  401,
+                                 "UniqueCargoTests":  329,
+                                 "PowerShellTests":  79,
+                                 "TotalAutomatedTests":  408,
                                  "HostAppDataItems":  0
                              },
     "CryptographicArtifacts":  {
-                                   "aethershell.exe":  "f2e915d543fb372f23b9c2cf8f9f24c5265dc183f35fbbd71853e40aceecd34c",
+                                   "aethershell.exe":  "b42740e5607c03f56a042d836c3b4fac8a8416cd00cef5ea7ead6d36b0166d07",
                                    "aethershell-script-host.exe":  "e3a65deddb31c633f3f2795f1f6713b494694a0bb5a54cc1cd5f77d561108980",
-                                   "aethershell-settings.exe":  "d13685246dadb3a343bd8cc863b05297153c3516ecbf12a85e7054c5de88a3a5",
+                                   "aethershell-settings.exe":  "1159fec63cf2ff208401d9e3f1058b87406e679490c1bba5e5b61a097e6d4aec",
                                    "portable_zip":  "0d97c556762db3da164a4b9f70ea1df09d9823738c35da3500cdf1c4435b00c4",
-                                   "sbom.json":  "0dec9741c6fae445d45e521284f4c750faa1e3f871e7fc3d45b5a9f397727c15",
-                                   "THIRD_PARTY_LICENSES.md":  "7b65a971195b333fe55dcc73099e9aacee92e1dd438b017a3f20c5af538b5462",
+                                   "sbom.json":  "405b10d9f4f96f97c25ab66b902e4653da98fc2f4e5735b5ccd90537620cc06b",
+                                   "THIRD_PARTY_LICENSES.md":  "f69771e5ea4ac7dae63e548f9ca27e2632f769d0b22c5180f0d82f6d2d504ba5",
                                    "PRD.md":  "35c0f2a508f453db0f602c0c9a9d477e243c094ae2c65805610d0f7aa0dcd836",
                                    "AGENTS.md":  "ba5b863e1dac704550dad3321d1e833c853e0a18f18e9f8d6641478341caf9b7",
                                    "LICENSE":  "f4d9b0aad8ff9e650f5890fa3eeb7c1311479cab901f8a9b416a2d9acaf54266",
@@ -46,7 +46,7 @@
                                 "PassCondition":  "Required Windows 10/11 x64 matrix; honest fallback on unsupported effects",
                                 "Status":  "VERIFIED",
                                 "Evidence":  "EVD-002, EVD-022, EVD-049, EVD-051",
-                                "Reason":  "7-tier OS matrix specified in PRD Section 2.1 (VM-WIN10-22H2 through VM-WIN11-26H1) verified; registry UBR detection, TaskbarArchitecture modeling (LegacyWin32 vs XamlIsland), PerMonitorV2 dynamic scaling (96 -\u003e 1.0, 144 -\u003e 1.5, 192 -\u003e 2.0), and honest effect fallback contracts (Mica/Acrylic fallback on Win10 per PRD 2.2 [S05], unverified XAML taskbar fallback to NativeNoop per PRD 4.2, special validation tier gating on 26H1, Win11 21H2 below baseline gating, runtime BatterySaver/Suspended fallbacks) empirically verified across 9 automated regression tests and guest qualification runner."
+                                "Reason":  "7-tier OS matrix specified in PRD Section 2.1 (VM-WIN10-22H2 through VM-WIN11-26H1) verified; registry UBR detection, TaskbarArchitecture modeling (LegacyWin32 vs XamlIsland), PerMonitorV2 dynamic scaling (96 -\u003e 1.0, 144 -\u003e 1.5, 192 -\u003e 2.0), and honest effect fallback contracts (Mica/Acrylic fallback on Win10 per PRD 2.2 [S05], unverified XAML taskbar fallback to NativeNoop per PRD 4.2, special validation tier gating on 26H1, Win11 21H2 below baseline gating, runtime BatterySaver/Suspended fallbacks) empirically verified across 12 automated regression tests, 11 Cargo integration tests, and disposable VM qualification runner."
                             },
                             {
                                 "GateId":  "G03",

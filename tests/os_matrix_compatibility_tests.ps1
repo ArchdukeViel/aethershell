@@ -275,6 +275,109 @@ Run-TestCase "AppEngine default coordinator initializes with ExternalAppearanceB
 }
 
 # -----------------------------------------------------------------------------
+# Test 10: Live Win32 API validation in audit ledger (RtlGetVersion, Job Objects, D2D/D3D, PerMonitorV2)
+# -----------------------------------------------------------------------------
+Run-TestCase "Live Win32 API platform validation in audit ledger" {
+    $tempReport = Join-Path ([System.IO.Path]::GetTempPath()) "AetherShell_Win32Audit_$([Guid]::NewGuid().ToString('N').Substring(0, 8)).json"
+    try {
+        $null = powershell -NoProfile -ExecutionPolicy Bypass -File "$auditScript" -OutputJson "$tempReport" 2>&1
+        $reportJson = Get-Content -LiteralPath $tempReport -Raw | ConvertFrom-Json
+
+        $win32 = $reportJson.LiveWin32ApiValidation
+        if ($null -eq $win32) {
+            throw "Missing LiveWin32ApiValidation in audit ledger"
+        }
+        if (-not $win32.KernelMatchesRegistry) {
+            throw "Live kernel build $($win32.KernelBuild) does not match registry build"
+        }
+        if (-not $win32.SupportsJobObjects) {
+            throw "Job Object support reported false on live host platform"
+        }
+        if (-not $win32.SupportsDirect2D11 -or -not $win32.SupportsDirect3D11) {
+            throw "Direct2D 1.1 / Direct3D 11 hardware acceleration reported unsupported"
+        }
+        if (-not $win32.SupportsPerMonitorV2Dpi) {
+            throw "PerMonitorV2 DPI awareness context reported unsupported"
+        }
+    } finally {
+        if (Test-Path $tempReport) {
+            Remove-Item -LiteralPath $tempReport -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Test 11: Live production binary execution (aethershell.exe --capabilities) matches host platform
+# -----------------------------------------------------------------------------
+Run-TestCase "Live production binary execution (aethershell.exe --capabilities) matches host platform" {
+    $tempReport = Join-Path ([System.IO.Path]::GetTempPath()) "AetherShell_CliCaps_$([Guid]::NewGuid().ToString('N').Substring(0, 8)).json"
+    try {
+        $null = powershell -NoProfile -ExecutionPolicy Bypass -File "$auditScript" -OutputJson "$tempReport" 2>&1
+        $reportJson = Get-Content -LiteralPath $tempReport -Raw | ConvertFrom-Json
+
+        $prodCaps = $reportJson.ProductionBinaryCapabilities
+        if ($null -eq $prodCaps) {
+            throw "Missing ProductionBinaryCapabilities in audit ledger"
+        }
+        if ($prodCaps.report_type -ne "AetherShellPlatformCapabilities") {
+            throw "Expected report_type == 'AetherShellPlatformCapabilities', got: $($prodCaps.report_type)"
+        }
+        if ($prodCaps.os_version.build_number -ne $reportJson.HostInformation.CurrentBuild) {
+            throw "CLI build number ($($prodCaps.os_version.build_number)) does not match host build ($($reportJson.HostInformation.CurrentBuild))"
+        }
+        if (-not $prodCaps.capabilities.supports_per_monitor_v2) {
+            throw "CLI reports supports_per_monitor_v2 == false on modern host"
+        }
+        if (-not $prodCaps.capabilities.supports_direct2d_1_1) {
+            throw "CLI reports supports_direct2d_1_1 == false on modern host"
+        }
+        if (-not $prodCaps.capabilities.supports_job_object_quotas) {
+            throw "CLI reports supports_job_object_quotas == false on modern host"
+        }
+
+        # Check honest fallback verdict for unverified modern XAML taskbar
+        $unverifiedClear = $prodCaps.taskbar_effects_verdicts.clear_unverified
+        if ($null -eq $unverifiedClear.unsupported_fallback) {
+            throw "Expected unverified Clear effect to have unsupported_fallback"
+        }
+        if ($unverifiedClear.unsupported_fallback.target_effect -ne "native_noop") {
+            throw "Expected target_effect == 'native_noop', got: $($unverifiedClear.unsupported_fallback.target_effect)"
+        }
+    } finally {
+        if (Test-Path $tempReport) {
+            Remove-Item -LiteralPath $tempReport -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Test 12: Windows 10 servicing range (19041..=19045) and live host integration tests pass
+# -----------------------------------------------------------------------------
+Run-TestCase "Cargo integration tests for servicing range and live host platform pass" {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = cmd /c "cargo test --test os_matrix_compatibility_integration_test test_windows_10_servicing_range 2>&1"
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -eq 0) {
+            $out2 = cmd /c "cargo test --test os_matrix_compatibility_integration_test test_live_host 2>&1"
+            $exitCode = $LASTEXITCODE
+            $out = "$($out | Out-String)`n$($out2 | Out-String)"
+        }
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    $outStr = ($out | Out-String)
+
+    if ($exitCode -ne 0) {
+        throw "cargo test failed with exit code ${exitCode}: $outStr"
+    }
+    if ($outStr -notmatch "test result: ok\.") {
+        throw "Expected 'test result: ok.', got: $outStr"
+    }
+}
+
+# -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
 Write-Host "--------------------------------------------------------------------------------" -ForegroundColor Cyan

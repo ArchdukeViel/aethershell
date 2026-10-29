@@ -35,6 +35,14 @@ async fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if args
+        .iter()
+        .any(|a| a == "--capabilities" || a == "/capabilities")
+    {
+        run_capabilities();
+        return ExitCode::SUCCESS;
+    }
+
     if args.iter().any(|a| a == "--settings" || a == "/settings") {
         let singleton = SessionSingletonGuard::acquire();
         let session_id = singleton.as_ref().map(|s| s.session_id()).unwrap_or(1);
@@ -445,6 +453,60 @@ fn run_diagnostics() {
     println!("{}", sanitized);
 }
 
+fn run_capabilities() {
+    let os_info = WindowsVersionInfo::detect();
+    let caps = os_info.family.tier_capabilities();
+    let taskbars = probe_taskbars();
+    let desktop = probe_desktop_hierarchy();
+
+    let effects_evaluation = serde_json::json!({
+        "native_noop": os_info.family.evaluate_taskbar_effect(aethershell_core::TaskbarEffect::NativeNoop, false),
+        "clear_unverified": os_info.family.evaluate_taskbar_effect(aethershell_core::TaskbarEffect::Clear, false),
+        "clear_verified": os_info.family.evaluate_taskbar_effect(aethershell_core::TaskbarEffect::Clear, true),
+        "acrylic_unverified": os_info.family.evaluate_taskbar_effect(aethershell_core::TaskbarEffect::AcrylicLike, false),
+        "acrylic_verified": os_info.family.evaluate_taskbar_effect(aethershell_core::TaskbarEffect::AcrylicLike, true),
+        "blur_unverified": os_info.family.evaluate_taskbar_effect(aethershell_core::TaskbarEffect::BlurLike, false),
+        "blur_verified": os_info.family.evaluate_taskbar_effect(aethershell_core::TaskbarEffect::BlurLike, true),
+    });
+
+    let report = serde_json::json!({
+        "report_type": "AetherShellPlatformCapabilities",
+        "version": env!("CARGO_PKG_VERSION"),
+        "os_version": {
+            "major": os_info.major,
+            "minor": os_info.minor,
+            "build_number": os_info.build_number,
+            "ubr": os_info.ubr,
+            "family": os_info.family,
+            "tier_id": os_info.family.tier_id(),
+            "display_name": caps.display_name,
+            "is_windows_10": os_info.family.is_windows_10(),
+            "is_windows_11": os_info.family.is_windows_11(),
+            "is_v1_supported": os_info.is_supported_v1,
+            "is_special_validation_tier": os_info.family.is_special_validation_tier(),
+            "taskbar_architecture": os_info.family.taskbar_architecture(),
+            "policy_notes": caps.policy_notes,
+        },
+        "capabilities": {
+            "supports_per_monitor_v2": caps.supports_per_monitor_v2,
+            "supports_direct2d_1_1": caps.supports_direct2d_1_1,
+            "supports_job_object_quotas": caps.supports_job_object_quotas,
+            "supports_named_pipe_security": caps.supports_named_pipe_security,
+            "supports_shell_hook_stacking": caps.supports_shell_hook_stacking,
+        },
+        "taskbar_effects_verdicts": effects_evaluation,
+        "live_shell_probes": {
+            "discovered_taskbars_count": taskbars.len(),
+            "desktop_shelldll_defview_found": desktop.shelldll_defview_hwnd.is_some(),
+            "desktop_worker_w_found": desktop.worker_w_hwnd.is_some(),
+            "desktop_progman_found": desktop.progman_hwnd.is_some(),
+        }
+    });
+
+    let json_str = serde_json::to_string_pretty(&report).unwrap_or_default();
+    println!("{}", json_str);
+}
+
 fn print_usage() {
     println!(
         "AetherShell v{} — Unified Windows Taskbar and Desktop Widget Customization Engine",
@@ -460,6 +522,7 @@ fn print_usage() {
     println!("    --safe-mode              Launch in Safe Mode (forces NativeNoopBackend, bypasses hooks)");
     println!("    --quit                   Request active instance to shut down cleanly");
     println!("    --test-sleep-secs <N>    Test mode: sleep N seconds and exit cleanly");
+    println!("    --capabilities           Print live OS version, 7-tier matrix capabilities, and fallback verdicts in JSON");
     println!("    --diagnostics            Generate and print sanitized JSON diagnostics report");
     println!("    --settings               Request active instance to open Settings window");
     println!("    --benchmark <SECS>       Run component-level microbenchmark (default: 60s)");
@@ -484,6 +547,11 @@ mod tests {
     #[test]
     fn test_print_usage_execution() {
         print_usage();
+    }
+
+    #[test]
+    fn test_run_capabilities_execution() {
+        run_capabilities();
     }
 
     #[test]

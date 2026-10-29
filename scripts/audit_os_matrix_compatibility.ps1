@@ -41,8 +41,8 @@ if ([string]::IsNullOrWhiteSpace($OutputJson)) {
     $OutputJson = Join-Path $outDir "os_matrix_audit.json"
 }
 
-# 1. Query Current Host Windows Version & Registry
-Write-Host "[1/3] Querying Host Windows Version & Registry UBR..." -ForegroundColor Yellow
+# 1. Query Current Host Windows Version, Registry & Live Win32 APIs
+Write-Host "[1/4] Querying Host Windows Version, Registry UBR & Win32 APIs..." -ForegroundColor Yellow
 $regKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
 $productName = (Get-ItemProperty -Path $regKey -Name ProductName -ErrorAction SilentlyContinue).ProductName
 $displayVersion = (Get-ItemProperty -Path $regKey -Name DisplayVersion -ErrorAction SilentlyContinue).DisplayVersion
@@ -54,8 +54,91 @@ Write-Host "  Display Version: $displayVersion"
 Write-Host "  Build Number   : $currentBuild"
 Write-Host "  UBR (Revision) : $ubr"
 
+if (-not ([System.Management.Automation.PSTypeName]'AetherPlatformProbeHelper').Type) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class AetherPlatformProbeHelper {
+    [DllImport("ntdll.dll", SetLastError = true)]
+    public static extern int RtlGetVersion(ref OSVERSIONINFOEXW lpVersionInformation);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct OSVERSIONINFOEXW {
+        public int dwOSVersionInfoSize;
+        public int dwMajorVersion;
+        public int dwMinorVersion;
+        public int dwBuildNumber;
+        public int dwPlatformId;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string szCSDVersion;
+        public ushort wServicePackMajor;
+        public ushort wServicePackMinor;
+        public ushort wSuiteMask;
+        public byte wProductType;
+        public byte wReserved;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    public static extern IntPtr CreateJobObject(IntPtr lpJobAttributes, string lpName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern IntPtr LoadLibrary(string lpLibFileName);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
+    public static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
+}
+"@
+}
+
+$rtlInfo = New-Object AetherPlatformProbeHelper+OSVERSIONINFOEXW
+$rtlInfo.dwOSVersionInfoSize = [System.Runtime.InteropServices.Marshal]::SizeOf($rtlInfo)
+$rtlStatus = [AetherPlatformProbeHelper]::RtlGetVersion([ref]$rtlInfo)
+$kernelBuild = if ($rtlStatus -eq 0) { [uint32]$rtlInfo.dwBuildNumber } else { 0 }
+$kernelMajor = if ($rtlStatus -eq 0) { [uint32]$rtlInfo.dwMajorVersion } else { 0 }
+$kernelMinor = if ($rtlStatus -eq 0) { [uint32]$rtlInfo.dwMinorVersion } else { 0 }
+
+# Job Object validation
+$jobHandle = [AetherPlatformProbeHelper]::CreateJobObject([IntPtr]::Zero, "AetherShell_CompatProbe_Job")
+$jobSupported = ($jobHandle -ne [IntPtr]::Zero)
+if ($jobSupported) {
+    [AetherPlatformProbeHelper]::CloseHandle($jobHandle) | Out-Null
+}
+
+# Direct2D 1.1 / Direct3D 11 library validation
+$hD2D = [AetherPlatformProbeHelper]::LoadLibrary("d2d1.dll")
+$d2dFactoryExport = if ($hD2D -ne [IntPtr]::Zero) { ([AetherPlatformProbeHelper]::GetProcAddress($hD2D, "D2D1CreateFactory") -ne [IntPtr]::Zero) } else { $false }
+
+$hD3D = [AetherPlatformProbeHelper]::LoadLibrary("d3d11.dll")
+$d3d11DeviceExport = if ($hD3D -ne [IntPtr]::Zero) { ([AetherPlatformProbeHelper]::GetProcAddress($hD3D, "D3D11CreateDevice") -ne [IntPtr]::Zero) } else { $false }
+
+$hUser = [AetherPlatformProbeHelper]::LoadLibrary("user32.dll")
+$dpiContextExport = if ($hUser -ne [IntPtr]::Zero) { ([AetherPlatformProbeHelper]::GetProcAddress($hUser, "SetProcessDpiAwarenessContext") -ne [IntPtr]::Zero) } else { $false }
+$shellHookExport = if ($hUser -ne [IntPtr]::Zero) { ([AetherPlatformProbeHelper]::GetProcAddress($hUser, "RegisterShellHookWindow") -ne [IntPtr]::Zero) } else { $false }
+
+$liveWin32Probe = [PSCustomObject]@{
+    KernelMajor               = $kernelMajor
+    KernelMinor               = $kernelMinor
+    KernelBuild               = $kernelBuild
+    KernelMatchesRegistry     = ($kernelBuild -eq $currentBuild)
+    SupportsJobObjects        = $jobSupported
+    SupportsDirect2D11        = $d2dFactoryExport
+    SupportsDirect3D11        = $d3d11DeviceExport
+    SupportsPerMonitorV2Dpi   = $dpiContextExport
+    SupportsShellHookWindow   = $shellHookExport
+}
+
+Write-Host "  Kernel Version : $kernelMajor.$kernelMinor.$kernelBuild (Matches Registry: $($liveWin32Probe.KernelMatchesRegistry))"
+Write-Host "  Job Objects    : $(if ($jobSupported) { 'Supported' } else { 'Unavailable' })"
+Write-Host "  Direct2D / D3D : $(if ($d2dFactoryExport -and $d3d11DeviceExport) { 'Supported' } else { 'Unavailable' })"
+Write-Host "  PerMonitorV2   : $(if ($dpiContextExport) { 'Supported' } else { 'Unavailable' })"
+
 # 2. Define Authoritative PRD Section 2.1 OS Tiers
-Write-Host "`n[2/3] Evaluating Authoritative 7-Tier Compatibility Matrix (PRD Section 2.1)..." -ForegroundColor Yellow
+Write-Host "`n[2/4] Evaluating Authoritative 7-Tier Compatibility Matrix (PRD Section 2.1)..." -ForegroundColor Yellow
 
 $matrixTiers = @(
     [PSCustomObject]@{
@@ -177,8 +260,18 @@ foreach ($tier in $matrixTiers) {
 }
 
 # 3. Match Current Host OS to Matrix
-Write-Host "`n[3/3] Matching Host System Against Authoritative Matrix..." -ForegroundColor Yellow
-$matchedTier = $matrixTiers | Where-Object { $_.BuildNumber -eq $currentBuild }
+Write-Host "`n[3/4] Matching Host System Against Authoritative Matrix..." -ForegroundColor Yellow
+$matchedTier = $matrixTiers | Where-Object {
+    if ($_.Family -eq "Win10_22H2") {
+        $currentBuild -ge 19041 -and $currentBuild -le 19045
+    } elseif ($_.Family -eq "Win11_22H2") {
+        $currentBuild -ge 22621 -and $currentBuild -le 22624
+    } elseif ($_.Family -eq "Win11_23H2") {
+        $currentBuild -ge 22631 -and $currentBuild -le 22635
+    } else {
+        $_.BuildNumber -eq $currentBuild
+    }
+}
 
 $hostMatchStatus = "Unmatched"
 if ($null -ne $matchedTier) {
@@ -189,27 +282,59 @@ if ($null -ne $matchedTier) {
     Write-Host "  Host build $currentBuild does not match exact matrix target; falls back to WindowsBuildFamily::Unknown($currentBuild)" -ForegroundColor Yellow
 }
 
-# 4. Generate Output JSON Ledger (BOM-Free UTF-8)
-$auditReport = [PSCustomObject]@{
-    ReportType        = "OsMatrixCompatibilityAudit"
-    Version           = "0.1.0-dev"
-    Gate              = "G02"
-    Timestamp         = (Get-Date -Format "o")
-    HostInformation   = [PSCustomObject]@{
-        ProductName    = $productName
-        DisplayVersion = $displayVersion
-        CurrentBuild   = $currentBuild
-        UBR            = $ubr
-        MatchStatus    = $hostMatchStatus
+# 4. Query Production Core Binary Capabilities (aethershell.exe --capabilities)
+Write-Host "`n[4/4] Inspecting Production Core Binary Capabilities (aethershell.exe --capabilities)..." -ForegroundColor Yellow
+$binDir = Join-Path $workspaceRoot "target\x86_64-pc-windows-msvc\release"
+if (-not (Test-Path (Join-Path $binDir "aethershell.exe"))) {
+    $binDir = Join-Path $workspaceRoot "target\release"
+}
+if (-not (Test-Path (Join-Path $binDir "aethershell.exe"))) {
+    $binDir = Join-Path $workspaceRoot "target\x86_64-pc-windows-msvc\debug"
+}
+$coreExe = Join-Path $binDir "aethershell.exe"
+
+$cliCaps = $null
+if (Test-Path $coreExe) {
+    try {
+        $cliJson = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$coreExe' --capabilities 2>&1" | Out-String
+        $cliCaps = $cliJson | ConvertFrom-Json
+        Write-Host "  Live Core CLI: --capabilities queried successfully" -ForegroundColor Green
+        Write-Host "    Detected Family  : $($cliCaps.os_version.family) ($($cliCaps.os_version.tier_id))"
+        Write-Host "    v1 Supported     : $($cliCaps.os_version.is_v1_supported)"
+        Write-Host "    Taskbar Arch     : $($cliCaps.os_version.taskbar_architecture)"
+        Write-Host "    Direct2D 1.1     : $($cliCaps.capabilities.supports_direct2d_1_1)"
+        Write-Host "    PerMonitorV2 DPI : $($cliCaps.capabilities.supports_per_monitor_v2)"
+        Write-Host "    Job Object Limit : $($cliCaps.capabilities.supports_job_object_quotas)"
+    } catch {
+        Write-Warning "Could not query --capabilities from $coreExe : $_"
     }
-    AuthoritativeTiers= $matrixTiers
-    TotalTiers        = $matrixTiers.Count
-    SupportedV1Tiers  = @($matrixTiers | Where-Object { $_.IsV1Supported }).Count
-    SpecialTiers      = @($matrixTiers | Where-Object { -not $_.IsV1Supported }).Count
+} else {
+    Write-Warning "Core binary not found at $coreExe. Run 'cargo build --release' first."
+}
+
+# 5. Generate Output JSON Ledger (BOM-Free UTF-8)
+$auditReport = [PSCustomObject]@{
+    ReportType                   = "OsMatrixCompatibilityAudit"
+    Version                      = "0.1.0-dev"
+    Gate                         = "G02"
+    Timestamp                    = (Get-Date -Format "o")
+    HostInformation              = [PSCustomObject]@{
+        ProductName               = $productName
+        DisplayVersion            = $displayVersion
+        CurrentBuild              = $currentBuild
+        UBR                       = $ubr
+        MatchStatus               = $hostMatchStatus
+    }
+    LiveWin32ApiValidation       = $liveWin32Probe
+    ProductionBinaryCapabilities = $cliCaps
+    AuthoritativeTiers           = $matrixTiers
+    TotalTiers                   = $matrixTiers.Count
+    SupportedV1Tiers             = @($matrixTiers | Where-Object { $_.IsV1Supported }).Count
+    SpecialTiers                 = @($matrixTiers | Where-Object { -not $_.IsV1Supported }).Count
 }
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-$jsonContent = $auditReport | ConvertTo-Json -Depth 5
+$jsonContent = $auditReport | ConvertTo-Json -Depth 6
 [System.IO.File]::WriteAllText($OutputJson, $jsonContent, $utf8NoBom)
 
 Write-Host "`n================================================================================" -ForegroundColor Cyan

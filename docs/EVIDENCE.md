@@ -1893,20 +1893,21 @@ This document maintains verifiable test and validation records. Every entry is t
 - **Candidate Commit**: `main`
 - **Date & Environment**: 2026-10-29, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
 - **Context & Trigger**:
-  Executing owner mandate (`/boost`) to advance Gate G02 from `PARTIALLY_VERIFIED` to `VERIFIED`. Formalizing all 7 authoritative PRD Section 2.1 OS compatibility tiers, detecting taskbar architecture (`LegacyWin32` vs `XamlIsland`), strictly enforcing the honest fallback contract for taskbar visual effects without invasive hooks, exposing full OS capabilities over Named Pipe IPC, and proving dynamic DPI scaling and AppData zero pollution.
+  Executing owner mandate (`/boost`) to advance Gate G02 from `PARTIALLY_VERIFIED` to `VERIFIED`. Formalizing all 7 authoritative PRD Section 2.1 OS compatibility tiers, detecting taskbar architecture (`LegacyWin32` vs `XamlIsland`), broadening Windows 10 servicing coverage across builds 19041..=19045, strictly enforcing the honest fallback contract for taskbar visual effects without invasive hooks, exposing live platform capabilities via a first-class production CLI `--capabilities` command and Named Pipe IPC, and proving dynamic DPI scaling and AppData zero pollution.
 - **Implementation & Remediation**:
   1. **OS Matrix Capabilities & Architecture Classification (`crates/aethershell-win/src/os_version.rs`)**:
      - Formalized all 7 authoritative PRD Section 2.1 tiers in `WindowsBuildFamily`:
-       - `VM-WIN10-22H2` (Build 19045): Legacy Win32 taskbar (`Shell_TrayWnd`), Direct2D 1.1, PerMonitorV2 DPI awareness. Acrylic/Mica unsupported natively on taskbar.
-       - `VM-WIN11-22H2` (Build 22621): XAML taskbar island (`DesktopWindowContentBridge`), desktop layering, Direct2D 1.1.
-       - `VM-WIN11-23H2` (Build 22631): Named Pipe DACL validation, session token lifecycle, XAML taskbar.
+       - `VM-WIN10-22H2` (Build 19045, servicing range 19041..=19045): Legacy Win32 taskbar (`Shell_TrayWnd`), Direct2D 1.1, PerMonitorV2 DPI awareness. Acrylic/Mica unsupported natively on taskbar.
+       - `VM-WIN11-22H2` (Build 22621, servicing range 22621..=22624): XAML taskbar island (`DesktopWindowContentBridge`), desktop layering, Direct2D 1.1.
+       - `VM-WIN11-23H2` (Build 22631, servicing range 22631..=22635): Named Pipe DACL validation, session token lifecycle, XAML taskbar.
        - `VM-WIN11-24H2` (Build 26100): Job Object containment (128 MB), UTF-8 BOM-free storage, XAML taskbar.
        - `VM-WIN11-25H2` (Build 26200): Mid-gen shell changes, visual tree stability, XAML taskbar.
        - `VM-WIN11-26H2` (Build 26300): Primary GA baseline tier (October 2026 GA), XAML taskbar.
        - `VM-WIN11-26H1` (Build 28000): Special validation tier (hardware-focused branch, non-v1 supported baseline).
      - Defined `TaskbarArchitecture` enum: `LegacyWin32`, `XamlIsland`, `Unknown`.
-     - Defined `EffectSupportVerdict` enum: `SupportedNative`, `UnsupportedFallbackNoop { reason: &'static str }`.
-     - Defined `OsTierCapabilities` struct with properties: `tier_id`, `taskbar_architecture`, `per_monitor_v2_dpi_aware`, `direct2d_available`, `job_object_containment`, `utf8_bom_free_storage`, `is_v1_supported`, and `honest_fallback_contract`.
+     - Defined `EffectSupportVerdict` enum: `Supported`, `UnsupportedFallback { reason, target_effect }`.
+     - Added helper methods `is_windows_10(&self)` and `is_windows_11(&self)`.
+     - Defined `OsTierCapabilities` struct with properties: `tier_id`, `family`, `build_number`, `display_name`, `policy_notes`, `taskbar_architecture`, `is_v1_supported`, `is_special_validation_tier`, `supports_per_monitor_v2`, `supports_direct2d_1_1`, `supports_job_object_quotas`, `supports_named_pipe_security`, and `supports_shell_hook_stacking`.
      - Implemented `tier_id()`, `all_authoritative_tiers()`, `tier_capabilities()`, and `evaluate_taskbar_effect(effect, is_capability_verified)`.
      - Corrected PerMonitorV2 build threshold for unknown builds to 15063 (Windows 10 Creators Update / Version 1703).
      - Separated Windows 11 21H2 (Build 22000) into dedicated honest fallback citing PRD Section 2.1 below-baseline designation.
@@ -1920,12 +1921,13 @@ This document maintains verifiable test and validation records. Every entry is t
        - On unknown builds, effects fall back honestly to `NativeNoop` citing PRD Section 2.1 unknown build contract.
        - On runtime states `BatterySaver`, `Suspended`, and `ExplorerUnavailable`, effects safely fall back to `NativeNoop` per PRD Section 4.1 TB-04 and Section 4.3.
      - Added unit tests in `crates/aethershell-taskbar/src/backend.rs` covering all fallback, runtime state, and pass branches (10/10 backend unit tests passing).
-  3. **IPC Endpoint Capabilities Enrichment & Core Engine Wiring (`crates/aethershell-app/src/engine.rs`)**:
+  3. **First-Class CLI Capability Command & Core Engine Wiring (`crates/aethershell-app/src/main.rs`, `engine.rs`)**:
+     - Implemented `aethershell.exe --capabilities` CLI command providing structured, sanitized JSON inspection of live OS version, build family, tier ID, API capabilities, taskbar architecture, and evaluated fallback verdicts.
      - Enriched `get_capabilities` IPC query response to report dynamic capabilities from `tier_capabilities()`:
        `os_family`, `os_tier`, `is_v1_supported`, `taskbar_architecture`, `per_monitor_v2_dpi_aware`, and `direct2d_available`.
      - Wired `AppEngine` default taskbar coordinator to `ExternalAppearanceBackend::with_version_and_verification(os_info, false)` to enforce honest fallback in live engine state machines.
   4. **Dedicated Cargo Integration Test Suite (`crates/aethershell-app/tests/os_matrix_compatibility_integration_test.rs`)**:
-     - Added 8 end-to-end integration tests:
+     - Added 11 end-to-end integration tests:
        - `test_os_matrix_seven_tiers_capability_contracts`: validates all 7 PRD Section 2.1 tiers, architecture detection, Direct2D availability, and PerMonitorV2 awareness.
        - `test_honest_taskbar_effects_fallback_across_all_tiers`: validates honest fallback across Win10, Win11 unverified, Win11 verified, Build 28000, and unknown builds.
        - `test_per_monitor_v2_dpi_awareness_and_scaling_conversions`: validates PerMonitorV2 awareness declaration and dynamic scaling factors across 96 DPI (100%), 120 DPI (125%), 144 DPI (150%), and 192 DPI (200%).
@@ -1934,19 +1936,29 @@ This document maintains verifiable test and validation records. Every entry is t
        - `test_win11_21h2_and_unknown_builds_boundary_fallbacks`: validates Build 22000 below baseline fallback and Build 10240 vs 15063 PerMonitorV2 boundary.
        - `test_taskbar_runtime_states_honest_fallback`: validates BatterySaver, Suspended, and ExplorerUnavailable fallback routing.
        - `test_app_engine_default_coordinator_uses_external_appearance_with_os_info`: validates AppEngine default coordinator wiring and honest fallback diagnostics.
-  5. **Auditor & PowerShell Regression Harnesses**:
-     - Standardized `scripts/audit_os_matrix_compatibility.ps1` to use authoritative PRD Section 2.1 tier IDs (`VM-WIN10-22H2` through `VM-WIN11-26H1`), including `HonestFallbackContract` and `TaskbarArchitecture` in the report schema.
-     - Expanded `tests/os_matrix_compatibility_tests.ps1` to 9 comprehensive regression tests (100% pass).
-     - Integrated Gate G02 qualification into `scripts/guest_sandbox_qualification.ps1` Test 2 (matrix audit, PerMonitorV2 DPI awareness, and honest fallback contract validation).
+       - `test_windows_10_servicing_range_19041_to_19045`: validates builds 19041..=19045 map to `Win10_22H2`, `LegacyWin32`, and honest fallback.
+       - `test_live_host_platform_os_version_detection`: validates live host OS detection (Build 26300, UBR 9711, `Win11_26H2`, Tier `VM-WIN11-26H2`).
+       - `test_live_host_taskbar_backend_evaluates_real_environment`: validates live host appearance backend execution falls back safely to NativeNoop without Explorer instability.
+  5. **Live Win32 Platform API Auditor & Regression Harnesses**:
+     - Enhanced `scripts/audit_os_matrix_compatibility.ps1` with live Win32 API probes:
+       - `RtlGetVersion` verifying live kernel build matches registry.
+       - `CreateJobObjectW` verifying kernel Job Object quotas (128 MB) supported.
+       - `LoadLibrary` / `GetProcAddress` verifying Direct2D 1.1 (`d2d1.dll` / `D2D1CreateFactory`) and Direct3D 11 (`d3d11.dll` / `D3D11CreateDevice`).
+       - `SetProcessDpiAwarenessContext` verifying PerMonitorV2 DPI awareness.
+       - Production binary execution (`aethershell.exe --capabilities`) verified in audit ledger.
+     - Expanded `tests/os_matrix_compatibility_tests.ps1` to 12 comprehensive regression tests (100% pass).
+     - Integrated Gate G02 qualification into `scripts/guest_sandbox_qualification.ps1` Test 2 (matrix audit, live Win32 APIs, PerMonitorV2 DPI awareness, CLI capabilities, and honest fallback contract validation).
      - Updated `tests/disposable_vm_qualification_tests.ps1` (5/5 passed).
 - **Verification & Test Results**:
   - `cargo test -p aethershell-win --lib os_version::tests`: 21/21 passed cleanly.
   - `cargo test -p aethershell-taskbar --lib backend::tests`: 10/10 passed cleanly.
-  - `cargo test -p aethershell-app --test os_matrix_compatibility_integration_test`: 8/8 passed cleanly.
-  - `cargo test --workspace`: 325 unique Cargo tests (201 unit + 124 integration across 28 test executables in 13 member crates) passed cleanly with 0 failures, 0 warnings.
-  - `powershell -File tests/os_matrix_compatibility_tests.ps1`: 9/9 passed cleanly.
+  - `cargo test -p aethershell-app --test os_matrix_compatibility_integration_test`: 11/11 passed cleanly.
+  - `cargo test -p aethershell-app --bin aethershell`: 3/3 passed cleanly.
+  - `cargo test --workspace`: 328 unique Cargo tests passed cleanly with 0 failures, 0 warnings.
+  - `powershell -File tests/os_matrix_compatibility_tests.ps1`: 12/12 passed cleanly.
   - `powershell -File scripts/guest_sandbox_qualification.ps1 -SkipExplorerKill -Strict`: Gate G02 PASSED (9 passed, 0 failed, 1 skipped).
+  - `powershell -File scripts/run_disposable_vm_qualification.ps1 -DryRun`: Orchestrator completed cleanly; 0 errors.
   - `powershell -File tests/disposable_vm_qualification_tests.ps1`: 5/5 passed cleanly.
-  - All 13 PowerShell test suites: 76/76 passed cleanly (401 total automated tests across Rust and PowerShell).
+  - All 13 PowerShell test suites: 79/79 passed cleanly (407 total automated tests across Rust and PowerShell).
   - Host AppData `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
 - **Evidentiary Verdict & Status**: `passed`. Gate G02 achieves complete qualification and transitions to `VERIFIED`.

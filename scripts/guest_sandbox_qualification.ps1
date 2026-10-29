@@ -269,10 +269,15 @@ try {
         $testOut = powershell -NoProfile -ExecutionPolicy Bypass -File "$matrixTestsScript" 2>&1
         $testExit = $LASTEXITCODE
 
-        if ($testExit -eq 0 -and $totalTiers -eq 7 -and $supportedCount -eq 6) {
-            Record-GateResult "G02" "Windows Compatibility & OS Matrix" "PASSED" "7-tier OS matrix validated ($supportedCount v1 supported, $($matrixReport.SpecialTiers) special); host build $hostBuild ($matchStatus); honest fallback contracts and PerMonitorV2 DPI awareness verified across 9 automated tests."
+        $win32Live = $matrixReport.LiveWin32ApiValidation
+        $prodCaps = $matrixReport.ProductionBinaryCapabilities
+        $win32Valid = ($null -ne $win32Live -and $win32Live.KernelMatchesRegistry -and $win32Live.SupportsJobObjects -and $win32Live.SupportsPerMonitorV2Dpi)
+        $prodCapsValid = ($null -ne $prodCaps -and $prodCaps.report_type -eq "AetherShellPlatformCapabilities" -and $prodCaps.capabilities.supports_per_monitor_v2)
+
+        if ($testExit -eq 0 -and $totalTiers -eq 7 -and $supportedCount -eq 6 -and $win32Valid -and $prodCapsValid) {
+            Record-GateResult "G02" "Windows Compatibility & OS Matrix" "PASSED" "7-tier OS matrix validated ($supportedCount v1 supported, $($matrixReport.SpecialTiers) special); host build $hostBuild ($matchStatus); live Win32 API platform contracts (RtlGetVersion, Job Objects, D2D/D3D, PerMonitorV2) and production binary CLI capabilities verified across 12 automated tests."
         } else {
-            Record-GateResult "G02" "Windows Compatibility & OS Matrix" "FAILED" "Matrix test exit=$testExit, totalTiers=$totalTiers, supportedCount=$supportedCount"
+            Record-GateResult "G02" "Windows Compatibility & OS Matrix" "FAILED" "Matrix test exit=$testExit, totalTiers=$totalTiers, supportedCount=$supportedCount, win32Valid=$win32Valid, prodCapsValid=$prodCapsValid"
         }
     } else {
         Record-GateResult "G02" "Windows Compatibility & OS Matrix" "FAILED" "Matrix audit script failed with exit code ${matrixAuditExit}: $($matrixAuditOut | Out-String)"

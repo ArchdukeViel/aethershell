@@ -319,3 +319,82 @@ async fn test_app_engine_default_coordinator_uses_external_appearance_with_os_in
     assert_eq!(res.backend, "external_appearance");
     assert!(res.fallback_reason.is_some());
 }
+
+#[test]
+fn test_windows_10_servicing_range_19041_to_19045() {
+    for build in 19041..=19045 {
+        let fam = WindowsBuildFamily::from_build(build);
+        assert_eq!(fam, WindowsBuildFamily::Win10_22H2);
+        assert_eq!(fam.tier_id(), "VM-WIN10-22H2");
+        assert!(fam.is_windows_10());
+        assert!(!fam.is_windows_11());
+        assert_eq!(fam.taskbar_architecture(), TaskbarArchitecture::LegacyWin32);
+        assert!(fam.is_v1_supported());
+        assert!(!fam.is_special_validation_tier());
+
+        // Capabilities
+        let caps = fam.tier_capabilities();
+        assert!(caps.supports_per_monitor_v2);
+        assert!(caps.supports_direct2d_1_1);
+        assert!(caps.supports_job_object_quotas);
+        assert!(caps.supports_named_pipe_security);
+        assert!(caps.supports_shell_hook_stacking);
+
+        // Fallback verdict
+        let verdict = fam.evaluate_taskbar_effect(TaskbarEffect::AcrylicLike, true);
+        assert!(matches!(
+            verdict,
+            aethershell_win::EffectSupportVerdict::UnsupportedFallback { .. }
+        ));
+    }
+}
+
+#[test]
+fn test_live_host_platform_os_version_detection() {
+    let detected = WindowsVersionInfo::detect();
+    assert!(
+        detected.build_number >= 19041,
+        "Live host build {} must meet or exceed minimum Windows 10 baseline",
+        detected.build_number
+    );
+    assert!(
+        detected.ubr.is_some(),
+        "Live host registry UBR must be present"
+    );
+
+    let caps = detected.family.tier_capabilities();
+    assert!(caps.supports_per_monitor_v2);
+    assert!(caps.supports_direct2d_1_1);
+    assert!(caps.supports_job_object_quotas);
+    assert!(caps.supports_named_pipe_security);
+    assert!(caps.supports_shell_hook_stacking);
+
+    println!(
+        "Live host OS verified: Major={}, Minor={}, Build={}, UBR={:?}, Family={:?}, TierID={}",
+        detected.major,
+        detected.minor,
+        detected.build_number,
+        detected.ubr,
+        detected.family,
+        detected.family.tier_id()
+    );
+}
+
+#[test]
+fn test_live_host_taskbar_backend_evaluates_real_environment() {
+    let detected = WindowsVersionInfo::detect();
+    let mut backend =
+        ExternalAppearanceBackend::with_version_and_verification(detected.clone(), false);
+
+    // On unverified live system, Clear must honestly fall back to NativeNoop
+    let res = backend
+        .apply_effect(
+            "DISPLAY1",
+            MonitorTaskbarState::Desktop,
+            TaskbarEffect::Clear,
+        )
+        .unwrap();
+    assert_eq!(res.applied_effect, TaskbarEffect::NativeNoop);
+    assert!(res.fallback_reason.is_some());
+    assert_eq!(res.backend, "external_appearance");
+}
