@@ -54,6 +54,15 @@ async fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // Dedicated sleep test mode for multi-process qualification and isolation audits
+    if let Some(pos) = args.iter().position(|a| a == "--test-sleep-secs") {
+        if let Some(s) = args.get(pos + 1).and_then(|s| s.parse::<u64>().ok()) {
+            println!("SETTINGS_STARTED:{}", std::process::id());
+            std::thread::sleep(std::time::Duration::from_secs(s));
+            return ExitCode::SUCCESS;
+        }
+    }
+
     if let Err(unhandled) = validate_settings_args(&args) {
         eprintln!(
             "Error: Unrecognized command-line argument(s): {:?}",
@@ -190,6 +199,7 @@ fn print_usage() {
     println!("  --interactive [SECS]  Trigger temporary interactive desktop mode");
     println!("  --shutdown-core       Request active engine to terminate cleanly");
     println!("  --pipe <PIPE>         Connect to explicit Named Pipe endpoint");
+    println!("  --test-sleep-secs <N> Test mode: sleep N seconds and exit cleanly");
     println!("  --version, -v, /v     Display version and exit");
     println!("  --help, -h, /?        Show this help text");
 }
@@ -205,7 +215,7 @@ fn validate_settings_args(args: &[String]) -> Result<(), Vec<String>> {
             | "--pause-audio" | "--resume-audio" | "--shutdown-core" => {
                 i += 1;
             }
-            "--pipe" | "--page" => {
+            "--pipe" | "--page" | "--test-sleep-secs" => {
                 i += 1;
                 if i < args.len() {
                     i += 1;
@@ -265,6 +275,12 @@ mod tests {
             "aethershell-settings.exe".into(),
             "--page".into(),
             "widgets".into()
+        ])
+        .is_ok());
+        assert!(validate_settings_args(&[
+            "aethershell-settings.exe".into(),
+            "--test-sleep-secs".into(),
+            "2".into()
         ])
         .is_ok());
         assert!(validate_settings_args(&[

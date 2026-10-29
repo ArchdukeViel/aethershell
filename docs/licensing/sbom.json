@@ -3,13 +3,13 @@
     "dataLicense":  "CC0-1.0",
     "SPDXID":  "SPDXRef-DOCUMENT",
     "name":  "AetherShell-SBOM",
-    "documentNamespace":  "https://github.com/ArchdukeViel/aethershell/sbom/20261029-122401",
+    "documentNamespace":  "https://github.com/ArchdukeViel/aethershell/sbom/20261029-142213",
     "creationInfo":  {
                          "creators":  [
                                           "Tool: AetherShell SBOM Generator v1.0",
                                           "Organization: AetherShell Contributors"
                                       ],
-                         "created":  "2026-10-29T05:24:01Z"
+                         "created":  "2026-10-29T07:22:13Z"
                      },
     "packages":  [
                      {
