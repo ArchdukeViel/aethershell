@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary & Objective
 
-AetherShell has achieved clean component-level unit and integration test verification across its 13 workspace crates (302 unique passing tests across 27 test executables + 46 passing PowerShell regression tests across 8 test suites = 348 total passing automated tests). However, under the strict evidentiary governance defined in **PRD Section 18.2** and **AGENTS.md**, **no gate can be certified as `VERIFIED` based solely on in-process tests or headless CI runners**.
+AetherShell has achieved clean component-level unit and integration test verification across its 13 workspace crates (302 unique passing tests across 27 test executables + 56 passing PowerShell regression tests across 10 test suites = 358 total passing automated tests). However, under the strict evidentiary governance defined in **PRD Section 18.2** and **AGENTS.md**, **no gate can be certified as `VERIFIED` based solely on in-process tests or headless CI runners**.
 
 The objective of this Qualification Plan is to establish a rigorous, repeatable, and non-destructive empirical test campaign to evaluate AetherShell across:
 1. Isolated, disposable Windows Virtual Machines (VMs) for disruptive shell and fault-injection testing.
@@ -90,7 +90,8 @@ Every gate from G01 through G20 is mapped directly to its canonical PRD requirem
   1. Perform static binary analysis on compiled executables and libraries (`dumpbin /dependents`, PE import table inspection).
   2. Audit running process modules using `Get-Process explorer | Select-Object -ExpandProperty Modules` to prove zero AetherShell DLLs loaded in Explorer.
   3. Inspect system hook tables (`SetWindowsHookEx`) to verify no global system hooks are installed.
-  4. Perform module scan across all 5 distribution packages (MSI, MSIX, Store layout, WinGet, portable ZIP).
+  4. Perform package artifact isolation audit (`scripts/audit_package_artifacts.ps1`) and regression suite (`tests/package_isolation_tests.ps1`) across compiled staging trees and portable ZIP packages to verify zero injected extensions, zero BHOs, zero detours, and clean path remapping.
+  5. Perform module scan across all distribution packages (MSI, MSIX, Store layout, WinGet, portable ZIP).
 - **Pass Criteria:** Exactly zero injected modules, detours, or hooks into Windows system processes; clean dependency scan conforming strictly to Apache-2.0.
 
 ### Gate G04: Taskbar Recovery, Capability Gating & Native Fallback
@@ -273,7 +274,7 @@ Every gate from G01 through G20 is mapped directly to its canonical PRD requirem
 - **Test Procedure:**
   1. Create user configuration and widget layouts in MSI deployment.
   2. Install MSIX package; verify MSIX resolves to canonical `%LOCALAPPDATA%\AetherShell` and loads existing user data seamlessly.
-  3. Launch portable executable; verify identical configuration access without data duplication or migration loss.
+  3. Launch portable executable; verify identical configuration access without data duplication or migration loss via `tests/packaging_identity_continuity_tests.ps1`.
   4. Test startup toggle coordination: toggling "Start with Windows" in any package channel cleanly manages registry / startup task without conflicts.
   5. Execute uninstallation and rollback: verify application binaries are removed while user data in `%LOCALAPPDATA%\AetherShell` is preserved intact.
 - **Pass Criteria:** Identical configuration state shared across all channels; startup settings coordinated; uninstall preserves user data; rollback operates cleanly without data loss.

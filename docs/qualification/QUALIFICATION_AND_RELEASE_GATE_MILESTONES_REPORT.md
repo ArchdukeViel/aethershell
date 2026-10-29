@@ -23,7 +23,8 @@ In accordance with explicit project owner authorization (`/goal implement the re
 | **PR #61** | **Gate G14 Remediation** (Accessibility Win32 WinEvents & Status Reconciliation) | - Dispatched Win32 `NotifyWinEvent(EVENT_OBJECT_FOCUS, hwnd, OBJID_CLIENT, child_id)` on keyboard focus navigation (Finding P4)<br>- Dispatched Win32 `NotifyWinEvent(EVENT_SYSTEM_ALERT, hwnd, OBJID_CLIENT, child_id)` on widget activation<br>- Transparently documented keyboard navigation vs future custom Direct2D UIA provider gap<br>- Reconciled workspace test inventory to 294 unique Cargo tests and updated `docs/STATUS.md` | All 4 CI checks pass<br>Full workspace suite passes | `28ace8a` |
 | **PR #62** | **Gate G14** (Native Windows UI Automation Provider & WM_GETOBJECT Bridge) | - Implemented Win32 `WM_GETOBJECT (0x003D)` returning `IRawElementProviderSimple` via `UiaReturnRawElementProvider`<br>- Implemented COM provider hierarchy (`IRawElementProviderSimple`, `IRawElementProviderFragment`, `IRawElementProviderFragmentRoot`, `IInvokeProvider`) in `accessibility.rs`<br>- Standard UIA properties: Name, ControlType, BoundingRectangle, HasKeyboardFocus, IsEnabled, IsKeyboardFocusable<br>- Dispatches `UiaRaiseAutomationEvent` for focus and invoke events alongside WinEvents | All 4 CI checks pass<br>28/28 desktop tests pass<br>300 Cargo tests pass | `d98155f` |
 | **PR #63** | **Gate G16** (Packet-Level Network Isolation Auditor & Multi-Component Verification) | - Implemented `scripts/audit_packet_level_network_isolation.ps1` with elevation-aware NDIS packet capture via `PktMon.exe`<br>- High-frequency continuous socket scanning (25ms cadence) via native `iphlpapi.dll` scanner (<1ms whole-system scans)<br>- Windows DNS Client Cache differential analysis (`Get-DnsClientCache`) verifying zero outbound DNS queries<br>- Concurrent multi-component testing (`-SpawnAllComponents`) simultaneously spawning and verifying Core, Settings, and Script Host in isolated sandbox | All 4 CI checks pass<br>7/7 packet tests pass<br>36 PowerShell tests pass | `b1b71ba` |
-| **PR #65** | **PR Milestone 1** (Gates G06, G12, G13, G14) | - Win32 `RegisterShellHookWindow` / `DeregisterShellHookWindow` Win+D stacking re-assertion (`window.rs`)<br>- Empirical AMD Ryzen 5 5500U baseline ratified under PRD Section 14.4<br>- Win32 `trim_working_set()` wired to startup & idle presentation loop (`engine.rs`)<br>- Automated UIA reflection test suite (`tests/accessibility_uia_tests.ps1`)<br>- Automated configuration concurrency test suite (`tests/config_concurrency_tests.ps1`) | All 4 CI checks pass<br>302 Cargo tests pass<br>46 PowerShell tests pass | `HEAD` |
+| **PR #65** | **PR Milestone 1** (Gates G06, G12, G13, G14) | - Win32 `RegisterShellHookWindow` / `DeregisterShellHookWindow` Win+D stacking re-assertion (`window.rs`)<br>- Empirical AMD Ryzen 5 5500U baseline ratified under PRD Section 14.4<br>- Win32 `trim_working_set()` wired to startup & idle presentation loop (`engine.rs`)<br>- Automated UIA reflection test suite (`tests/accessibility_uia_tests.ps1`)<br>- Automated configuration concurrency test suite (`tests/config_concurrency_tests.ps1`) | All 4 CI checks pass<br>302 Cargo tests pass<br>46 PowerShell tests pass | `512b55a` |
+| **PR #66** | **PR Milestone 2** (Gates G03, G15, G20) | - Package shell isolation auditor (`scripts/audit_package_artifacts.ps1`) & regression suite (`tests/package_isolation_tests.ps1`)<br>- Packaging identity & AppData continuity suite (`tests/packaging_identity_continuity_tests.ps1`)<br>- Multi-channel packaging pipeline (`scripts/build_packages.ps1`) with path remapping & SHA-256 binary manifests<br>- Self-contained portable ZIP assembly and zero host pollution verification | All 4 CI checks pass<br>302 Cargo tests pass<br>56 PowerShell tests pass | `HEAD` |
 
 ---
 
@@ -85,11 +86,30 @@ An adversarial review of PRs #56, #57, and #58 raised four key findings (P1–P4
   2. Added `--test-sleep-secs <N>` test parameter to `crates/aethershell-settings/src/main.rs`.
   3. Added automated regression test suite `tests/packet_level_network_isolation_tests.ps1` (7 tests, 100% pass rate).
 
+### 2.7 Advancement (Gates G03, G15, G20): Multi-Channel Packaging Pipeline, Artifact Isolation Auditor & AppData Identity Continuity (PR #66)
+- **Implementation**:
+  1. Implemented `scripts/audit_package_artifacts.ps1`:
+     - Scans directories, staging trees, or ZIP archives (`-PackageDir` or `-ZipArchive`).
+     - Validates mandatory binary composition (`aethershell.exe`, `aethershell-script-host.exe`, `aethershell-settings.exe`, and WinUI 3 App SDK runtime dependencies).
+     - Enforces strict shell isolation: verifies zero Explorer shell extensions, zero BHOs, zero detours/minhook injection modules, and zero prohibited Explorer hook markers.
+     - Enforces PRD Q38:B compliance: detects and rejects prohibited `aethershell.portable` markers or redirector files that attempt to divert storage locally.
+     - Validates licensing compliance (`LICENSE` and `NOTICE` presence) and scans binaries for unremapped developer usernames and absolute path leakage.
+     - Generates structured SHA-256 binary manifests (`-ManifestOutputJson`) for cryptographic ledger tracking.
+  2. Implemented automated regression test suite `tests/package_isolation_tests.ps1` (6 tests, 100% pass rate) covering clean package pass, injected Explorer extension failure, prohibited portable marker rejection, missing license detection, direct ZIP archive scanning, and BOM-free JSON manifest emission.
+  3. Implemented automated regression test suite `tests/packaging_identity_continuity_tests.ps1` (4 tests, 100% pass rate):
+     - Asserts Cargo test `test_portable_mode_app_data_resolution_g20` in `aethershell-config`.
+     - Verifies that simulated portable directory layouts resolve canonical `%LOCALAPPDATA%\AetherShell`.
+     - Verifies that placing prohibited portable marker files does not divert canonical storage paths.
+     - Asserts that host `%LOCALAPPDATA%\AetherShell` is strictly maintained at 0 items.
+  4. Multi-channel packaging automation (`scripts/build_packages.ps1`):
+     - Developed `scripts/build_packages.ps1` automating release compilation with compiler path remapping (`--remap-path-prefix` and `/pathmap`), WinUI 3 runtime asset staging, self-contained portable ZIP assembly (`target\dist\portable\AetherShell-v1.0.0-portable-win-x64.zip`), and automated auditing (`-Audit`).
+     - Executed verification build: assembled and audited 36-binary package (3 core executables + 33 Windows App SDK runtime DLLs) in 2m 13s with 0 errors, 0 warnings, and generated `target\dist\portable_manifest.json`.
+
 ---
 
 ## 3. Workspace Test Inventory & Audit Summary
 
-Following completion and integration of PRs #56 through #63, the workspace test suite contains **300 unique passing automated Cargo tests** across 13 member crates, plus **36 dedicated PowerShell regression tests**:
+Following completion and integration of PRs #56 through #66, the workspace test suite contains **302 unique passing automated Cargo tests** across 13 member crates, plus **56 dedicated PowerShell regression tests across 10 test suites** (Total: **358 passing tests**):
 
 ```
 ================================================================================
@@ -106,7 +126,7 @@ aethershell-app                 8               93        101          13
 aethershell-audio               9                0          9           1
 aethershell-config             33                0         33           1
 aethershell-core                9                0          9           1
-aethershell-desktop            28                0         28           1
+aethershell-desktop            29                0         29           1
 aethershell-diagnostics        13               19         32           2
 aethershell-ipc                17                0         17           1
 aethershell-renderer           16                0         16           1
@@ -114,23 +134,27 @@ aethershell-script-host        25                0         25           2
 aethershell-settings            2                0          2           1
 aethershell-taskbar             4                0          4           1
 aethershell-telemetry           6                0          6           1
-aethershell-win                18                0         18           1
+aethershell-win                19                0         19           1
 
 ================================================================================
 SUMMARY AUDIT VERDICT:
-  Unique Unit Tests        : 188
+  Unique Unit Tests        : 190
   Unique Integration Tests : 112
-  Total Unique Tests       : 300
+  Total Unique Tests       : 302
 ================================================================================
 ```
 
-### PowerShell Qualification & Regression Suites (36 Passing Tests Across 6 Suites)
-1. `tests/packet_level_network_isolation_tests.ps1`: 7/7 passed.
-2. `tests/test_inventory_tests.ps1`: 6/6 passed.
-3. `tests/run_ryzen5_benchmark_tests.ps1`: 11/11 passed.
-4. `tests/sbom_and_license_compliance_tests.ps1`: 5/5 passed.
-5. `tests/provision_disposable_vm_tests.ps1`: 4/4 passed.
-6. `tests/network_isolation_tests.ps1`: 3/3 passed.
+### PowerShell Qualification & Regression Suites (56 Passing Tests Across 10 Suites)
+1. `tests/package_isolation_tests.ps1`: 6/6 passed.
+2. `tests/packaging_identity_continuity_tests.ps1`: 4/4 passed.
+3. `tests/accessibility_uia_tests.ps1`: 6/6 passed.
+4. `tests/config_concurrency_tests.ps1`: 4/4 passed.
+5. `tests/packet_level_network_isolation_tests.ps1`: 7/7 passed.
+6. `tests/test_inventory_tests.ps1`: 6/6 passed.
+7. `tests/run_ryzen5_benchmark_tests.ps1`: 11/11 passed.
+8. `tests/sbom_and_license_compliance_tests.ps1`: 5/5 passed.
+9. `tests/provision_disposable_vm_tests.ps1`: 4/4 passed.
+10. `tests/network_isolation_tests.ps1`: 3/3 passed.
 
 ---
 
@@ -140,7 +164,7 @@ SUMMARY AUDIT VERDICT:
 | :--- | :--- | :--- | :--- |
 | **G01** | Core Startup & Lifecycle | `PARTIALLY_VERIFIED` | EVD-003, EVD-010, EVD-014, EVD-037 |
 | **G02** | Multi-Process Security & IPC | `PARTIALLY_VERIFIED` | EVD-010, EVD-011, EVD-012, EVD-032, EVD-036 |
-| **G03** | Shell Isolation | `PARTIALLY_VERIFIED` | EVD-003, EVD-012 |
+| **G03** | Shell Isolation | `PARTIALLY_VERIFIED` | EVD-003, EVD-012, EVD-047 (PR #66) |
 | **G04** | Taskbar Recovery | `PARTIALLY_VERIFIED` | EVD-004, EVD-014, EVD-015 |
 | **G05** | Experimental Qualification | `NOT_APPLICABLE` | PRD Section 18.2 (No in-process Explorer extension) |
 | **G06** | Desktop Layering | `PARTIALLY_VERIFIED` | EVD-005, EVD-019, EVD-046 (PR #65) |
@@ -152,12 +176,12 @@ SUMMARY AUDIT VERDICT:
 | **G12** | Schema/Backup & Concurrency | `PARTIALLY_VERIFIED` | EVD-017, EVD-038, EVD-041, EVD-046 (PR #56, PR #59, PR #65) |
 | **G13** | Performance Budgets | `PARTIALLY_VERIFIED` | EVD-026, EVD-028, EVD-030, EVD-035, EVD-037, EVD-046 (PR #65) |
 | **G14** | Accessibility & Keyboard Nav | `PARTIALLY_VERIFIED` | EVD-040, EVD-043, EVD-044, EVD-046 (PR #58, PR #61, PR #62, PR #65) |
-| **G15** | Five-Channel Release | `DEFERRED` | Public packaging intentionally deferred |
+| **G15** | Five-Channel Release | `DEFERRED` | EVD-047 (PR #66; packaging pipeline verified; public release deferred) |
 | **G16** | License & Privacy Governance | `PARTIALLY_VERIFIED` | EVD-010, EVD-011, EVD-039, EVD-042, EVD-045 (PR #57, PR #60, PR #63) |
 | **G17** | Safe Mode & Recovery | `PARTIALLY_VERIFIED` | EVD-004, EVD-014, EVD-019 |
 | **G18** | Strict No-Go & Evidence | `PARTIALLY_VERIFIED` | EVD-008, EVD-009, EVD-031, EVD-034 |
 | **G19** | Third-Party Coexistence | `PARTIALLY_VERIFIED` | EVD-004, EVD-009 |
-| **G20** | Packaging Identity | `PARTIALLY_VERIFIED` | EVD-007, EVD-009 |
+| **G20** | Packaging Identity | `PARTIALLY_VERIFIED` | EVD-007, EVD-009, EVD-047 (PR #66) |
 
 ---
 

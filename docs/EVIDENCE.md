@@ -1734,6 +1734,42 @@ This document maintains verifiable test and validation records. Every entry is t
   - `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
 - **Evidentiary Verdict & Status**: `passed`. Gates G06, G12, G13, and G14 advanced with verified host code and test suites; truthfully maintained as `PARTIALLY_VERIFIED` pending clean disposable VM qualification runs per `20_GATES_QUALIFICATION_EXECUTION_PLAN.md`.
 
+---
+
+### EVD-047: PR Milestone 2 — Multi-Channel Packaging Pipeline, Artifact Isolation Auditor & AppData Identity Continuity (Gates G03, G15, G20)
+- **Requirement / Gate**: Gate G03 (Shell Isolation & Zero Explorer Extension), Gate G15 (Packaging Pipeline & Reproducible Distribution), Gate G20 (Packaging Identity & AppData Continuity), PRD Section 17, Section 18.2, Q38:B, Q40:A
+- **Candidate Commit**: `feature/phase2-packaging-offline-integrity`
+- **Date & Environment**: 2026-10-29, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Executing Phase 2 of the owner-approved `20_GATES_QUALIFICATION_EXECUTION_PLAN.md` to resolve packaging integrity, artifact auditing, and data identity continuity across Gates G03, G15, and G20 without violating deferred public release (Q40:A).
+- **Implementation & Remediation**:
+  1. **Gate G03 & G15 (Artifact Isolation & Package Shell Auditor)**:
+     - Implemented `scripts/audit_package_artifacts.ps1`:
+       - Scans directories, staging trees, or standalone ZIP archives (`-PackageDir` or `-ZipArchive`).
+       - Validates mandatory binary composition (`aethershell.exe`, `aethershell-script-host.exe`, `aethershell-settings.exe`, and WinUI 3 App SDK runtime dependencies).
+       - Enforces strict shell isolation: verifies zero Explorer shell extensions, zero BHOs, zero detours/minhook injection modules, and zero prohibited Explorer hook markers.
+       - Enforces PRD Q38:B compliance: detects and rejects prohibited `aethershell.portable` markers or redirector files that attempt to divert storage locally.
+       - Validates licensing compliance (`LICENSE` and `NOTICE` presence) and scans binaries for unremapped developer usernames and absolute path leakage.
+       - Generates structured SHA-256 binary manifests (`-ManifestOutputJson`) for cryptographic ledger tracking.
+     - Implemented automated regression test suite `tests/package_isolation_tests.ps1` (6 tests, 100% pass rate) covering clean package pass, injected Explorer extension failure, prohibited portable marker rejection, missing license detection, direct ZIP archive scanning, and BOM-free JSON manifest emission.
+  2. **Gate G20 (Packaging Identity & AppData Continuity)**:
+     - Implemented automated regression test suite `tests/packaging_identity_continuity_tests.ps1` (4 tests, 100% pass rate):
+       - Asserts Cargo test `test_portable_mode_app_data_resolution_g20` in `aethershell-config`.
+       - Verifies that simulated portable directory layouts resolve canonical `%LOCALAPPDATA%\AetherShell`.
+       - Verifies that placing prohibited portable marker files does not divert canonical storage paths.
+       - Asserts that host `%LOCALAPPDATA%\AetherShell` is strictly maintained at 0 items.
+  3. **Multi-Channel Packaging Automation (`scripts/build_packages.ps1`)**:
+     - Developed `scripts/build_packages.ps1` automating release compilation with compiler path remapping (`--remap-path-prefix` and `/pathmap`), WinUI 3 runtime asset staging, self-contained portable ZIP assembly (`target\dist\portable\AetherShell-v1.0.0-portable-win-x64.zip`), and automated auditing (`-Audit`).
+     - Executed verification build: assembled and audited 36-binary package (3 core executables + 33 Windows App SDK runtime DLLs) in 2m 13s with 0 errors, 0 warnings, and generated `target\dist\portable_manifest.json`.
+- **Verification & Test Results**:
+  - `tests/package_isolation_tests.ps1`: 6/6 passed cleanly.
+  - `tests/packaging_identity_continuity_tests.ps1`: 4/4 passed cleanly.
+  - Portable package build and audit: 36 binaries verified, 0 Explorer extensions, 0 detours, 0 path leaks, SHA-256 manifest written.
+  - Total workspace suite: 302 unique Cargo tests + 56 PowerShell tests across 10 test suites = 358 passing tests.
+  - Host AppData `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gates G03 and G20 advanced with verified host tools and test suites; G15 packaging pipeline verified for portable distribution while public release remains `DEFERRED` per Q40:A.
+
+
 
 
 
