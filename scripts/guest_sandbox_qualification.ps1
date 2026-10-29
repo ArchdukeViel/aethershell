@@ -154,7 +154,7 @@ try {
     $g01Sandbox = Join-Path $sandboxRoot "G01"
     New-Item -ItemType Directory -Path $g01Sandbox -Force | Out-Null
 
-    $proc = Start-SandboxedProcess -FilePath $coreExe -ArgumentList "--benchmark 3" -SandboxDir $g01Sandbox
+    $proc = Start-SandboxedProcess -FilePath $coreExe -ArgumentList "--test-sleep-secs 3" -SandboxDir $g01Sandbox
 
     Start-Sleep -Milliseconds 600
 
@@ -186,7 +186,7 @@ try {
         $g04Sandbox = Join-Path $sandboxRoot "G04"
         New-Item -ItemType Directory -Path $g04Sandbox -Force | Out-Null
 
-        $appProc = Start-SandboxedProcess -FilePath $coreExe -ArgumentList "--safe-mode --benchmark 10" -SandboxDir $g04Sandbox
+        $appProc = Start-SandboxedProcess -FilePath $coreExe -ArgumentList "--safe-mode --test-sleep-secs 10" -SandboxDir $g04Sandbox
 
         Start-Sleep -Milliseconds 800
 
@@ -287,7 +287,7 @@ try {
     New-Item -ItemType Directory -Path $g17Sandbox -Force | Out-Null
 
     # Test safe mode CLI argument
-    $safeProc = Start-SandboxedProcess -FilePath $coreExe -ArgumentList "--safe-mode --benchmark 2" -SandboxDir $g17Sandbox -Wait
+    $safeProc = Start-SandboxedProcess -FilePath $coreExe -ArgumentList "--safe-mode --test-sleep-secs 2" -SandboxDir $g17Sandbox -Wait
 
     if ($safeProc.ExitCode -eq 0) {
         Record-GateResult "G17" "Safe Mode & Self-Healing" "PASSED" "Safe mode forces NativeNoopBackend and cleanly executes; config self-healing verified."

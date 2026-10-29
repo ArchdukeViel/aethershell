@@ -53,6 +53,16 @@ async fn main() -> ExitCode {
         }
     }
 
+    // Dedicated sleep test mode for multi-process qualification and isolation audits
+    if let Some(pos) = args.iter().position(|a| a == "--test-sleep-secs") {
+        if let Some(s) = args.get(pos + 1).and_then(|s| s.parse::<u64>().ok()) {
+            println!("CORE_STARTED:{}", std::process::id());
+            std::thread::sleep(std::time::Duration::from_secs(s));
+            println!("CORE_TERMINATED:{}", std::process::id());
+            return ExitCode::SUCCESS;
+        }
+    }
+
     if let Some(pos) = args.iter().position(|a| a == "--benchmark") {
         let duration: u32 = args.get(pos + 1).and_then(|s| s.parse().ok()).unwrap_or(60);
         println!(
@@ -416,6 +426,7 @@ fn print_usage() {
     println!("    -h, --help, /?           Print help information");
     println!("    -v, --version            Print version information");
     println!("    --safe-mode              Launch in Safe Mode (forces NativeNoopBackend, bypasses hooks)");
+    println!("    --test-sleep-secs <N>    Test mode: sleep N seconds and exit cleanly");
     println!("    --diagnostics            Generate and print sanitized JSON diagnostics report");
     println!("    --settings               Request active instance to open Settings window");
     println!("    --benchmark <SECS>       Run component-level microbenchmark (default: 60s)");
