@@ -1,22 +1,22 @@
 {
     "LedgerType":  "AetherShellFinalReleaseAcceptanceLedger",
     "Version":  "0.1.0-dev",
-    "GeneratedAt":  "2026-10-30T08:40:36.4399017+07:00",
+    "GeneratedAt":  "2026-10-30T09:37:20.2644700+07:00",
     "ReleaseDisposition":  "NO-GO",
     "CoreStableCandidate":  false,
     "ProductionVersionTag":  "RESERVED (v1.0.0)",
     "GovernancePolicy":  "PRD Section 18.2, AGENTS.md, Decisions Q01-Q48",
     "GateAccountingSummary":  {
                                   "TotalGates":  20,
-                                  "Verified":  5,
-                                  "PartiallyVerified":  13,
+                                  "Verified":  6,
+                                  "PartiallyVerified":  12,
                                   "NotApplicable":  1,
                                   "Deferred":  1
                               },
     "AutomatedTestSummary":  {
-                                 "UniqueCargoTests":  376,
-                                 "PowerShellTests":  110,
-                                 "TotalAutomatedTests":  486,
+                                 "UniqueCargoTests":  391,
+                                 "PowerShellTests":  117,
+                                 "TotalAutomatedTests":  508,
                                  "HostAppDataItems":  0
                              },
     "CryptographicArtifacts":  {
@@ -84,9 +84,9 @@
                                 "GateId":  "G07",
                                 "Name":  "Temporary Interactive Mode",
                                 "PassCondition":  "Tray/hotkey opens bounded overlay, user action works; Escape/timeout/focus change restores passive icon input",
-                                "Status":  "PARTIALLY_VERIFIED",
-                                "Evidence":  "EVD-021, EVD-048",
-                                "Reason":  "InteractionController implements 4 auto-dismissal triggers (Escape, 8s timeout, focus change, session lock); spatial pointer hit-testing and global hotkey Win+Ctrl+A verified; automated guest harness active in PR #67. VM focus video remains outstanding."
+                                "Status":  "VERIFIED",
+                                "Evidence":  "EVD-021, EVD-048, EVD-056",
+                                "Reason":  "InteractionController and DesktopHostWindow implement all 8 auto-dismissal triggers (Escape, inactivity timeout with Win32 SetTimer/WM_TIMER, external focus loss with process filtering, click outside, session lock, full-screen Gaming Shield, explicit exit, safe mode); spatial pointer hit-testing, keyboard focus navigation (Tab/Shift-Tab/Enter/Space), and global hotkey Win+Ctrl+A verified; tray menu ID_TRAY_INTERACTIVE_MODE wired to IPC; non-topmost contract (HWND_NOTOPMOST, 0 WS_EX_TOPMOST) and passive icon passthrough (WS_EX_TRANSPARENT | WS_EX_NOACTIVATE) empirically verified across 36 unit tests, 18 Cargo integration tests, and 7 PowerShell regression tests with 0 host AppData pollution (EVD-056)."
                             },
                             {
                                 "GateId":  "G08",

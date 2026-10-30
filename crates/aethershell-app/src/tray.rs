@@ -25,6 +25,7 @@ pub const ID_TRAY_SAFE_MODE: usize = 1004;
 pub const ID_TRAY_DIAGNOSTICS: usize = 1005;
 pub const ID_TRAY_EXIT: usize = 1006;
 pub const ID_TRAY_RESUME_AUDIO: usize = 1007;
+pub const ID_TRAY_INTERACTIVE_MODE: usize = 1008;
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 static AUDIO_IS_PAUSED: AtomicBool = AtomicBool::new(false);
@@ -572,6 +573,15 @@ unsafe extern "system" fn tray_window_proc(
                     tracing::info!("Tray: Open Settings clicked");
                     handle_open_settings();
                 }
+                ID_TRAY_INTERACTIVE_MODE => {
+                    tracing::info!(
+                        "Tray: Interactive Mode clicked; entering temporary interactive mode"
+                    );
+                    dispatch_tray_ipc(
+                        "enter_interactive_mode",
+                        serde_json::json!({ "timeout_seconds": 8 }),
+                    );
+                }
                 ID_TRAY_UNLOCK_LAYOUT => {
                     tracing::info!(
                         "Tray: Unlock Layout clicked; entering temporary interactive mode"
@@ -644,6 +654,12 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     };
 
     let _ = AppendMenuW(menu, MF_STRING, ID_TRAY_OPEN_SETTINGS, w!("Open Settings"));
+    let _ = AppendMenuW(
+        menu,
+        MF_STRING,
+        ID_TRAY_INTERACTIVE_MODE,
+        w!("Interactive Mode (Win+Ctrl+A)"),
+    );
     let _ = AppendMenuW(menu, MF_STRING, ID_TRAY_UNLOCK_LAYOUT, w!("Unlock Layout"));
 
     if AUDIO_IS_PAUSED.load(Ordering::Relaxed) {

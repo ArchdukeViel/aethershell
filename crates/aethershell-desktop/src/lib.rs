@@ -17,5 +17,5 @@ pub use interaction::{
 pub use window::{
     safe_stacking_target, shellhook_msg, taskbar_created_msg, DesktopHostWindow,
     DesktopWindowManager, HOTKEY_ID_INTERACTIVE_MODE, HSHELL_ACTIVATESHELLWINDOW, HSHELL_REDRAW,
-    HSHELL_RUDEAPPACTIVATED, HSHELL_WINDOWACTIVATED,
+    HSHELL_RUDEAPPACTIVATED, HSHELL_WINDOWACTIVATED, TIMER_ID_INTERACTIVE_TIMEOUT,
 };

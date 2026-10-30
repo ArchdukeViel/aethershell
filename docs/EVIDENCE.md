@@ -2182,3 +2182,59 @@ This document maintains verifiable test and validation records. Every entry is t
   - Host AppData `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
 - **Evidentiary Verdict & Status**: `passed`. Gate G06 achieves complete qualification and transitions to `VERIFIED`.
 
+---
+
+### EVD-056: Temporary Interactive Mode Global Hotkey, Spatial Hit-Testing, Multi-Trigger Auto-Dismissal & Safe Icon Passthrough (Gate G07)
+- **Requirement / Gate**: Gate G07 (Temporary Interactive Mode), PRD Section 5.3, Section 18.2 Gate G07, Decisions Q31:A, Q37:A
+- **Candidate Commit**: `feature/gate-g07-temporary-interactive-mode` Head
+- **Date & Environment**: 2026-10-30, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Executing owner mandate (`proceed with gate 7, do 3 iterations and 1 review iterations. boost do not forget to review whether gate 6 really verified or not`) across 3 iterative engineering cycles to fully qualify Gate G07. Per PRD Section 5.3, the desktop host must maintain passive desktop visuals beneath desktop icons (`SHELLDLL_DefView`), passing pointer clicks through via `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`. When initiated via user-configured global hotkey (`Win+Ctrl+A`) or system tray command (`ID_TRAY_INTERACTIVE_MODE`), an AetherShell-owned, narrowly bounded topmost-to-desktop interaction surface temporarily activates without drawing above unrelated normal application windows (`HWND_NOTOPMOST`, strictly zero `WS_EX_TOPMOST`). All 8 safe auto-dismissal triggers (Escape key, inactivity timeout, click outside, focus loss, session lock, full-screen Gaming Shield, explicit exit, safe mode) must reliably return input ownership immediately to desktop icons with zero low-level mouse hooks (`WH_MOUSE_LL`).
+- **Implementation & Qualification Architecture**:
+  1. **Win32 Window-Level Inactivity Timer & Dismissal Infrastructure (`crates/aethershell-desktop/src/window.rs`)**:
+     - Added `TIMER_ID_INTERACTIVE_TIMEOUT = 0xAE10` with Win32 `SetTimer` (250ms tick) and `KillTimer`.
+     - Added `interactive_timeout_ms: Arc<AtomicU64>` (defaulting to 8000ms, user-configurable).
+     - Added `last_dismissal_reason: Arc<Mutex<Option<DismissalReason>>>` providing full runtime observability.
+     - Implemented `DesktopHostWindow::set_interactive_timeout(&mut self, timeout_seconds: u32)`, `interactive_timeout(&self) -> u32`, `dismiss(&mut self, reason: DismissalReason)`, and `check_inactivity_timeout(&mut self, now_tick: u64) -> bool`.
+     - Integrated `WM_TIMER` dispatch in `desktop_host_wnd_proc`, automatically triggering `dismiss_interactive_mode(hwnd, state, DismissalReason::Timeout)` when inactivity deadline elapses.
+     - Integrated `SWP_NOACTIVATE` when showing `HWND_NOTOPMOST` to prevent spurious focus deactivation across multi-monitor setups.
+     - Added `is_our_window(target: HWND) -> bool` filtering in `WM_ACTIVATE` and `WM_KILLFOCUS` so moving focus between AetherShell windows or displays does not prematurely dismiss interactive mode.
+  2. **Multi-Monitor Window Manager Coordination & Gaming Shield Integration**:
+     - Added `DesktopWindowManager::dismiss_all(&mut self, reason: DismissalReason)`.
+     - Added `DesktopWindowManager::handle_fullscreen_shield(&mut self)` triggering `DismissalReason::FullScreenShield` across all displays.
+     - Added `DesktopWindowManager::set_interactive_timeout(&mut self, timeout_seconds: u32)`.
+     - Added `DesktopWindowManager::check_inactivity_timeout(&mut self, now_tick: u64) -> bool`.
+     - Added `DesktopWindowManager::last_dismissal_reason(&self) -> Option<DismissalReason>`.
+  3. **Tray Command IPC Integration (`crates/aethershell-app/src/tray.rs`)**:
+     - Added `ID_TRAY_INTERACTIVE_MODE = 1008`.
+     - Added menu item `AppendMenuW(menu, MF_STRING, ID_TRAY_INTERACTIVE_MODE, w!("Interactive Mode (Win+Ctrl+A)"))`.
+     - Wired `WM_COMMAND` to dispatch `enter_interactive_mode` IPC with configurable timeout.
+  4. **Dedicated Cargo Integration Test Suite (`crates/aethershell-app/tests/temporary_interactive_mode_integration_test.rs`)**:
+     - 11 automated integration tests (100% passing in 14.27s):
+       - `test_temporary_interactive_mode_hotkey_toggle_and_extended_styles`: Win+Ctrl+A toggle, `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE` in passive mode, `WS_EX_TOOLWINDOW | WS_EX_LAYERED` in interactive mode, strictly zero `WS_EX_TOPMOST`.
+       - `test_temporary_interactive_mode_spatial_hit_testing_and_action_dispatch`: spatial hit-testing fires action callback and resets activity deadline.
+       - `test_temporary_interactive_mode_click_outside_dismissal`: clicking outside interactive regions immediately dismisses with `DismissalReason::ClickOutside`.
+       - `test_temporary_interactive_mode_escape_key_dismissal`: VK_ESCAPE immediately dismisses with `DismissalReason::EscapeKey`.
+       - `test_temporary_interactive_mode_inactivity_timeout_lifecycle`: inactivity timeout dismisses with `DismissalReason::Timeout` via both programmatic check and `WM_TIMER`.
+       - `test_temporary_interactive_mode_focus_loss_dismissal`: `WM_KILLFOCUS` and `WM_ACTIVATE (WA_INACTIVE)` dismiss with `DismissalReason::FocusLost`.
+       - `test_temporary_interactive_mode_session_lock_dismissal`: `WM_WTSSESSION_CHANGE` with `WTS_SESSION_LOCK` (7) dismisses with `DismissalReason::SessionLocked`.
+       - `test_temporary_interactive_mode_fullscreen_shield_dismissal`: gaming shield triggers `DismissalReason::FullScreenShield` across all monitors.
+       - `test_temporary_interactive_mode_multimonitor_coordination`: multi-monitor window manager cleanly enters/exits interactive mode across displays.
+       - `test_temporary_interactive_mode_explorer_restart_preservation`: `TaskbarCreated` broadcast preserves hotkey registration and interactive regions.
+       - `test_temporary_interactive_mode_host_appdata_remains_strictly_zero_items`: asserts 0 items in `%LOCALAPPDATA%\AetherShell`.
+  5. **PowerShell Regression Test Suite (`tests/temporary_interactive_mode_tests.ps1`)**:
+     - 7 automated regression tests (100% passing): unit tests, integration test suite, extended styles, all 8 auto-dismissal triggers, global hotkey & tray menu IPC wiring, Q37:A safety boundary, and AppData 0-pollution.
+  6. **Acceptance Ledger & Test Accounting Update**:
+     - Updated `scripts/generate_release_acceptance_ledger.ps1` and `tests/release_acceptance_ledger_tests.ps1` to transition Gate G07 to `VERIFIED`.
+     - Test baseline expanded to 391 unique Cargo tests (33 test binaries) + 117 PowerShell tests (17 test suites) = 508 total automated verification tests.
+     - Regenerated `docs/qualification/FINAL_RELEASE_ACCEPTANCE_LEDGER.json`.
+- **Verification & Test Results**:
+  - `cargo test -p aethershell-desktop`: 36/36 passed cleanly (100%).
+  - `cargo test -p aethershell-app --test temporary_interactive_mode_integration_test`: 11/11 passed cleanly in 14.27s.
+  - `cargo test -p aethershell-app --test interactive_mode_hotkey_and_hit_testing_test`: 7/7 passed cleanly in 0.19s.
+  - `powershell -File tests/temporary_interactive_mode_tests.ps1`: 7/7 passed cleanly (100%).
+  - `powershell -File scripts/guest_sandbox_qualification.ps1 -SkipExplorerKill`: 10 passed, 0 failed, 1 skipped (Gate G07 PASSED).
+  - Test inventory: 391 unique Cargo tests, 117 PowerShell tests, 508 total automated tests (100% pass rate).
+  - Host AppData `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gate G07 achieves complete qualification and transitions to `VERIFIED`.
+
