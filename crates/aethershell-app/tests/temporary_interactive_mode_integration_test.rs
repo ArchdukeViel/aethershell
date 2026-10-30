@@ -40,7 +40,10 @@ fn test_temporary_interactive_mode_hotkey_toggle_and_extended_styles() {
 
     // Register global hotkey (Win+Ctrl+A per PRD Section 5.3 & Q31:A)
     let reg_result = win_mgr.register_global_hotkey(MOD_WIN | MOD_CONTROL, 0x41);
-    assert!(reg_result.is_ok(), "Global hotkey registration must succeed");
+    assert!(
+        reg_result.is_ok(),
+        "Global hotkey registration must succeed"
+    );
     assert!(win_mgr.is_hotkey_registered());
 
     let hotkey_toggles = Arc::new(Mutex::new(Vec::new()));
@@ -173,7 +176,11 @@ fn test_temporary_interactive_mode_spatial_hit_testing_and_action_dispatch() {
     }
 
     let events = action_events.lock().unwrap().clone();
-    assert_eq!(events.len(), 1, "Action callback must be triggered on valid hit");
+    assert_eq!(
+        events.len(),
+        1,
+        "Action callback must be triggered on valid hit"
+    );
     assert_eq!(events[0].0, "media_next_btn");
     assert_eq!(events[0].1, Some("media.next".into()));
     assert_eq!(events[0].2, 180.0);
@@ -267,7 +274,10 @@ fn test_temporary_interactive_mode_escape_key_dismissal() {
         !win.is_interactive(),
         "Escape key must dismiss interactive mode back to passive desktop icons"
     );
-    assert_eq!(win.last_dismissal_reason(), Some(DismissalReason::EscapeKey));
+    assert_eq!(
+        win.last_dismissal_reason(),
+        Some(DismissalReason::EscapeKey)
+    );
     assert_eq!(
         *dismissals.lock().unwrap(),
         vec![DismissalReason::EscapeKey]
@@ -337,7 +347,10 @@ fn test_temporary_interactive_mode_focus_loss_dismissal() {
         !win.is_interactive(),
         "WM_KILLFOCUS must dismiss interactive mode on focus loss"
     );
-    assert_eq!(win.last_dismissal_reason(), Some(DismissalReason::FocusLost));
+    assert_eq!(
+        win.last_dismissal_reason(),
+        Some(DismissalReason::FocusLost)
+    );
 
     // 2. WM_ACTIVATE with WA_INACTIVE
     win.set_interactive(true);
@@ -351,7 +364,10 @@ fn test_temporary_interactive_mode_focus_loss_dismissal() {
         !win.is_interactive(),
         "WM_ACTIVATE (WA_INACTIVE) must dismiss interactive mode on focus loss"
     );
-    assert_eq!(win.last_dismissal_reason(), Some(DismissalReason::FocusLost));
+    assert_eq!(
+        win.last_dismissal_reason(),
+        Some(DismissalReason::FocusLost)
+    );
 }
 
 #[test]

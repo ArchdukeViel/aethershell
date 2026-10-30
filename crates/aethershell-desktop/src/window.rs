@@ -26,14 +26,15 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DeregisterShellHookWindow, DestroyWindow, DispatchMessageW,
-    GetWindowLongPtrW, GetWindowThreadProcessId, IsWindow, KillTimer, LoadCursorW, PeekMessageW, RegisterClassExW,
-    RegisterShellHookWindow, RegisterWindowMessageW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos,
-    TranslateMessage, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, GWL_EXSTYLE,
-    HWND_BOTTOM, HWND_NOTOPMOST, IDC_ARROW, IDC_HAND, MSG, PM_REMOVE, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WINDOW_EX_STYLE,
-    WM_ACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ENDSESSION, WM_ERASEBKGND, WM_GETOBJECT,
-    WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
-    WM_NCDESTROY, WM_PAINT, WM_QUERYENDSESSION, WM_QUIT, WM_TIMER, WNDCLASSEXW, WS_POPUP, WS_VISIBLE,
+    GetWindowLongPtrW, GetWindowThreadProcessId, IsWindow, KillTimer, LoadCursorW, PeekMessageW,
+    RegisterClassExW, RegisterShellHookWindow, RegisterWindowMessageW, SetCursor, SetTimer,
+    SetWindowLongPtrW, SetWindowPos, TranslateMessage, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
+    GWLP_USERDATA, GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST, IDC_ARROW, IDC_HAND, MSG, PM_REMOVE,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
+    WINDOW_EX_STYLE, WM_ACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ENDSESSION, WM_ERASEBKGND,
+    WM_GETOBJECT, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_QUERYENDSESSION, WM_QUIT, WM_TIMER, WNDCLASSEXW,
+    WS_POPUP, WS_VISIBLE,
 };
 
 /// Hotkey ID for toggling Temporary Interactive Mode (PRD Section 5.3 & Q31:A).
@@ -1782,7 +1783,8 @@ impl DesktopWindowManager {
 
     /// Retrieves the reason for the most recent interactive session dismissal on the primary window.
     pub fn last_dismissal_reason(&self) -> Option<DismissalReason> {
-        self.primary_window().and_then(|w| w.last_dismissal_reason())
+        self.primary_window()
+            .and_then(|w| w.last_dismissal_reason())
     }
 
     /// Checks inactivity timeout across all windows (testable helper).
@@ -2821,10 +2823,7 @@ mod tests {
         let dismissed_timeout = win.check_inactivity_timeout(start_tick + 2100);
         assert!(dismissed_timeout);
         assert!(!win.is_interactive());
-        assert_eq!(
-            win.last_dismissal_reason(),
-            Some(DismissalReason::Timeout)
-        );
+        assert_eq!(win.last_dismissal_reason(), Some(DismissalReason::Timeout));
         assert_eq!(
             *dismissal_received.lock().unwrap(),
             Some(DismissalReason::Timeout)
@@ -2833,7 +2832,8 @@ mod tests {
         // 3. Test WM_TIMER message handler for TIMER_ID_INTERACTIVE_TIMEOUT
         win.set_interactive(true);
         assert!(win.is_interactive());
-        let timer_start_tick = unsafe { (*win.state_ptr).last_activity_tick.load(Ordering::Relaxed) };
+        let timer_start_tick =
+            unsafe { (*win.state_ptr).last_activity_tick.load(Ordering::Relaxed) };
         // Simulate tick passage by adjusting last_activity_tick to 3 seconds in the past
         unsafe {
             (*win.state_ptr)
@@ -2848,7 +2848,10 @@ mod tests {
             assert_eq!(res, LRESULT(0));
         }
 
-        assert!(!win.is_interactive(), "WM_TIMER must dismiss interactive mode on timeout");
+        assert!(
+            !win.is_interactive(),
+            "WM_TIMER must dismiss interactive mode on timeout"
+        );
         assert_eq!(win.last_dismissal_reason(), Some(DismissalReason::Timeout));
     }
 
@@ -2896,8 +2899,14 @@ mod tests {
             assert_eq!(res, LRESULT(0));
         }
 
-        assert!(!win.is_interactive(), "WM_KILLFOCUS must dismiss interactive mode");
-        assert_eq!(win.last_dismissal_reason(), Some(DismissalReason::FocusLost));
+        assert!(
+            !win.is_interactive(),
+            "WM_KILLFOCUS must dismiss interactive mode"
+        );
+        assert_eq!(
+            win.last_dismissal_reason(),
+            Some(DismissalReason::FocusLost)
+        );
 
         // 2. WM_ACTIVATE with WA_INACTIVE (wparam low word == 0)
         win.set_interactive(true);
@@ -2908,8 +2917,14 @@ mod tests {
             assert_eq!(res, LRESULT(0));
         }
 
-        assert!(!win.is_interactive(), "WM_ACTIVATE (WA_INACTIVE) must dismiss interactive mode");
-        assert_eq!(win.last_dismissal_reason(), Some(DismissalReason::FocusLost));
+        assert!(
+            !win.is_interactive(),
+            "WM_ACTIVATE (WA_INACTIVE) must dismiss interactive mode"
+        );
+        assert_eq!(
+            win.last_dismissal_reason(),
+            Some(DismissalReason::FocusLost)
+        );
     }
 
     #[test]
@@ -2934,7 +2949,10 @@ mod tests {
 
         for win in win_mgr.windows() {
             assert!(!win.is_interactive());
-            assert_eq!(win.last_dismissal_reason(), Some(DismissalReason::FullScreenShield));
+            assert_eq!(
+                win.last_dismissal_reason(),
+                Some(DismissalReason::FullScreenShield)
+            );
         }
         assert_eq!(
             win_mgr.last_dismissal_reason(),
@@ -2944,7 +2962,11 @@ mod tests {
         // Check timeout across all windows
         win_mgr.enter_interactive_mode();
         win_mgr.set_interactive_timeout(3);
-        let start_tick = unsafe { (*win_mgr.primary_window().unwrap().state_ptr).last_activity_tick.load(Ordering::Relaxed) };
+        let start_tick = unsafe {
+            (*win_mgr.primary_window().unwrap().state_ptr)
+                .last_activity_tick
+                .load(Ordering::Relaxed)
+        };
 
         let dismissed_timeout = win_mgr.check_inactivity_timeout(start_tick + 3500);
         assert!(dismissed_timeout);
