@@ -19,8 +19,12 @@ use std::time::Duration;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 
+/// Global test lock to serialize in-process named kernel event tests across threads.
+static RECOVERY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn test_taskbar_recovery_coordinator_lifecycle_and_heartbeat_pulse() {
+    let _lock = RECOVERY_TEST_LOCK.lock().unwrap();
     let coordinator =
         TaskbarRecoveryCoordinator::new().expect("Coordinator must initialize cleanly");
     let pid = coordinator.pid();
@@ -66,6 +70,7 @@ fn test_taskbar_recovery_coordinator_lifecycle_and_heartbeat_pulse() {
 
 #[test]
 fn test_taskbar_recovery_taskbar_created_broadcast_handling() {
+    let _lock = RECOVERY_TEST_LOCK.lock().unwrap();
     let mut coordinator = TaskbarRecoveryCoordinator::new().expect("Coordinator init");
     let msg_id = coordinator.taskbar_created_msg();
 
