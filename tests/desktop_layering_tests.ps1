@@ -62,8 +62,8 @@ Run-TestCase "Cargo aethershell-desktop unit tests pass cleanly" {
     if ($exitCode -ne 0) {
         throw "cargo test failed with exit code ${exitCode}: $outStr"
     }
-    if ($outStr -notmatch "32 passed") {
-        throw "Expected 32 passed tests in aethershell-desktop, got: $outStr"
+    if ($outStr -notmatch "(\d+)\s+passed" -or [int]$matches[1] -lt 32) {
+        throw "Expected at least 32 passed tests in aethershell-desktop, got: $outStr"
     }
 }
 
@@ -199,8 +199,8 @@ Run-TestCase "Host AppData (%LOCALAPPDATA%\AetherShell) remains strictly unpollu
 # Summary and Disposition
 # -----------------------------------------------------------------------------
 Write-Host "--------------------------------------------------------------------------------" -ForegroundColor Gray
-$passed = ($testResults | Where-Object { $_.Status -eq "Passed" }).Count
-$failed = ($testResults | Where-Object { $_.Status -eq "Failed" }).Count
+$passed = @($testResults | Where-Object { $_.Status -eq "Passed" }).Count
+$failed = @($testResults | Where-Object { $_.Status -eq "Failed" }).Count
 $total = $testResults.Count
 
 Write-Host "Desktop Layering Test Summary: $passed/$total passed ($failed failed)" -ForegroundColor $(if ($failed -eq 0) { "Green" } else { "Red" })
