@@ -1,7 +1,7 @@
 {
     "LedgerType":  "AetherShellFinalReleaseAcceptanceLedger",
     "Version":  "0.1.0-dev",
-    "GeneratedAt":  "2026-10-30T02:24:46.3317886+07:00",
+    "GeneratedAt":  "2026-10-30T07:59:50.0004696+07:00",
     "ReleaseDisposition":  "NO-GO",
     "CoreStableCandidate":  false,
     "ProductionVersionTag":  "RESERVED (v1.0.0)",
@@ -14,9 +14,9 @@
                                   "Deferred":  1
                               },
     "AutomatedTestSummary":  {
-                                 "UniqueCargoTests":  352,
-                                 "PowerShellTests":  96,
-                                 "TotalAutomatedTests":  448,
+                                 "UniqueCargoTests":  366,
+                                 "PowerShellTests":  103,
+                                 "TotalAutomatedTests":  469,
                                  "HostAppDataItems":  0
                              },
     "CryptographicArtifacts":  {
@@ -24,8 +24,8 @@
                                    "aethershell-script-host.exe":  "2567eb821ffcbed5a27c51ce8b10d8c6b0d16169fe14b8f9d7809000206f74de",
                                    "aethershell-settings.exe":  "d30ba6e350f811ece250a64deda62591416bd4730e78c73931ffa2c2b9025216",
                                    "portable_zip":  "be3350d7e891c6879fcc5fcee23b192fbce933552b0009b39e8328e2ad376b4a",
-                                   "sbom.json":  "df6ba7a15018ed3a83248785aac7f05dc400d7465c1dba1719c477f6c5ed2d09",
-                                   "THIRD_PARTY_LICENSES.md":  "d52621fabdacac0c802048bfe175f31bc698fe594db857a6056846e619384a33",
+                                   "sbom.json":  "1dd071bac2b5437ed941a04187f6c8db802fe1e1b9892bf9ce7dcaf2afb3ebc3",
+                                   "THIRD_PARTY_LICENSES.md":  "4f8c5af7e797e5af27b7778fd20586a1bd1aadcae62052c2ee0d187cd8884455",
                                    "PRD.md":  "884875c3f67aea2a96d6d6f38c6889adcc910af3d1ceffe0de983ce29985b31d",
                                    "AGENTS.md":  "ba5b863e1dac704550dad3321d1e833c853e0a18f18e9f8d6641478341caf9b7",
                                    "LICENSE":  "f4d9b0aad8ff9e650f5890fa3eeb7c1311479cab901f8a9b416a2d9acaf54266",
@@ -69,8 +69,8 @@
                                 "Name":  "Experimental qualification",
                                 "PassCondition":  "Any opt-in Explorer extension: disposable-VM tests, then dedicated recoverable hardware qualification before limited experimental distribution (not stable gate if absent)",
                                 "Status":  "NOT_APPLICABLE",
-                                "Evidence":  "PRD Section 18.2, Owner Decisions Q02:C, Q35:B",
-                                "Reason":  "Stable core contains zero in-process Explorer extensions, XAML bridge DLLs, or injection hooks. Marked NOT_APPLICABLE per PRD Section 18.2 note (\u0027not stable gate if absent\u0027)."
+                                "Evidence":  "EVD-049, EVD-054, PRD Section 18.2, Owner Decisions Q02:C, Q35:B, Q37:A, Q41:A",
+                                "Reason":  "Stable core contains zero in-process Explorer extensions, XAML bridge DLLs, or injection hooks. Marked NOT_APPLICABLE per PRD Section 18.2 note (\u0027not stable gate if absent\u0027) and owner decisions Q02:C / Q35:B. Verified via negative proof: PE binary export inspection proves 0 COM in-process registration exports, 0 detour libraries, 0 injection APIs; ExplorerXamlExperimentalBackend (Backend C) strictly fails closed (ExperimentalNotPermittedInStable); CLI flag --experimental-explorer-bridge is strictly rejected; Safety Boundary Q37:A prevents disruptive operations on physical host; and Safe Mode unconditionally overrides any experimental backend (EVD-054)."
                             },
                             {
                                 "GateId":  "G06",

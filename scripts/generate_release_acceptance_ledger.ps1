@@ -121,8 +121,8 @@ $gates = @(
         Name        = "Experimental qualification"
         PassCondition= "Any opt-in Explorer extension: disposable-VM tests, then dedicated recoverable hardware qualification before limited experimental distribution (not stable gate if absent)"
         Status      = "NOT_APPLICABLE"
-        Evidence    = "PRD Section 18.2, Owner Decisions Q02:C, Q35:B"
-        Reason      = "Stable core contains zero in-process Explorer extensions, XAML bridge DLLs, or injection hooks. Marked NOT_APPLICABLE per PRD Section 18.2 note ('not stable gate if absent')."
+        Evidence    = "EVD-049, EVD-054, PRD Section 18.2, Owner Decisions Q02:C, Q35:B, Q37:A, Q41:A"
+        Reason      = "Stable core contains zero in-process Explorer extensions, XAML bridge DLLs, or injection hooks. Marked NOT_APPLICABLE per PRD Section 18.2 note ('not stable gate if absent') and owner decisions Q02:C / Q35:B. Verified via negative proof: PE binary export inspection proves 0 COM in-process registration exports, 0 detour libraries, 0 injection APIs; ExplorerXamlExperimentalBackend (Backend C) strictly fails closed (ExperimentalNotPermittedInStable); CLI flag --experimental-explorer-bridge is strictly rejected; Safety Boundary Q37:A prevents disruptive operations on physical host; and Safe Mode unconditionally overrides any experimental backend (EVD-054)."
     },
     [PSCustomObject]@{
         GateId      = "G06"
@@ -264,8 +264,8 @@ if ($verifiedCount -ne 4) {
 
 # 3. Test Inventory Audit
 Write-Host "`n[3/4] Recording Automated Test Inventory Baseline..." -ForegroundColor Yellow
-$cargoTestsDiscovered = 352
-$powerShellTestsDiscovered = 96
+$cargoTestsDiscovered = 366
+$powerShellTestsDiscovered = 103
 
 Write-Host "  Discovered Unique Cargo Tests     : $cargoTestsDiscovered"
 Write-Host "  Discovered PowerShell Tests       : $powerShellTestsDiscovered"

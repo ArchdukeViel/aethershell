@@ -37,6 +37,19 @@ async fn main() -> ExitCode {
 
     if args
         .iter()
+        .any(|a| a == "--experimental-explorer-bridge" || a == "/experimental-explorer-bridge")
+    {
+        eprintln!(
+            "ERROR: The experimental Explorer bridge is strictly prohibited in stable v1 core releases per PRD Section 4.2 Backend C and Owner Decisions Q02:C / Q35:B."
+        );
+        eprintln!(
+            "Gate G05 is NOT_APPLICABLE for stable v1.0.0. Deep Explorer injection requires separate opt-in experimental builds and disposable-VM qualification (Q37:A, Q41:A)."
+        );
+        return ExitCode::from(1);
+    }
+
+    if args
+        .iter()
         .any(|a| a == "--capabilities" || a == "/capabilities")
     {
         run_capabilities();
@@ -599,6 +612,8 @@ fn print_usage() {
     println!("    --taskbar-recovery-watchdog <PID>");
     println!("                             Run watchdog monitor supervising target PID with SYNCHRONIZE handle");
     println!("    --test-sleep-secs <N>    Test mode: sleep N seconds and exit cleanly");
+    println!("    --experimental-explorer-bridge");
+    println!("                             Gated flag (rejected in stable v1 core; disposable-VM qualification only)");
     println!("    --capabilities           Print live OS version, 7-tier matrix capabilities, and fallback verdicts in JSON");
     println!("    --diagnostics            Generate and print sanitized JSON diagnostics report");
     println!("    --settings               Request active instance to open Settings window");
