@@ -2,7 +2,7 @@ use aethershell_core::{MonitorTaskbarState, TaskbarEffect, TaskbarResolution};
 use aethershell_win::{EffectSupportVerdict, WindowsVersionInfo};
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum TaskbarBackendError {
     #[error("Taskbar window not found")]
     TaskbarNotFound,
@@ -10,6 +10,14 @@ pub enum TaskbarBackendError {
     Unsupported(String),
     #[error("Conflict detected: competing customizer active; yielding")]
     ConflictYielded,
+    #[error("Experimental Explorer bridge is not permitted in stable v1 releases per PRD Section 4.2 Backend C and Owner Decisions Q02:C / Q35:B")]
+    ExperimentalNotPermittedInStable,
+    #[error("Disruptive experimental shell operations are prohibited on daily-use physical host machines per PRD Section 18.3 and Decision Q37:A")]
+    PhysicalHostDisruptiveBlocked,
+    #[error("Experimental Explorer bridge requires explicit user consent token per PRD Section 18.2 Gate G05 and Decision Q41:A")]
+    ExperimentalConsentMissing,
+    #[error("Safe Mode active: experimental taskbar mutations strictly prohibited")]
+    SafeModeActive,
 }
 
 /// Abstract backend trait for taskbar appearance mutations.
@@ -184,6 +192,124 @@ impl TaskbarBackend for ExternalAppearanceBackend {
                 fallback_reason: Some(reason),
             }),
         }
+    }
+
+    fn restore_native(&mut self, _monitor_id: &str) -> Result<(), TaskbarBackendError> {
+        let _ = crate::recovery::restore_system_taskbars();
+        Ok(())
+    }
+}
+
+/// Backend C: Explorer XAML Experimental (PRD Section 4.2 Backend C [POC], Section 18.2 Gate G05).
+/// Represents the opt-in experimental Explorer XAML bridge research track.
+/// By architectural invariant (Owner Decisions Q02:C, Q35:B, Q37:A, Q41:A), this backend is
+/// strictly excluded from stable release distributions and fails closed unless:
+/// 1. Built with experimental flags (`is_stable_build == false`).
+/// 2. Executing inside an isolated disposable VM guest (`is_disposable_vm == true`).
+/// 3. Verified release-specific user consent is granted (`user_consent_token.is_some()`).
+/// 4. Crash-loop recovery harness is qualified and active (`crash_loop_recovery_verified == true`).
+#[derive(Debug, Clone)]
+pub struct ExplorerXamlExperimentalBackend {
+    is_stable_build: bool,
+    is_disposable_vm: bool,
+    user_consent_token: Option<String>,
+    crash_loop_recovery_verified: bool,
+}
+
+impl ExplorerXamlExperimentalBackend {
+    /// Creates a default experimental backend configured under stable build constraints (fail-closed).
+    pub fn new() -> Self {
+        Self {
+            is_stable_build: true,   // Defaults to stable build rules (Q02:C / Q35:B)
+            is_disposable_vm: false, // Defaults to physical host rules (Q37:A)
+            user_consent_token: None,
+            crash_loop_recovery_verified: false,
+        }
+    }
+
+    /// Builder for testing and qualification harnesses with explicit parameters.
+    pub fn with_params(
+        is_stable_build: bool,
+        is_disposable_vm: bool,
+        user_consent_token: Option<String>,
+        crash_loop_recovery_verified: bool,
+    ) -> Self {
+        Self {
+            is_stable_build,
+            is_disposable_vm,
+            user_consent_token,
+            crash_loop_recovery_verified,
+        }
+    }
+
+    pub fn is_stable_build(&self) -> bool {
+        self.is_stable_build
+    }
+
+    pub fn is_disposable_vm(&self) -> bool {
+        self.is_disposable_vm
+    }
+
+    pub fn has_user_consent(&self) -> bool {
+        self.user_consent_token.is_some()
+    }
+
+    pub fn is_crash_recovery_verified(&self) -> bool {
+        self.crash_loop_recovery_verified
+    }
+}
+
+impl Default for ExplorerXamlExperimentalBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TaskbarBackend for ExplorerXamlExperimentalBackend {
+    fn name(&self) -> &'static str {
+        "explorer_xaml_experimental"
+    }
+
+    fn apply_effect(
+        &mut self,
+        monitor_id: &str,
+        state: MonitorTaskbarState,
+        effect: TaskbarEffect,
+    ) -> Result<TaskbarResolution, TaskbarBackendError> {
+        // Guard 1: Stable core release invariant (Q02:C, Q35:B, PRD Section 4.2 Backend C)
+        if self.is_stable_build {
+            return Err(TaskbarBackendError::ExperimentalNotPermittedInStable);
+        }
+
+        // Guard 2: Safety boundary invariant on physical host (Q37:A, PRD Section 18.3)
+        if !self.is_disposable_vm {
+            return Err(TaskbarBackendError::PhysicalHostDisruptiveBlocked);
+        }
+
+        // Guard 3: User consent token requirement (Q41:A, PRD Section 4.2)
+        if self.user_consent_token.is_none() {
+            return Err(TaskbarBackendError::ExperimentalConsentMissing);
+        }
+
+        // Guard 4: Crash recovery harness qualification requirement (PRD POC-TB-03)
+        if !self.crash_loop_recovery_verified {
+            return Err(TaskbarBackendError::Unsupported(
+                "Crash-loop recovery harness not qualified for experimental bridge (POC-TB-03)"
+                    .into(),
+            ));
+        }
+
+        // When all 4 guards are fulfilled inside an experimental disposable-VM harness:
+        Ok(TaskbarResolution {
+            monitor_id: monitor_id.to_string(),
+            state,
+            requested_effect: effect,
+            applied_effect: effect,
+            backend: "explorer_xaml_experimental".into(),
+            fallback_reason: Some(
+                "Experimental Explorer bridge active in disposable VM qualification mode".into(),
+            ),
+        })
     }
 
     fn restore_native(&mut self, _monitor_id: &str) -> Result<(), TaskbarBackendError> {
@@ -402,5 +528,92 @@ mod tests {
             .fallback_reason
             .unwrap()
             .contains("Explorer shell or display unavailable"));
+    }
+
+    #[test]
+    fn test_experimental_backend_default_fails_in_stable() {
+        let mut backend = ExplorerXamlExperimentalBackend::new();
+        assert_eq!(backend.name(), "explorer_xaml_experimental");
+        assert!(backend.is_stable_build());
+        assert!(!backend.is_disposable_vm());
+        assert!(!backend.has_user_consent());
+        assert!(!backend.is_crash_recovery_verified());
+
+        let err = backend
+            .apply_effect("mon-1", MonitorTaskbarState::Desktop, TaskbarEffect::Clear)
+            .unwrap_err();
+        assert_eq!(err, TaskbarBackendError::ExperimentalNotPermittedInStable);
+    }
+
+    #[test]
+    fn test_experimental_backend_fails_on_physical_host() {
+        // Experimental build, but physical host (not disposable VM)
+        let mut backend = ExplorerXamlExperimentalBackend::with_params(
+            false, // is_stable_build = false
+            false, // is_disposable_vm = false (physical host)
+            Some("consent-token-12345".into()),
+            true,
+        );
+
+        let err = backend
+            .apply_effect("mon-1", MonitorTaskbarState::Desktop, TaskbarEffect::Clear)
+            .unwrap_err();
+        assert_eq!(err, TaskbarBackendError::PhysicalHostDisruptiveBlocked);
+    }
+
+    #[test]
+    fn test_experimental_backend_fails_without_consent() {
+        // Experimental build in disposable VM, but missing user consent
+        let mut backend = ExplorerXamlExperimentalBackend::with_params(
+            false, // is_stable_build = false
+            true,  // is_disposable_vm = true
+            None,  // missing consent
+            true,
+        );
+
+        let err = backend
+            .apply_effect("mon-1", MonitorTaskbarState::Desktop, TaskbarEffect::Clear)
+            .unwrap_err();
+        assert_eq!(err, TaskbarBackendError::ExperimentalConsentMissing);
+    }
+
+    #[test]
+    fn test_experimental_backend_fails_without_crash_recovery() {
+        // Experimental build in VM with consent, but unverified crash recovery
+        let mut backend = ExplorerXamlExperimentalBackend::with_params(
+            false,
+            true,
+            Some("consent-token-12345".into()),
+            false, // unverified crash recovery
+        );
+
+        let err = backend
+            .apply_effect("mon-1", MonitorTaskbarState::Desktop, TaskbarEffect::Clear)
+            .unwrap_err();
+        match err {
+            TaskbarBackendError::Unsupported(msg) => {
+                assert!(msg.contains("Crash-loop recovery harness not qualified"));
+            }
+            other => panic!("Expected Unsupported error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_experimental_backend_succeeds_in_fully_qualified_vm() {
+        // All 4 qualification conditions met
+        let mut backend = ExplorerXamlExperimentalBackend::with_params(
+            false, // experimental build
+            true,  // disposable VM
+            Some("consent-token-12345".into()),
+            true, // crash recovery verified
+        );
+
+        let res = backend
+            .apply_effect("mon-1", MonitorTaskbarState::Desktop, TaskbarEffect::Clear)
+            .expect("Fully qualified experimental harness must succeed");
+
+        assert_eq!(res.backend, "explorer_xaml_experimental");
+        assert_eq!(res.applied_effect, TaskbarEffect::Clear);
+        assert!(res.fallback_reason.unwrap().contains("qualification mode"));
     }
 }

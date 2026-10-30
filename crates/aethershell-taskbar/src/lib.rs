@@ -5,7 +5,8 @@ pub mod coordinator;
 pub mod recovery;
 
 pub use backend::{
-    ExternalAppearanceBackend, NativeNoopBackend, TaskbarBackend, TaskbarBackendError,
+    ExplorerXamlExperimentalBackend, ExternalAppearanceBackend, NativeNoopBackend, TaskbarBackend,
+    TaskbarBackendError,
 };
 pub use coordinator::TaskbarCoordinator;
 pub use recovery::{

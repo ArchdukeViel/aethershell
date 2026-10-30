@@ -138,6 +138,9 @@ Run-TestCase "Gate accounting strictly enforces 4 VERIFIED (G01, G02, G03, G04),
     if ($g05.Status -ne "NOT_APPLICABLE") {
         throw "Expected G05 to be NOT_APPLICABLE, got: $($g05.Status)"
     }
+    if ($g05.Evidence -notmatch "EVD-054") {
+        throw "Expected G05 Evidence to cite EVD-054, got: $($g05.Evidence)"
+    }
     $g15 = $ledgerJson.AcceptanceGates | Where-Object { $_.GateId -eq "G15" }
     if ($g15.Status -ne "DEFERRED") {
         throw "Expected G15 to be DEFERRED, got: $($g15.Status)"
