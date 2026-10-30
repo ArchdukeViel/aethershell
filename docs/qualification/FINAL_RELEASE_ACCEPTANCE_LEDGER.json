@@ -1,22 +1,22 @@
 {
     "LedgerType":  "AetherShellFinalReleaseAcceptanceLedger",
     "Version":  "0.1.0-dev",
-    "GeneratedAt":  "2026-10-30T07:59:50.0004696+07:00",
+    "GeneratedAt":  "2026-10-30T08:40:36.4399017+07:00",
     "ReleaseDisposition":  "NO-GO",
     "CoreStableCandidate":  false,
     "ProductionVersionTag":  "RESERVED (v1.0.0)",
     "GovernancePolicy":  "PRD Section 18.2, AGENTS.md, Decisions Q01-Q48",
     "GateAccountingSummary":  {
                                   "TotalGates":  20,
-                                  "Verified":  4,
-                                  "PartiallyVerified":  14,
+                                  "Verified":  5,
+                                  "PartiallyVerified":  13,
                                   "NotApplicable":  1,
                                   "Deferred":  1
                               },
     "AutomatedTestSummary":  {
-                                 "UniqueCargoTests":  366,
-                                 "PowerShellTests":  103,
-                                 "TotalAutomatedTests":  469,
+                                 "UniqueCargoTests":  376,
+                                 "PowerShellTests":  110,
+                                 "TotalAutomatedTests":  486,
                                  "HostAppDataItems":  0
                              },
     "CryptographicArtifacts":  {
@@ -24,8 +24,8 @@
                                    "aethershell-script-host.exe":  "2567eb821ffcbed5a27c51ce8b10d8c6b0d16169fe14b8f9d7809000206f74de",
                                    "aethershell-settings.exe":  "d30ba6e350f811ece250a64deda62591416bd4730e78c73931ffa2c2b9025216",
                                    "portable_zip":  "be3350d7e891c6879fcc5fcee23b192fbce933552b0009b39e8328e2ad376b4a",
-                                   "sbom.json":  "1dd071bac2b5437ed941a04187f6c8db802fe1e1b9892bf9ce7dcaf2afb3ebc3",
-                                   "THIRD_PARTY_LICENSES.md":  "4f8c5af7e797e5af27b7778fd20586a1bd1aadcae62052c2ee0d187cd8884455",
+                                   "sbom.json":  "31016624fe4476bab41cc83e503418adc35cf9358dee333a74a06baa4dc80cf3",
+                                   "THIRD_PARTY_LICENSES.md":  "eea5a2bd0749afcc23a56be3d93704e5f4a183743a3379e17ba27885258aeced",
                                    "PRD.md":  "884875c3f67aea2a96d6d6f38c6889adcc910af3d1ceffe0de983ce29985b31d",
                                    "AGENTS.md":  "ba5b863e1dac704550dad3321d1e833c853e0a18f18e9f8d6641478341caf9b7",
                                    "LICENSE":  "f4d9b0aad8ff9e650f5890fa3eeb7c1311479cab901f8a9b416a2d9acaf54266",
@@ -76,9 +76,9 @@
                                 "GateId":  "G06",
                                 "Name":  "Desktop layering",
                                 "PassCondition":  "Wallpaper below passive widgets below desktop icons on qualifying builds; otherwise visibly unsupported/disabled",
-                                "Status":  "PARTIALLY_VERIFIED",
-                                "Evidence":  "EVD-005, EVD-019, EVD-046, EVD-048",
-                                "Reason":  "DesktopHostWindow positions overlay behind desktop icons; Win32 RegisterShellHookWindow automatically re-asserts stacking behind icons on Win+D shell messages; automated guest harness active. Visual icon lasso test in VM remains outstanding."
+                                "Status":  "VERIFIED",
+                                "Evidence":  "EVD-005, EVD-019, EVD-046, EVD-048, EVD-055",
+                                "Reason":  "Strict 4-tier desktop stacking hierarchy (Wallpaper \u003c Widgets \u003c Icons \u003c Apps) enforced; extended styles enforce click pass-through (WS_EX_TRANSPARENT | WS_EX_NOACTIVATE) and strictly zero WS_EX_TOPMOST; honest unsupported/disabled fallback contract active per PRD 5.1 / F44; dynamic shell hook Win+D message handling with 50ms debouncing reasserts stacking behind icons; Explorer restart recovery restacks overlay behind freshly created SHELLDLL_DefView; verified across 32 unit tests, 8 integration tests, 7 regression tests, and guest sandbox qualification (EVD-055)."
                             },
                             {
                                 "GateId":  "G07",

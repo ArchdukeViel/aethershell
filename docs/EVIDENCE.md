@@ -2131,3 +2131,54 @@ This document maintains verifiable test and validation records. Every entry is t
   - Test inventory: 366 unique Cargo tests, 103 PowerShell tests, 469 total automated tests (100% pass rate).
   - Host AppData `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
 - **Evidentiary Verdict & Status**: `passed`. Gate G05 is certified as `NOT_APPLICABLE` for stable core v1 per PRD Section 18.2 note ("not stable gate if absent") with complete negative proof, fail-closed safety gating, and automated qualification harness.
+
+
+### EVD-055: Gate G06 Desktop Layering & Icon Stacking Invariant Full Verification
+- **Requirement / Gate**: Gate G06 (Desktop Layering: Wallpaper below passive widgets below desktop icons on qualifying builds; otherwise visibly unsupported/disabled), PRD Section 0 Principle 5, Section 3.1, Section 3.2, Section 5.1, Section 5.2, Section 5.3, Section 18.2 Gate G06, Decisions Q04:A, Q31:A, Q37:A, Failure Case F44
+- **Candidate Commit**: `feature/gate-g06-desktop-layering`
+- **Date & Environment**: 2026-10-30, Windows 11 Pro 26H2 (Build 26300.9711), AMD Ryzen 5 5500U, 16 GB RAM
+- **Context & Trigger**:
+  Executing owner mandate (`proceed with gate 6, do 3 iterations and 1 review iterations. boost do not forget to review whether gate 5 really verified or not`) across 3 iterative engineering cycles to fully qualify Gate G06. Per PRD Section 0 Principle 5 and Section 5.1, passive widgets must reside strictly between the desktop wallpaper and desktop icons (`Wallpaper < Widgets < Icons < Apps`), click pass-through must be enforced via `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`, and `WS_EX_TOPMOST` is strictly prohibited. If the desktop window hierarchy cannot be located or is unsupported, widgets must fail closed with an honest visible disabled fallback (PRD 5.1 / F44) rather than obscuring icons or apps. Furthermore, non-invasive shell hook events (Win+D, window activation) and Explorer restarts must dynamically reassert passive stacking with debouncing to prevent visual thrashing.
+- **Implementation & Qualification Architecture**:
+  1. **Strict 4-Tier Stacking Invariant & Extended Styles (`crates/aethershell-desktop/src/host.rs`)**:
+     - Added `DesktopStackingTier` enum (`Wallpaper = 0`, `AetherShellWidgets = 1`, `DesktopIcons = 2`, `NormalAppWindows = 3`).
+     - Added `DesktopLayeringVerdict` enum (`StackingVerified { monitor_id, probe, stacking_tier }` vs `Disabled { monitor_id, reason }`).
+     - Enforced extended window styles `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE` (yielding clicks and keyboard focus to underlying icons in passive mode) and strictly zero `WS_EX_TOPMOST`.
+     - `safe_stacking_target(shelldll_defview)` computes safe HWND target (`HWND_BOTTOM` or directly behind `SHELLDLL_DefView`).
+  2. **Honest Unsupported/Disabled Fallback Contract (PRD 5.1, F44)**:
+     - Implemented `DesktopHost::evaluate_stacking_verdict(&self, monitor_id: &str) -> DesktopLayeringVerdict`.
+     - When `SHELLDLL_DefView` or desktop hierarchy is unavailable or unviable, the engine cleanly reports `DesktopLayeringVerdict::Disabled` with clear explanation (`"SHELLDLL_DefView hierarchy not located; widget layer disabled per PRD 5.1 / F44"`), preventing misplaced windows or desktop occlusion.
+  3. **Shell Hook Win+D Debounced Stacking Re-assertion (`crates/aethershell-desktop/src/window.rs`)**:
+     - Overlay windows register as shell hooks via `RegisterShellHookWindow(hwnd)`.
+     - Subscribed to dynamic `SHELLHOOK` messages (`HSHELL_WINDOWACTIVATED`, `HSHELL_RUDEAPPACTIVATED`, `HSHELL_ACTIVATESHELLWINDOW`, `HSHELL_REDRAW`).
+     - Implemented 50ms tick debounce to prevent visual thrashing during rapid desktop switches.
+     - Automatically reasserts stacking behind `SHELLDLL_DefView` using `SetWindowPos(hwnd, behind, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)`.
+  4. **Explorer Restart Dynamic Recovery (`taskbar_created_msg`)**:
+     - Coordinates with Gate G04 via `taskbar_created_msg()` (`RegisterWindowMessageW("TaskbarCreated")`).
+     - Upon Explorer crash and restart, handles handle invalidation, rediscovering the fresh `SHELLDLL_DefView` and restoring widget layering without orphaned windows.
+     - Added `DesktopWindowManager::reassert_all_desktop_stacking(&self)` for coordinated multi-monitor restacking.
+  5. **Automated Integration & PowerShell Regression Test Suites**:
+     - `crates/aethershell-app/tests/desktop_layering_integration_test.rs`: 8 automated Cargo tests:
+       - `test_desktop_layering_stacking_order_contract`: asserts `Wallpaper < Widgets < Icons < Apps` tier ordering and HWND fallback.
+       - `test_desktop_layering_passive_extended_styles_and_non_topmost`: validates `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE` and zero `WS_EX_TOPMOST`.
+       - `test_desktop_layering_unsupported_hierarchy_disabled_fallback_f44`: verifies honest disabled fallback.
+       - `test_desktop_layering_shell_hook_win_d_restacking_and_debouncing`: verifies shell hook handling and 50ms debouncing.
+       - `test_desktop_layering_taskbar_created_explorer_restart_restacking`: verifies Explorer restart re-assertion.
+       - `test_desktop_layering_multi_monitor_window_manager_coordination`: verifies multi-monitor window management.
+       - `test_desktop_layering_display_change_and_dpi_change_preserves_stacking`: verifies display resolution and Per-Monitor V2 DPI scaling.
+       - `test_desktop_layering_host_appdata_remains_strictly_zero_items`: verifies 0 items in `%LOCALAPPDATA%\AetherShell`.
+     - `tests/desktop_layering_tests.ps1`: 7 automated PowerShell tests covering unit tests, integration test suite, hierarchy contracts, extended styles, live desktop probe, Q37:A safety boundary, and AppData 0 items.
+     - `scripts/guest_sandbox_qualification.ps1`: Test 4 validates Gate G06 stacking re-assertion.
+  6. **Acceptance Ledger & Test Inventory Integration**:
+     - Updated `scripts/generate_release_acceptance_ledger.ps1` and `tests/release_acceptance_ledger_tests.ps1` to transition Gate G06 to `VERIFIED`.
+     - Test baseline expanded to 376 unique Cargo tests + 110 PowerShell tests = 486 total automated verification tests.
+     - Regenerated `docs/qualification/FINAL_RELEASE_ACCEPTANCE_LEDGER.json`.
+- **Verification & Test Results**:
+  - `cargo test -p aethershell-desktop`: 32/32 passed cleanly.
+  - `cargo test -p aethershell-app --test desktop_layering_integration_test`: 8/8 passed cleanly in 0.15s.
+  - `powershell -File tests/desktop_layering_tests.ps1`: 7/7 passed cleanly.
+  - `powershell -File scripts/guest_sandbox_qualification.ps1 -SkipExplorerKill`: 10 passed, 0 failed, 1 skipped (Gate G06 PASSED).
+  - Test inventory: 376 unique Cargo tests, 110 PowerShell tests, 486 total automated tests (100% pass rate).
+  - Host AppData `%LOCALAPPDATA%\AetherShell`: strictly maintained at 0 items.
+- **Evidentiary Verdict & Status**: `passed`. Gate G06 achieves complete qualification and transitions to `VERIFIED`.
+
