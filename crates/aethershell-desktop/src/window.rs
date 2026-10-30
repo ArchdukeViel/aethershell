@@ -1612,6 +1612,13 @@ impl DesktopWindowManager {
         }
     }
 
+    /// Re-asserts desktop overlay stacking behind icons across all managed windows (Gate G06).
+    pub fn reassert_all_desktop_stacking(&self) {
+        for win in &self.windows {
+            win.reassert_desktop_stacking();
+        }
+    }
+
     /// Returns the primary desktop window DPI, defaulting to 96 if uninitialized.
     pub fn primary_dpi(&self) -> u32 {
         self.primary_window().map(|w| w.dpi()).unwrap_or(96)
