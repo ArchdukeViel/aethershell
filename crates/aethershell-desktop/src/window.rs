@@ -2712,8 +2712,10 @@ mod tests {
         );
 
         // 3. After debounce expiry, HSHELL_RUDEAPPACTIVATED must re-assert stacking
-        std::thread::sleep(std::time::Duration::from_millis(60));
         unsafe {
+            (*win.state_ptr)
+                .last_shell_tick
+                .store(GetTickCount64().saturating_sub(100), Ordering::Relaxed);
             let res = desktop_host_wnd_proc(
                 win.hwnd,
                 shell_hook,
@@ -2727,8 +2729,10 @@ mod tests {
         // 4. In interactive mode, shell events must NOT alter interactive state or disrupt overlay
         win.set_interactive(true);
         assert!(win.is_interactive());
-        std::thread::sleep(std::time::Duration::from_millis(60));
         unsafe {
+            (*win.state_ptr)
+                .last_shell_tick
+                .store(GetTickCount64().saturating_sub(100), Ordering::Relaxed);
             let res = desktop_host_wnd_proc(
                 win.hwnd,
                 shell_hook,
