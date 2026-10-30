@@ -26,18 +26,21 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DeregisterShellHookWindow, DestroyWindow, DispatchMessageW,
-    GetWindowLongPtrW, IsWindow, LoadCursorW, PeekMessageW, RegisterClassExW,
-    RegisterShellHookWindow, RegisterWindowMessageW, SetCursor, SetWindowLongPtrW, SetWindowPos,
+    GetWindowLongPtrW, GetWindowThreadProcessId, IsWindow, KillTimer, LoadCursorW, PeekMessageW, RegisterClassExW,
+    RegisterShellHookWindow, RegisterWindowMessageW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos,
     TranslateMessage, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, GWL_EXSTYLE,
     HWND_BOTTOM, HWND_NOTOPMOST, IDC_ARROW, IDC_HAND, MSG, PM_REMOVE, SWP_FRAMECHANGED,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WINDOW_EX_STYLE,
     WM_ACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ENDSESSION, WM_ERASEBKGND, WM_GETOBJECT,
     WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
-    WM_NCDESTROY, WM_PAINT, WM_QUERYENDSESSION, WM_QUIT, WNDCLASSEXW, WS_POPUP, WS_VISIBLE,
+    WM_NCDESTROY, WM_PAINT, WM_QUERYENDSESSION, WM_QUIT, WM_TIMER, WNDCLASSEXW, WS_POPUP, WS_VISIBLE,
 };
 
 /// Hotkey ID for toggling Temporary Interactive Mode (PRD Section 5.3 & Q31:A).
 pub const HOTKEY_ID_INTERACTIVE_MODE: i32 = 0xAE01;
+
+/// Timer ID for automatic dismissal of Temporary Interactive Mode on inactivity (PRD Section 5.3 & Q31:A).
+pub const TIMER_ID_INTERACTIVE_TIMEOUT: usize = 0xAE10;
 
 static CLASS_REGISTERED: AtomicBool = AtomicBool::new(false);
 const DESKTOP_HOST_CLASS_NAME: windows::core::PCWSTR = w!("AetherShellDesktopHostWindow");
@@ -168,6 +171,8 @@ pub struct DesktopWindowState {
     pub last_restart_tick: Arc<AtomicU64>,
     pub last_shell_tick: Arc<AtomicU64>,
     pub last_activity_tick: Arc<AtomicU64>,
+    pub interactive_timeout_ms: Arc<AtomicU64>,
+    pub last_dismissal_reason: Arc<std::sync::Mutex<Option<DismissalReason>>>,
     pub is_hotkey_registered: Arc<AtomicBool>,
 }
 
@@ -224,6 +229,8 @@ impl DesktopHostWindow {
         let last_restart_tick = Arc::new(AtomicU64::new(0));
         let last_shell_tick = Arc::new(AtomicU64::new(0));
         let last_activity_tick = Arc::new(AtomicU64::new(0));
+        let interactive_timeout_ms = Arc::new(AtomicU64::new(8000));
+        let last_dismissal_reason = Arc::new(std::sync::Mutex::new(None));
         let is_hotkey_registered = Arc::new(AtomicBool::new(false));
 
         let initial_dpi = 96u32;
@@ -255,6 +262,8 @@ impl DesktopHostWindow {
             last_restart_tick,
             last_shell_tick,
             last_activity_tick,
+            interactive_timeout_ms,
+            last_dismissal_reason,
             is_hotkey_registered,
         });
         let state_ptr = Box::into_raw(state);
@@ -606,11 +615,22 @@ impl DesktopHostWindow {
             let _ = SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex_styles as isize);
 
             let (z_target, flags) = if interactive {
+                if !self.hwnd.0.is_null() {
+                    let _ = SetTimer(self.hwnd, TIMER_ID_INTERACTIVE_TIMEOUT, 250, None);
+                }
+                if !self.state_ptr.is_null() {
+                    (*self.state_ptr)
+                        .last_activity_tick
+                        .store(GetTickCount64(), Ordering::Relaxed);
+                }
                 (
                     HWND_NOTOPMOST,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE,
                 )
             } else {
+                if !self.hwnd.0.is_null() {
+                    let _ = KillTimer(self.hwnd, TIMER_ID_INTERACTIVE_TIMEOUT);
+                }
                 let behind = safe_stacking_target(self.shelldll_defview_hwnd);
                 (
                     behind,
@@ -620,6 +640,91 @@ impl DesktopHostWindow {
 
             let _ = SetWindowPos(self.hwnd, z_target, 0, 0, 0, 0, flags);
             let _ = InvalidateRect(self.hwnd, None, false);
+        }
+    }
+
+    /// Explicitly dismisses interactive mode with an authoritative reason (Gate G07, PRD Section 5.3 & Q31:A).
+    pub fn dismiss(&mut self, reason: DismissalReason) {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                dismiss_interactive_mode(self.hwnd, &*self.state_ptr, reason);
+            }
+        }
+    }
+
+    /// Sets the inactivity timeout duration in seconds.
+    pub fn set_interactive_timeout(&mut self, timeout_seconds: u32) {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                (*self.state_ptr)
+                    .interactive_timeout_ms
+                    .store(timeout_seconds as u64 * 1000, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// Retrieves the current inactivity timeout duration in seconds.
+    pub fn interactive_timeout(&self) -> u32 {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                let ms = (*self.state_ptr)
+                    .interactive_timeout_ms
+                    .load(Ordering::Relaxed);
+                return (ms / 1000) as u32;
+            }
+        }
+        8
+    }
+
+    /// Retrieves the reason for the most recent interactive session dismissal.
+    pub fn last_dismissal_reason(&self) -> Option<DismissalReason> {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                if let Ok(guard) = (*self.state_ptr).last_dismissal_reason.lock() {
+                    return *guard;
+                }
+            }
+        }
+        None
+    }
+
+    /// Checks inactivity timeout and triggers dismissal if elapsed (testable helper).
+    pub fn check_inactivity_timeout(&mut self, now_tick: u64) -> bool {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                let state = &*self.state_ptr;
+                if state.is_interactive.load(Ordering::SeqCst) {
+                    let last = state.last_activity_tick.load(Ordering::Relaxed);
+                    let timeout = state.interactive_timeout_ms.load(Ordering::Relaxed);
+                    if timeout > 0 && now_tick >= last && (now_tick - last) >= timeout {
+                        dismiss_interactive_mode(self.hwnd, state, DismissalReason::Timeout);
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Retrieves the timestamp (GetTickCount64) of the most recent user interaction.
+    pub fn last_activity_tick(&self) -> u64 {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                return (*self.state_ptr).last_activity_tick.load(Ordering::Relaxed);
+            }
+        }
+        0
+    }
+
+    /// Sets the last activity tick (testable helper for timeout simulation).
+    #[doc(hidden)]
+    pub fn set_last_activity_tick_for_test(&mut self, tick: u64) {
+        if !self.state_ptr.is_null() {
+            unsafe {
+                (*self.state_ptr)
+                    .last_activity_tick
+                    .store(tick, Ordering::Relaxed);
+            }
         }
     }
 
@@ -1024,6 +1129,7 @@ unsafe extern "system" fn desktop_host_wnd_proc(
 
                     if next {
                         state.is_interactive.store(true, Ordering::SeqCst);
+                        let _ = SetTimer(hwnd, TIMER_ID_INTERACTIVE_TIMEOUT, 250, None);
                         let ex_styles = DesktopHost::surface_extended_styles(true);
                         let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_styles as isize);
                         state.last_activity_tick.store(GetTickCount64(), Ordering::Relaxed);
@@ -1349,12 +1455,18 @@ unsafe extern "system" fn desktop_host_wnd_proc(
             let active = (wparam.0 & 0xFFFF) as u32;
             if active == 0 {
                 // WA_INACTIVE: window lost focus
-                trigger_focus_loss_dismissal(hwnd);
+                let other_hwnd = HWND(lparam.0 as *mut _);
+                if !is_our_window(other_hwnd) {
+                    trigger_focus_loss_dismissal(hwnd);
+                }
             }
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         WM_KILLFOCUS => {
-            trigger_focus_loss_dismissal(hwnd);
+            let other_hwnd = HWND(wparam.0 as *mut _);
+            if !is_our_window(other_hwnd) {
+                trigger_focus_loss_dismissal(hwnd);
+            }
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         0x02B1 /* WM_WTSSESSION_CHANGE */ => {
@@ -1373,6 +1485,29 @@ unsafe extern "system" fn desktop_host_wnd_proc(
                     let root_provider = create_root_provider(acc_state);
                     return UiaReturnRawElementProvider(hwnd, wparam, lparam, &root_provider);
                 }
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        WM_TIMER => {
+            if wparam.0 == TIMER_ID_INTERACTIVE_TIMEOUT {
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWindowState;
+                if !ptr.is_null() {
+                    let state = &*ptr;
+                    if state.is_interactive.load(Ordering::SeqCst) {
+                        let now = GetTickCount64();
+                        let last = state.last_activity_tick.load(Ordering::Relaxed);
+                        let timeout = state.interactive_timeout_ms.load(Ordering::Relaxed);
+                        if timeout > 0 && now >= last && (now - last) >= timeout {
+                            tracing::info!(
+                                "DesktopHostWindow (HWND {:?}): Inactivity timeout ({}ms) reached; dismissing interactive mode",
+                                hwnd.0,
+                                timeout
+                            );
+                            dismiss_interactive_mode(hwnd, state, DismissalReason::Timeout);
+                        }
+                    }
+                }
+                return LRESULT(0);
             }
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
@@ -1412,6 +1547,16 @@ unsafe extern "system" fn desktop_host_wnd_proc(
     }
 }
 
+/// Determines whether a target HWND belongs to the current AetherShell process.
+unsafe fn is_our_window(target: HWND) -> bool {
+    if target.0.is_null() {
+        return false;
+    }
+    let mut pid = 0u32;
+    let _ = GetWindowThreadProcessId(target, Some(&mut pid));
+    pid == std::process::id()
+}
+
 /// Helper function to dismiss interactive mode cleanly and safely restore passive icon stacking.
 unsafe fn dismiss_interactive_mode(
     hwnd: HWND,
@@ -1420,8 +1565,12 @@ unsafe fn dismiss_interactive_mode(
 ) {
     if state.is_interactive.load(Ordering::SeqCst) {
         state.is_interactive.store(false, Ordering::SeqCst);
+        let _ = KillTimer(hwnd, TIMER_ID_INTERACTIVE_TIMEOUT);
         if let Ok(mut guard) = state.focused_region_index.lock() {
             *guard = None;
+        }
+        if let Ok(mut reason_guard) = state.last_dismissal_reason.lock() {
+            *reason_guard = Some(reason);
         }
         let passive_styles = DesktopHost::surface_extended_styles(false);
         let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, passive_styles as isize);
@@ -1610,6 +1759,41 @@ impl DesktopWindowManager {
         for win in &mut self.windows {
             win.set_interactive(false);
         }
+    }
+
+    /// Dismisses interactive mode across all desktop windows with an authoritative reason (Gate G07).
+    pub fn dismiss_all(&mut self, reason: DismissalReason) {
+        for win in &mut self.windows {
+            win.dismiss(reason);
+        }
+    }
+
+    /// Handles full-screen Gaming Shield activation, safely dismissing interactive mode.
+    pub fn handle_fullscreen_shield(&mut self) {
+        self.dismiss_all(DismissalReason::FullScreenShield);
+    }
+
+    /// Sets inactivity timeout in seconds across all managed desktop windows.
+    pub fn set_interactive_timeout(&mut self, timeout_seconds: u32) {
+        for win in &mut self.windows {
+            win.set_interactive_timeout(timeout_seconds);
+        }
+    }
+
+    /// Retrieves the reason for the most recent interactive session dismissal on the primary window.
+    pub fn last_dismissal_reason(&self) -> Option<DismissalReason> {
+        self.primary_window().and_then(|w| w.last_dismissal_reason())
+    }
+
+    /// Checks inactivity timeout across all windows (testable helper).
+    pub fn check_inactivity_timeout(&mut self, now_tick: u64) -> bool {
+        let mut any_dismissed = false;
+        for win in &mut self.windows {
+            if win.check_inactivity_timeout(now_tick) {
+                any_dismissed = true;
+            }
+        }
+        any_dismissed
     }
 
     /// Re-asserts desktop overlay stacking behind icons across all managed windows (Gate G06).
@@ -2606,5 +2790,167 @@ mod tests {
             session_ended.load(Ordering::SeqCst),
             "WM_ENDSESSION must trigger on_session_end callback"
         );
+    }
+
+    #[test]
+    fn test_desktop_host_window_timeout_dismissal() {
+        let mut win = DesktopHostWindow::create("test-mon-timeout", 0, 0, 800, 600, None, None)
+            .expect("create test window");
+
+        win.set_interactive_timeout(2);
+        assert_eq!(win.interactive_timeout(), 2);
+
+        let dismissal_received = Arc::new(std::sync::Mutex::new(None));
+        let dr_clone = Arc::clone(&dismissal_received);
+        win.set_on_dismiss(move |reason| {
+            if let Ok(mut guard) = dr_clone.lock() {
+                *guard = Some(reason);
+            }
+        });
+
+        win.set_interactive(true);
+        assert!(win.is_interactive());
+
+        // 1. Inactivity check before timeout elapses -> remains interactive
+        let start_tick = unsafe { (*win.state_ptr).last_activity_tick.load(Ordering::Relaxed) };
+        let dismissed_early = win.check_inactivity_timeout(start_tick + 1000);
+        assert!(!dismissed_early);
+        assert!(win.is_interactive());
+
+        // 2. Inactivity check after timeout elapses (>= 2000ms) -> triggers dismissal with Timeout
+        let dismissed_timeout = win.check_inactivity_timeout(start_tick + 2100);
+        assert!(dismissed_timeout);
+        assert!(!win.is_interactive());
+        assert_eq!(
+            win.last_dismissal_reason(),
+            Some(DismissalReason::Timeout)
+        );
+        assert_eq!(
+            *dismissal_received.lock().unwrap(),
+            Some(DismissalReason::Timeout)
+        );
+
+        // 3. Test WM_TIMER message handler for TIMER_ID_INTERACTIVE_TIMEOUT
+        win.set_interactive(true);
+        assert!(win.is_interactive());
+        let timer_start_tick = unsafe { (*win.state_ptr).last_activity_tick.load(Ordering::Relaxed) };
+        // Simulate tick passage by adjusting last_activity_tick to 3 seconds in the past
+        unsafe {
+            (*win.state_ptr)
+                .last_activity_tick
+                .store(timer_start_tick.saturating_sub(3000), Ordering::Relaxed);
+            let res = desktop_host_wnd_proc(
+                win.hwnd,
+                WM_TIMER,
+                WPARAM(TIMER_ID_INTERACTIVE_TIMEOUT),
+                LPARAM(0),
+            );
+            assert_eq!(res, LRESULT(0));
+        }
+
+        assert!(!win.is_interactive(), "WM_TIMER must dismiss interactive mode on timeout");
+        assert_eq!(win.last_dismissal_reason(), Some(DismissalReason::Timeout));
+    }
+
+    #[test]
+    fn test_desktop_host_window_fullscreen_shield_dismissal() {
+        let mut win = DesktopHostWindow::create("test-mon-shield", 0, 0, 800, 600, None, None)
+            .expect("create test window");
+
+        let dismissal_received = Arc::new(std::sync::Mutex::new(None));
+        let dr_clone = Arc::clone(&dismissal_received);
+        win.set_on_dismiss(move |reason| {
+            if let Ok(mut guard) = dr_clone.lock() {
+                *guard = Some(reason);
+            }
+        });
+
+        win.set_interactive(true);
+        assert!(win.is_interactive());
+
+        // Dismiss with FullScreenShield
+        win.dismiss(DismissalReason::FullScreenShield);
+
+        assert!(!win.is_interactive());
+        assert_eq!(
+            win.last_dismissal_reason(),
+            Some(DismissalReason::FullScreenShield)
+        );
+        assert_eq!(
+            *dismissal_received.lock().unwrap(),
+            Some(DismissalReason::FullScreenShield)
+        );
+    }
+
+    #[test]
+    fn test_desktop_host_window_killfocus_and_activation_dismissal() {
+        let mut win = DesktopHostWindow::create("test-mon-focus", 0, 0, 800, 600, None, None)
+            .expect("create test window");
+
+        // 1. WM_KILLFOCUS
+        win.set_interactive(true);
+        assert!(win.is_interactive());
+
+        unsafe {
+            let res = desktop_host_wnd_proc(win.hwnd, WM_KILLFOCUS, WPARAM(0), LPARAM(0));
+            assert_eq!(res, LRESULT(0));
+        }
+
+        assert!(!win.is_interactive(), "WM_KILLFOCUS must dismiss interactive mode");
+        assert_eq!(win.last_dismissal_reason(), Some(DismissalReason::FocusLost));
+
+        // 2. WM_ACTIVATE with WA_INACTIVE (wparam low word == 0)
+        win.set_interactive(true);
+        assert!(win.is_interactive());
+
+        unsafe {
+            let res = desktop_host_wnd_proc(win.hwnd, WM_ACTIVATE, WPARAM(0), LPARAM(0));
+            assert_eq!(res, LRESULT(0));
+        }
+
+        assert!(!win.is_interactive(), "WM_ACTIVATE (WA_INACTIVE) must dismiss interactive mode");
+        assert_eq!(win.last_dismissal_reason(), Some(DismissalReason::FocusLost));
+    }
+
+    #[test]
+    fn test_desktop_window_manager_dismiss_all_and_fullscreen_shield() {
+        let mut win_mgr = DesktopWindowManager::new();
+        let win1 = DesktopHostWindow::create("mon-1", 0, 0, 1920, 1080, None, None).unwrap();
+        let win2 = DesktopHostWindow::create("mon-2", 1920, 0, 1920, 1080, None, None).unwrap();
+
+        win_mgr.push_window_for_test(win1);
+        win_mgr.push_window_for_test(win2);
+
+        assert_eq!(win_mgr.windows().len(), 2);
+
+        // Enter interactive mode on all windows
+        win_mgr.enter_interactive_mode();
+        for win in win_mgr.windows() {
+            assert!(win.is_interactive());
+        }
+
+        // Handle full-screen gaming shield
+        win_mgr.handle_fullscreen_shield();
+
+        for win in win_mgr.windows() {
+            assert!(!win.is_interactive());
+            assert_eq!(win.last_dismissal_reason(), Some(DismissalReason::FullScreenShield));
+        }
+        assert_eq!(
+            win_mgr.last_dismissal_reason(),
+            Some(DismissalReason::FullScreenShield)
+        );
+
+        // Check timeout across all windows
+        win_mgr.enter_interactive_mode();
+        win_mgr.set_interactive_timeout(3);
+        let start_tick = unsafe { (*win_mgr.primary_window().unwrap().state_ptr).last_activity_tick.load(Ordering::Relaxed) };
+
+        let dismissed_timeout = win_mgr.check_inactivity_timeout(start_tick + 3500);
+        assert!(dismissed_timeout);
+        for win in win_mgr.windows() {
+            assert!(!win.is_interactive());
+            assert_eq!(win.last_dismissal_reason(), Some(DismissalReason::Timeout));
+        }
     }
 }
